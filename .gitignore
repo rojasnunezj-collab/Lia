@@ -1,0 +1,41 @@
+# =============================================
+# SECRETOS Y CREDENCIALES — NUNCA SUBIR
+# =============================================
+.env
+credenciales_lia.json
+token.json
+client_secret.json
+*.json
+
+# Base de datos local
+lia_logs.db
+*.db
+
+# =============================================
+# ENTORNO VIRTUAL PYTHON
+# =============================================
+venv/
+.venv/
+
+# =============================================
+# CACHÉ DE PYTHON
+# =============================================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# =============================================
+# ARCHIVOS TEMPORALES DEL BOT
+# =============================================
+archivo_*.jpg
+archivo_*.pdf
+archivo_*.ogg
+archivo_*.mp3
+archivo_*.mp4
+
+# =============================================
+# ARCHIVOS DE SISTEMA
+# =============================================
+.DS_Store
+Thumbs.db
