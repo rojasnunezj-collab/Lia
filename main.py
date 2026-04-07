@@ -26,7 +26,10 @@ if 'PYTHONANYWHERE_DOMAIN' in os.environ:
 try:
     if KEY_FILE and os.path.exists(KEY_FILE):
         conectar_servicios()
-        sys.stdout.reconfigure(encoding='utf-8')
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
         print(f"✅ SISTEMA v41 (MODULAR): Lía Operativa (BLINDAJE Placa y Productos).")
 except Exception as e:
     logger.error(f"❌ Error crítico de infraestructura: {e}")
