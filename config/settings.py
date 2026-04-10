@@ -25,6 +25,21 @@ KEY_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 PROJECT_ID = os.getenv("DOCUMENT_AI_PROJECT_ID")
 REGION_ESTABLE = os.getenv("VERTEX_AI_LOCATION", "us-central1") 
 MODEL_NAME = "gemini-2.0-flash" 
+# ====================================================================
+# --- VARIABLES GLOBALES ---
+# ====================================================================
+KEY_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+PROJECT_ID = os.getenv("DOCUMENT_AI_PROJECT_ID")
+REGION_ESTABLE = os.getenv("VERTEX_AI_LOCATION", "us-central1") 
+MODEL_NAME = "gemini-2.0-flash" 
+
+# --- NUEVAS VARIABLES AGREGADAS ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+SHEET_ID = os.getenv("SHEET_ID")
+DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
+DRIVE_FOLDER_LEER = os.getenv("DRIVE_FOLDER_LEER")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+# ----------------------------------
 
 if KEY_FILE and not os.path.isabs(KEY_FILE):
     KEY_FILE = os.path.join(base_path, KEY_FILE)
