@@ -14,7 +14,7 @@ from config.settings import (
     logger, MODO_GUIAS_LEER, MODO_GUIAS_REGISTRAR,
     MODO_GUIAS_MANUAL, MODO_GUIAS_MANUAL_FECHA, MODO_GUIAS_MANUAL_NUMGUIA,
     MODO_GUIAS_MANUAL_TIPO, MODO_GUIAS_MANUAL_EMPRESA, MODO_GUIAS_MANUAL_FUNDO,
-    MODO_BUSCAR, MODO_COMENTAR_GUIA, MODO_COMENTAR_TEXTO,
+    MODO_REPORTE_REGISTRO, MODO_REPORTE_RECIBIDAS, MODO_COMENTAR_GUIA, MODO_COMENTAR_TEXTO,
     MODO_BUSCAR_CERT_FECHA, MODO_BUSCAR_CERT_FUNDO, 
     MODO_BUSCAR_CERT_CORRE, MODO_BUSCAR_CERT_EMPRESA,
     MODO_DIR_EMPRESA, MODO_DIR_FUNDO,
@@ -86,13 +86,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("🔍 Buscar Reporte", callback_data='modo_buscar')],
             [InlineKeyboardButton("💬 Añadir Observación", callback_data='modo_comentar')],
+            [InlineKeyboardButton("📍 Buscar Direcciones", callback_data='modo_direcciones')],
             [InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]
         ]
         await query.edit_message_text("🔍 Módulo: Búsquedas\nSelecciona la operación:", reply_markup=InlineKeyboardMarkup(keyboard))
     elif query.data == 'menu_certificados':
         keyboard = [
             [InlineKeyboardButton("📜 Buscar Certificados", callback_data='modo_buscar_cert')],
-            [InlineKeyboardButton("📍 Buscar Direcciones", callback_data='modo_direcciones')],
             [InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]
         ]
         await query.edit_message_text("📜 Módulo: Certificados\nSelecciona la operación:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -131,9 +131,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [[InlineKeyboardButton("🔙 Volver", callback_data='manual_volver_empresa'), InlineKeyboardButton("❌ Cancelar", callback_data='menu_guias')]]
         await query.edit_message_text("🏡 Paso 5/5 — Escribe el Fundo/Planta:", reply_markup=InlineKeyboardMarkup(kb))
     elif query.data == 'modo_buscar':
-        user_states[user_id] = MODO_BUSCAR
-        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='menu_busqueda')]]
-        await query.edit_message_text("🔍 Modo Reporte. Escribe la fecha (DD/MM/YYYY o DD/MM) o el número de guía", reply_markup=InlineKeyboardMarkup(kb))
+        keyboard = [
+            [InlineKeyboardButton("Registro Guias", callback_data='reporte_registro')],
+            [InlineKeyboardButton("Guias Recibidas", callback_data='reporte_recibidas')],
+            [InlineKeyboardButton("❌ Cancelar", callback_data='menu_busqueda')]
+        ]
+        await query.edit_message_text("🔍 Buscar Reporte\n¿En qué base de datos deseas buscar?", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif query.data == 'reporte_registro':
+        user_states[user_id] = MODO_REPORTE_REGISTRO
+        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_buscar')]]
+        await query.edit_message_text("🔍 Buscar en Registro Guias. Escribe la fecha (DD/MM/YYYY o DD/MM) o el número de guía", reply_markup=InlineKeyboardMarkup(kb))
+    elif query.data == 'reporte_recibidas':
+        user_states[user_id] = MODO_REPORTE_RECIBIDAS
+        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_buscar')]]
+        await query.edit_message_text("🔍 Buscar en Guias Recibidas. Escribe la fecha (DD/MM/YYYY o DD/MM) o el número de guía", reply_markup=InlineKeyboardMarkup(kb))
     elif query.data == 'modo_comentar':
         user_states[user_id] = MODO_COMENTAR_GUIA
         kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='menu_busqueda')]]
@@ -200,7 +211,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     modo = user_states.get(user_id)
     
-    if modo == MODO_BUSCAR:
+    if modo in [MODO_REPORTE_REGISTRO, MODO_REPORTE_RECIBIDAS]:
         raw_query = str(update.message.text).strip()
         query_upper = raw_query.upper()
         
@@ -213,31 +224,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         num_guia_simplificado = simplificar_guia(query_upper)
 
-        msg = await update.message.reply_text(f"⏳ Buscando `{raw_query}` en ambas bases de datos...")
+        msg = await update.message.reply_text(f"⏳ Buscando `{raw_query}` en la base de datos seleccionada...")
         try:
             if not rc.sheet_control: await asyncio.to_thread(conectar_servicios)
             
-            registros_1 = await async_get_all_records(rc.sheet_control)
-            
-            def fetch_recibidas():
-                creds = obtener_credenciales()
-                client = gspread.authorize(creds)
-                book2 = client.open_by_key(SHEET_ID)
-                return book2.worksheet("Guias_recibidas").get_all_records()
-                
-            try:
-                registros_2 = await asyncio.to_thread(fetch_recibidas)
-            except Exception as e:
-                logger.error(f"Error cargando Guias_recibidas: {e}")
-                registros_2 = []
-            
             todos_registros = []
-            for r in registros_1:
-                r["_origen"] = "Registro_Guias"
-                todos_registros.append(r)
-            for r in registros_2:
-                r["_origen"] = "Guias_recibidas"
-                todos_registros.append(r)
+            
+            if modo == MODO_REPORTE_REGISTRO:
+                registros_1 = await async_get_all_records(rc.sheet_control)
+                for r in registros_1:
+                    r["_origen"] = "Registro_Guias"
+                    todos_registros.append(r)
+            else:
+                def fetch_recibidas():
+                    creds = obtener_credenciales()
+                    client = gspread.authorize(creds)
+                    book2 = client.open_by_key(SHEET_ID)
+                    return book2.worksheet("Guias_recibidas").get_all_records()
+                    
+                try:
+                    registros_2 = await asyncio.to_thread(fetch_recibidas)
+                except Exception as e:
+                    logger.error(f"Error cargando Guias_recibidas: {e}")
+                    registros_2 = []
+                for r in registros_2:
+                    r["_origen"] = "Guias_recibidas"
+                    todos_registros.append(r)
 
             encontrados = []
             for r in todos_registros:
@@ -408,14 +420,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             reporte += f"📎 [Ver Guía]({link_guia})\n"
                         else:
                             url_guia = await async_buscar_link_en_drive(link_guia)
-                            if url_guia: reporte += f"📎 [Ver Guía]({url_guia})\n"
+                            if url_guia: 
+                                reporte += f"📎 [Ver Guía]({url_guia})\n"
+                            else: 
+                                reporte += f"📎 _Guía no encontrada en Drive_\n"
                             
                     if link_doc:
                         if link_doc.startswith("http"):
                             reporte += f"📎 [Abrir Certificado]({link_doc})\n"
                         else:
                             url_doc = await async_buscar_link_en_drive(link_doc)
-                            if url_doc: reporte += f"📎 [Abrir Certificado]({url_doc})\n"
+                            if url_doc: 
+                                reporte += f"📎 [Abrir Certificado]({url_doc})\n"
+                            else: 
+                                reporte += f"📎 _Certificado no encontrado en Drive_\n"
                         
                     reporte += "➖➖➖➖➖➖➖➖➖➖\n"
                 
