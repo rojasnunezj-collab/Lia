@@ -30,38 +30,25 @@ drive_service = None
 # --- AUTENTICACIÓN GOOGLE ---
 # ====================================================================
 def obtener_credenciales():
-    creds_drive = None
-    token_path = os.path.join(base_path, 'token.json')
-    if os.path.exists(token_path):
-        try:
-            from google.auth.exceptions import RefreshError
-            SCOPES_ALL = [
-                'https://www.googleapis.com/auth/drive', 
-                'https://www.googleapis.com/auth/spreadsheets',
-                'https://www.googleapis.com/auth/cloud-platform'
-            ]
-            creds_drive = Credentials.from_authorized_user_file(token_path, SCOPES_ALL)
-            if creds_drive and creds_drive.expired and creds_drive.refresh_token:
-                try:
-                    creds_drive.refresh(Request())
-                    with open(token_path, 'w') as tf: tf.write(creds_drive.to_json())
-                except RefreshError: creds_drive = None
-        except Exception: creds_drive = None
-
-    if creds_drive:
-        return creds_drive
+    sa_path = '/app/credenciales_lia.json'
     
-    if KEY_FILE and os.path.exists(KEY_FILE):
+    # Fallback a KEY_FILE local si no estamos en el entorno de producción
+    if not os.path.exists(sa_path) and KEY_FILE and os.path.exists(KEY_FILE):
+        sa_path = KEY_FILE
+
+    if os.path.exists(sa_path):
         try:
             SCOPES_COMBINED = [
                 "https://www.googleapis.com/auth/spreadsheets",
                 "https://www.googleapis.com/auth/drive",
                 "https://www.googleapis.com/auth/cloud-platform"
             ]
-            return service_account.Credentials.from_service_account_file(KEY_FILE, scopes=SCOPES_COMBINED)
+            return service_account.Credentials.from_service_account_file(sa_path, scopes=SCOPES_COMBINED)
         except Exception as e:
             logger.error(f"❌ Error en Cuenta de Servicio: {e}")
             return None
+    else:
+        logger.error(f"❌ No se encontró el archivo de credenciales en {sa_path}")
     return None
 
 # ====================================================================

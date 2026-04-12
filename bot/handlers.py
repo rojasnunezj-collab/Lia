@@ -87,7 +87,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
             [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')]
         ]
-        await query.edit_message_text("👋 **¡Hola! Soy Lía.**\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == 'volver_inicio':
         user_states[user_id] = None
@@ -887,7 +887,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             if guia_origen:
-                resumen_registro += f"🔗 **Guía de Origen (Fundo):** `{guia_origen}`\n"
+                resumen_registro += f"🔗 Guía de Origen (Fundo):** `{guia_origen}`\n"
                 
             resumen_registro += (
                 f"\n📁 [Ver PDF en Drive]({enlace_drive})\n"
