@@ -567,7 +567,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             MEMORIA_VINCULACION[user_id].append({
                 "num_guia": cache.get('num_guia', 'S/D'),
                 "fundo": cache.get('fundo', 'S/D'),
-                "message_id": update.message.message_id,
+                "message_id": cache.get('img_message_id', update.message.message_id),
                 "bot_message_id": msg.message_id
             })
             if len(MEMORIA_VINCULACION[user_id]) > 5:
@@ -710,6 +710,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             folder_solo_leer = DRIVE_FOLDER_LEER
             enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=folder_solo_leer)
             user_data_cache[user_id]['enlace_drive'] = enlace_drive
+            user_data_cache[user_id]['img_message_id'] = update.message.message_id
             user_states[user_id] = MODO_GUIAS_MANUAL_FECHA
             kb = [[InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]]
             await msg.edit_text("✅ Imagen subida a Drive.\n\n📅 Paso 1/5 — Escribe la Fecha de la guía (Ej: 04/04/2026):", reply_markup=InlineKeyboardMarkup(kb))
