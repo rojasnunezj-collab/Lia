@@ -32,6 +32,7 @@ import core.sheets_client as rc
 # ====================================================================
 user_states = {}
 user_data_cache = {}
+MEMORIA_VINCULACION = {}
 
 # ====================================================================
 # --- HANDLERS BÁSICOS ---
@@ -799,6 +800,18 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 resultado_upsert = await asyncio.to_thread(register_audit_sheet)
                 audit_status = "🔄 *Auditoría: Guía Actualizada*" if resultado_upsert == "updated" else "📌 *Auditoría: Nueva Guía Registrada*"
                 await async_log_action(user_id, numero_completo, f"LEER_AUDIT_{resultado_upsert.upper()}")
+                
+                # --- MEMORIA DE VINCULACIÓN HÍBRIDA ---
+                if user_id not in MEMORIA_VINCULACION:
+                    MEMORIA_VINCULACION[user_id] = []
+                MEMORIA_VINCULACION[user_id].append({
+                    "num_guia": numero_completo,
+                    "fundo": datos_sheet.get("fundo_planta", "S/D"),
+                    "message_id": update.message.message_id
+                })
+                if len(MEMORIA_VINCULACION[user_id]) > 5:
+                    MEMORIA_VINCULACION[user_id].pop(0)
+                # ----------------------------------------
             except Exception as e:
                 audit_status = f"⚠️ Error registro Audit: {str(e)[:20]}"
 
@@ -810,6 +823,17 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             enlace_drive = await async_subir_a_drive(file_path, mime_type)
             if not rc.sheet_control: await asyncio.to_thread(conectar_servicios)
             
+            # --- MEMORIA DE VINCULACIÓN HÍBRIDA (LECTURA) ---
+            guia_origen = ""
+            if update.message.reply_to_message:
+                reply_id = update.message.reply_to_message.message_id
+                if user_id in MEMORIA_VINCULACION:
+                    for reg in MEMORIA_VINCULACION[user_id]:
+                        if reg["message_id"] == reply_id:
+                            guia_origen = reg["fundo"]
+                            break
+            # ------------------------------------------------
+            
             row_data = [
                 datos_sheet.get("fecha", ""), 
                 numero_completo, 
@@ -818,7 +842,8 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 datos_sheet.get("empresa", ""), 
                 datos_sheet.get("entidad_1", ""), 
                 datos_sheet.get("entidad_2", ""), 
-                enlace_drive
+                enlace_drive,
+                guia_origen
             ]
             
             resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=9)
@@ -834,16 +859,77 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"{estado_registro}\n\n"
                 f"📄 **Guía:** `{numero_completo}`\n"
                 f"🏢 **Empresa:** `{datos_sheet.get('empresa', 'S/D')}`\n"
-                f"🔄 **Motivo:** `{motivo_visual}`\n\n"
-                f"📁 [Ver PDF en Drive]({enlace_drive})\n"
+                f"🔄 **Motivo:** `{motivo_visual}`\n"
+            )
+            
+            if guia_origen:
+                resumen_registro += f"🔗 **Guía de Origen (Fundo):** `{guia_origen}`\n"
+                
+            resumen_registro += (
+                f"\n📁 [Ver PDF en Drive]({enlace_drive})\n"
                 f"📊 [Abrir Excel]({SHEET_URL_DIRECT})"
             )
             
             await msg.delete()
-            await update.message.reply_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True)
+            
+            # --- TECLADO DE VINCULACIÓN ---
+            markup = None
+            if not update.message.reply_to_message and user_id in MEMORIA_VINCULACION and len(MEMORIA_VINCULACION[user_id]) > 0:
+                botones = []
+                for reg in reversed(MEMORIA_VINCULACION[user_id]):
+                    n_rec = reg["num_guia"]
+                    f_rec = reg["fundo"]
+                    f_rec_short = f_rec[:10] + "..." if len(f_rec) > 10 else f_rec
+                    cb_data = f"vinc|{numero_completo}|{n_rec}|{f_rec}"
+                    if len(cb_data) > 64:
+                        cb_data = cb_data[:64]
+                    botones.append([InlineKeyboardButton(f"Vincular con {n_rec} ({f_rec_short})", callback_data=cb_data)])
+                markup = InlineKeyboardMarkup(botones)
+                
+            if markup:
+                await update.message.reply_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=markup)
+            else:
+                await update.message.reply_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True)
                 
     except Exception as e:
         logger.error(f"Error: {e}")
         await msg.edit_text(f"❌ Error durante el procesamiento: {e}")
     finally:
         if os.path.exists(file_path): os.remove(file_path)
+
+# ====================================================================
+# --- HANDLER CALLBACK VINCULACION ---
+# ====================================================================
+async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query.data.startswith('vinc|'):
+        return
+        
+    await query.answer("Procesando vinculación...")
+    
+    partes = query.data.split("|")
+    if len(partes) >= 4:
+        num_hecha = partes[1]
+        num_recibida = partes[2]
+        fundo = partes[3]
+        
+        try:
+            if not rc.sheet_control: 
+                await asyncio.to_thread(conectar_servicios)
+            def update_origen():
+                col_values = rc.sheet_control.col_values(2) 
+                if num_hecha in col_values:
+                    row_idx = col_values.index(num_hecha) + 1
+                    rc.sheet_control.update_cell(row_idx, 9, fundo) 
+            await asyncio.to_thread(update_origen)
+            
+            await query.edit_message_reply_markup(reply_markup=None)
+            await query.message.reply_text(
+                f"✅ Guía `{num_hecha}` vinculada exitosamente con `{num_recibida}`.\n"
+                f"Fundo asignado: `{fundo}`", 
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Error vinculando guía: {e}")
+            await query.message.reply_text(f"❌ Error al vincular: {e}")
+
