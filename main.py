@@ -80,10 +80,10 @@ def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(CallbackQueryHandler(handle_callback_vinculacion, pattern=r"^vinc\|"))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VOICE | filters.AUDIO | filters.VIDEO, handle_files))
-    app.add_handler(CallbackQueryHandler(handle_callback_vinculacion))
     
     app.run_polling(stop_signals=())
 

@@ -807,24 +807,25 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 resultado_upsert = await asyncio.to_thread(register_audit_sheet)
                 audit_status = "🔄 *Auditoría: Guía Actualizada*" if resultado_upsert == "updated" else "📌 *Auditoría: Nueva Guía Registrada*"
                 await async_log_action(user_id, numero_completo, f"LEER_AUDIT_{resultado_upsert.upper()}")
-                
-                # --- MEMORIA DE VINCULACIÓN HÍBRIDA ---
-                if user_id not in MEMORIA_VINCULACION:
-                    MEMORIA_VINCULACION[user_id] = []
-                MEMORIA_VINCULACION[user_id].append({
-                    "num_guia": numero_completo,
-                    "fundo": datos_sheet.get("fundo_planta", "S/D"),
-                    "message_id": update.message.message_id
-                })
-                if len(MEMORIA_VINCULACION[user_id]) > 5:
-                    MEMORIA_VINCULACION[user_id].pop(0)
-                # ----------------------------------------
             except Exception as e:
                 audit_status = f"⚠️ Error registro Audit: {str(e)[:20]}"
 
             footer = f"\n\n{audit_status}\n📁 [Drive]({enlace_drive})\n📊 [Excel]({SHEET_URL_DIRECT})"
             await msg.delete()
-            await update.message.reply_text(full_report + footer, parse_mode='Markdown')
+            bot_reply = await update.message.reply_text(full_report + footer, parse_mode='Markdown')
+
+            # --- MEMORIA DE VINCULACIÓN HÍBRIDA ---
+            if user_id not in MEMORIA_VINCULACION:
+                MEMORIA_VINCULACION[user_id] = []
+            MEMORIA_VINCULACION[user_id].append({
+                "num_guia": numero_completo,
+                "fundo": datos_sheet.get("fundo_planta", "S/D"),
+                "message_id": update.message.message_id,
+                "bot_message_id": bot_reply.message_id
+            })
+            if len(MEMORIA_VINCULACION[user_id]) > 5:
+                MEMORIA_VINCULACION[user_id].pop(0)
+            # ----------------------------------------
 
         elif modo == MODO_GUIAS_REGISTRAR:
             enlace_drive = await async_subir_a_drive(file_path, mime_type)
@@ -836,7 +837,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_id = update.message.reply_to_message.message_id
                 if user_id in MEMORIA_VINCULACION:
                     for reg in MEMORIA_VINCULACION[user_id]:
-                        if reg["message_id"] == reply_id:
+                        if reg["message_id"] == reply_id or reg.get("bot_message_id") == reply_id:
                             guia_origen = reg["fundo"]
                             break
             # ------------------------------------------------
