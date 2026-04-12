@@ -5,6 +5,8 @@ import os
 import json
 import asyncio
 import re
+import vertexai  # <--- Agregado para inicializar la IA
+from google.oauth2 import service_account  # <--- Agregado para las llaves
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import gspread
@@ -23,9 +25,31 @@ from config.settings import (
 from utils.helpers import clean_json_response, async_log_action
 from core.ai_client import generar_con_reintento
 from core.sheets_client import (
-    conectar_servicios, async_get_all_records, async_buscar_link_en_drive, async_subir_a_drive, sync_upsert_row, async_upsert_row, obtener_credenciales, SHEET_URL_DIRECT, SHEET_ID, DRIVE_FOLDER_LEER
+    conectar_servicios, async_get_all_records, async_buscar_link_en_drive, 
+    async_subir_a_drive, sync_upsert_row
 )
 import core.sheets_client as rc 
+
+# ====================================================================
+# --- INICIALIZACIÓN DE IA Y MEMORIA (BLINDAJE) ---
+# ====================================================================
+# ====================================================================
+# --- INICIALIZACIÓN DE IA Y MEMORIA (BLINDAJE) ---
+# ====================================================================
+import os
+import vertexai
+
+# Le inyectamos la variable directamente al cerebro de la máquina
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/app/credenciales_lia.json"
+
+try:
+    # Inicializamos sin pasar "credentials=", para que Vertex lo detecte solo
+    vertexai.init(project="bot-lia-488400", location="us-central1")
+    logger.info("✅ Vertex AI inicializado correctamente en handlers.py")
+except Exception as e:
+    logger.error(f"❌ Error al inicializar Vertex AI: {e}")
+
+MEMORIA_VINCULACION = {}
 
 # ====================================================================
 # --- ESTADOS (CACHÉ) ---
