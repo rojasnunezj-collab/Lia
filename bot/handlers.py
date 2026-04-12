@@ -27,7 +27,8 @@ from utils.helpers import clean_json_response, async_log_action
 from core.ai_client import generar_con_reintento
 from core.sheets_client import (
     conectar_servicios, async_get_all_records, async_buscar_link_en_drive, 
-    async_subir_a_drive, sync_upsert_row
+    async_subir_a_drive, sync_upsert_row, obtener_credenciales, SHEET_ID,
+    SHEET_URL_DIRECT, async_upsert_row
 )
 import core.sheets_client as rc 
 
