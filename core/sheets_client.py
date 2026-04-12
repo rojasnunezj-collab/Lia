@@ -29,20 +29,36 @@ drive_service = None
 # ====================================================================
 # --- AUTENTICACIÓN GOOGLE ---
 # ====================================================================
+from google.oauth2.credentials import Credentials as OAuthCredentials
+
 def obtener_credenciales():
+    token_path = '/app/token.json'
     sa_path = '/app/credenciales_lia.json'
     
-    # Fallback a KEY_FILE local si no estamos en el entorno de producción
+    # Fallback a archivos locales si no estamos en Docker
+    local_token = 'token.json'
+    if not os.path.exists(token_path) and os.path.exists(local_token):
+        token_path = local_token
+        
     if not os.path.exists(sa_path) and KEY_FILE and os.path.exists(KEY_FILE):
         sa_path = KEY_FILE
 
+    SCOPES_COMBINED = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/cloud-platform"
+    ]
+
+    # Prioridad 1: Intentar usar Token Humano (token.json) para evitar cuotas de Service Account
+    if os.path.exists(token_path):
+        try:
+            return OAuthCredentials.from_authorized_user_file(token_path, SCOPES_COMBINED)
+        except Exception as e:
+            logger.error(f"❌ Error leyendo token.json: {e}")
+
+    # Prioridad 2: Fallback a Service Account
     if os.path.exists(sa_path):
         try:
-            SCOPES_COMBINED = [
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive",
-                "https://www.googleapis.com/auth/cloud-platform"
-            ]
             return service_account.Credentials.from_service_account_file(sa_path, scopes=SCOPES_COMBINED)
         except Exception as e:
             logger.error(f"❌ Error en Cuenta de Servicio: {e}")
