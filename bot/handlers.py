@@ -560,6 +560,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📁 [Ver en Drive]({enlace})",
                 parse_mode='Markdown', disable_web_page_preview=True
             )
+            
+            # --- MEMORIA DE VINCULACIÓN HÍBRIDA (MANUAL) ---
+            if user_id not in MEMORIA_VINCULACION:
+                MEMORIA_VINCULACION[user_id] = []
+            MEMORIA_VINCULACION[user_id].append({
+                "num_guia": cache.get('num_guia', 'S/D'),
+                "fundo": cache.get('fundo', 'S/D'),
+                "message_id": update.message.message_id,
+                "bot_message_id": msg.message_id
+            })
+            if len(MEMORIA_VINCULACION[user_id]) > 5:
+                MEMORIA_VINCULACION[user_id].pop(0)
+            # ----------------------------------------
+            
             user_states[user_id] = None
             user_data_cache[user_id] = {}
         except Exception as e:
