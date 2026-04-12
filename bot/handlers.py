@@ -358,7 +358,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             def update_col_j():
                 col_values = rc.sheet_control.col_values(2)
                 row_idx = col_values.index(num_guia) + 1
-                rc.sheet_control.update_cell(row_idx, 10, comentario)
+                rc.sheet_control.update_cell(row_idx, 11, comentario)
 
             await asyncio.to_thread(update_col_j)
             await async_log_action(user_id, num_guia, "COMENTARIO_MANUAL_GUARDADO")
@@ -867,7 +867,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ""                                           # M: Certificados
             ]
             
-            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=11)
+            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=10)
             await async_log_action(user_id, numero_completo, f"REGISTRAR_{resultado_upsert.upper()}")
             
             estado_registro = "🔄 *Guía Actualizada (Sobrescrita)*" if resultado_upsert == "updated" else "✅ *Nueva Guía Registrada*"
