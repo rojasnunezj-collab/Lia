@@ -20,7 +20,8 @@ from config.settings import (
     MODO_BUSCAR_CERT_FECHA, MODO_BUSCAR_CERT_FUNDO, 
     MODO_BUSCAR_CERT_CORRE, MODO_BUSCAR_CERT_EMPRESA,
     MODO_DIR_EMPRESA, MODO_DIR_FUNDO,
-    MODO_BITACORA_ADD, MODO_BITACORA_SEARCH
+    MODO_BITACORA_ADD, MODO_BITACORA_SEARCH,
+    DRIVE_FOLDER_LEER
 )
 from utils.helpers import clean_json_response, async_log_action
 from core.ai_client import generar_con_reintento
