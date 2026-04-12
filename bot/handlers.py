@@ -33,25 +33,6 @@ import core.sheets_client as rc
 # ====================================================================
 # --- INICIALIZACIÓN DE IA Y MEMORIA (BLINDAJE) ---
 # ====================================================================
-# ====================================================================
-# --- INICIALIZACIÓN DE IA Y MEMORIA (BLINDAJE) ---
-# ====================================================================
-import os
-import vertexai
-
-# Le inyectamos la variable directamente al cerebro de la máquina
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/app/credenciales_lia.json"
-
-try:
-    # Inicializamos sin pasar "credentials=", para que Vertex lo detecte solo
-    vertexai.init(project="bot-lia-488400", location="us-central1")
-    logger.info("✅ Vertex AI inicializado correctamente en handlers.py")
-except Exception as e:
-    logger.error(f"❌ Error al inicializar Vertex AI: {e}")
-
-MEMORIA_VINCULACION = {}
-
-# ====================================================================
 # --- ESTADOS (CACHÉ) ---
 # ====================================================================
 user_states = {}

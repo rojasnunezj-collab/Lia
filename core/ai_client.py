@@ -12,10 +12,14 @@ from config.settings import PROJECT_ID, REGION_ESTABLE, MODEL_NAME
 # ====================================================================
 model = None
 
-def init_ai(credentials):
+def init_ai(credentials=None):
     global model
-    vertexai.init(project=PROJECT_ID, location=REGION_ESTABLE, credentials=credentials)
-    model = GenerativeModel(MODEL_NAME)
+    if not credentials:
+        from core.sheets_client import obtener_credenciales
+        credentials = obtener_credenciales()
+    if credentials:
+        vertexai.init(project=PROJECT_ID, location=REGION_ESTABLE, credentials=credentials)
+        model = GenerativeModel(MODEL_NAME)
 
 # ====================================================================
 # --- GENERACIÓN IA Y REINTENTOS ---
@@ -31,7 +35,10 @@ async def generar_con_reintento(partes, prompt, msg, is_json=False):
     ]
     for attempt in range(5):
         try:
-            if model is None: raise ValueError("IA no inicializada.")
+            if model is None: 
+                init_ai()
+            if model is None:
+                raise ValueError("IA no inicializada y no se encontraron credenciales válidas.")
             await asyncio.sleep(1) 
             return await model.generate_content_async(partes + [prompt], generation_config=GenerationConfig(**config), safety_settings=safety_settings)
         except (ResourceExhausted, ServiceUnavailable):
