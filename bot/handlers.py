@@ -832,29 +832,42 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not rc.sheet_control: await asyncio.to_thread(conectar_servicios)
             
             # --- MEMORIA DE VINCULACIÓN HÍBRIDA (LECTURA) ---
-            guia_origen = ""
+            guia_ligada_limpia = ""
+            fundo_vinculado = ""
             if update.message.reply_to_message:
                 reply_id = update.message.reply_to_message.message_id
                 if user_id in MEMORIA_VINCULACION:
                     for reg in MEMORIA_VINCULACION[user_id]:
                         if reg["message_id"] == reply_id or reg.get("bot_message_id") == reply_id:
-                            guia_origen = reg["fundo"]
+                            n_guia = reg["num_guia"]
+                            if "-" in n_guia:
+                                partes_g = n_guia.split("-")
+                                guia_ligada_limpia = f"{partes_g[0]}-{partes_g[1].lstrip('0')}"
+                            else:
+                                guia_ligada_limpia = n_guia.lstrip('0')
+                            fundo_vinculado = reg["fundo"]
                             break
             # ------------------------------------------------
             
+            fundo_final = fundo_vinculado if fundo_vinculado and fundo_vinculado != "S/D" else datos_sheet.get("fundo_planta", "S/D")
+            
             row_data = [
-                datos_sheet.get("fecha", ""), 
-                numero_completo, 
-                datos_sheet.get("tipo", ""), 
-                datos_sheet.get("motivo", ""), 
-                datos_sheet.get("empresa", ""), 
-                datos_sheet.get("entidad_1", ""), 
-                datos_sheet.get("entidad_2", ""), 
-                enlace_drive,
-                guia_origen
+                datos_sheet.get("fecha", ""),                # A: Fecha
+                numero_completo,                             # B: N° Guía
+                guia_ligada_limpia,                          # C: Guía ligada
+                datos_sheet.get("tipo", ""),                 # D: Tipo Guía
+                datos_sheet.get("motivo", ""),               # E: Motivo
+                datos_sheet.get("empresa", ""),              # F: Empresa Principal
+                datos_sheet.get("entidad_1", ""),            # G: Destinatario/Remitente
+                datos_sheet.get("entidad_2", ""),            # H: Destinario/Proveedor
+                enlace_drive,                                # I: Link Drive
+                "",                                          # J: Observacion ia 
+                "",                                          # K: Observacion
+                fundo_final,                                 # L: Fundo/Planta
+                ""                                           # M: Certificados
             ]
             
-            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=9)
+            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=11)
             await async_log_action(user_id, numero_completo, f"REGISTRAR_{resultado_upsert.upper()}")
             
             estado_registro = "🔄 *Guía Actualizada (Sobrescrita)*" if resultado_upsert == "updated" else "✅ *Nueva Guía Registrada*"
@@ -870,8 +883,10 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🔄 **Motivo:** `{motivo_visual}`\n"
             )
             
-            if guia_origen:
-                resumen_registro += f"🔗 Guía de Origen (Fundo):** `{guia_origen}`\n"
+            if guia_ligada_limpia:
+                resumen_registro += f"🔗 **Guía Origen Ligada:** `{guia_ligada_limpia}`\n"
+            if fundo_final and fundo_final != "S/D":
+                resumen_registro += f"🏡 **Fundo/Planta:** `{fundo_final}`\n"
                 
             resumen_registro += (
                 f"\n📁 [Ver PDF en Drive]({enlace_drive})\n"
@@ -928,7 +943,15 @@ async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFA
                 col_values = rc.sheet_control.col_values(2) 
                 if num_hecha in col_values:
                     row_idx = col_values.index(num_hecha) + 1
-                    rc.sheet_control.update_cell(row_idx, 9, fundo) 
+                    
+                    if "-" in num_recibida:
+                        p = num_recibida.split("-")
+                        num_recibida_l = f"{p[0]}-{p[1].lstrip('0')}"
+                    else:
+                        num_recibida_l = num_recibida.lstrip('0')
+                        
+                    rc.sheet_control.update_cell(row_idx, 3, num_recibida_l) 
+                    rc.sheet_control.update_cell(row_idx, 12, fundo) 
             await asyncio.to_thread(update_origen)
             
             await query.edit_message_reply_markup(reply_markup=None)
