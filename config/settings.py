@@ -43,6 +43,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
 if KEY_FILE and not os.path.isabs(KEY_FILE):
     KEY_FILE = os.path.join(base_path, KEY_FILE)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = KEY_FILE
 
 os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
 
