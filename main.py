@@ -5,12 +5,14 @@ import os
 import sys
 import signal
 import requests
+import pytz
+from datetime import time
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
 from config.settings import logger, KEY_FILE
 from utils.helpers import init_db
 from core.sheets_client import conectar_servicios
-from bot.handlers import start, ping, button_handler, handle_text, handle_files, handle_callback_vinculacion
+from bot.handlers import start, ping, button_handler, handle_text, handle_files, handle_callback_vinculacion, daily_certificate_reminder
 
 # ====================================================================
 # --- INICIALIZACIÓN DE ENTORNO ---
@@ -77,6 +79,11 @@ def main():
     token = os.getenv("TELEGRAM_TOKEN")
     
     app = ApplicationBuilder().token(token).post_init(post_init).build()
+    
+    # Configurar tarea diaria a las 9:00 AM (Hora Perú)
+    tz_peru = pytz.timezone('America/Lima')
+    hora_aviso = time(hour=9, minute=0, tzinfo=tz_peru)
+    app.job_queue.run_daily(daily_certificate_reminder, time=hora_aviso)
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))

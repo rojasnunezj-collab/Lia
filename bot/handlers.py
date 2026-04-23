@@ -5,6 +5,8 @@ import os
 import json
 import asyncio
 import re
+import calendar
+from datetime import datetime, timezone, timedelta
 import vertexai  # <--- Agregado para inicializar la IA
 from google.oauth2 import service_account  # <--- Agregado para las llaves
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -40,6 +42,77 @@ import core.sheets_client as rc
 user_states = {}
 user_data_cache = {}
 MEMORIA_VINCULACION = {}
+
+# ====================================================================
+# --- TAREAS PROGRAMADAS (JOBS) ---
+# ====================================================================
+PET_TZ = timezone(timedelta(hours=-5))
+
+async def prosembra_notification_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    guia = job.data.get("guia", "desconocida")
+    await context.bot.send_message(
+        chat_id=job.chat_id,
+        text=f"🔔 *Recordatorio Prosembra:*\nHan pasado 30 minutos desde la lectura de la guía `{guia}`.\n¿Ya tienes el peso?",
+        parse_mode='Markdown'
+    )
+
+async def olivos_notification_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    guia = job.data.get("guia", "desconocida")
+    await context.bot.send_message(
+        chat_id=job.chat_id,
+        text=f"🔔 *Recordatorio Los Olivos:*\nHan pasado 30 minutos desde la lectura de la guía `{guia}`.",
+        parse_mode='Markdown'
+    )
+
+async def daily_certificate_reminder(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now(PET_TZ)
+    if now.year < 2026 or (now.year == 2026 and now.month < 4):
+        return
+        
+    last_day = calendar.monthrange(now.year, now.month)[1]
+    is_day_before = (now.day == last_day - 1)
+    is_last_day = (now.day == last_day)
+    is_day_after = (now.day == 1)
+    
+    if not (is_day_before or is_last_day or is_day_after):
+        return
+        
+    admin_chat_id = os.getenv("ADMIN_CHAT_ID")
+    if not admin_chat_id: return
+
+    try:
+        if not rc.sheet_control:
+            await asyncio.to_thread(rc.conectar_servicios)
+        
+        def fetch_guias():
+            return rc.sheet_control.get_all_records()
+            
+        registros = await asyncio.to_thread(fetch_guias)
+        pendientes = []
+        
+        for r in registros:
+            fecha = str(r.get("Fecha", ""))
+            if "/04/2026" in fecha or "/05/2026" in fecha or "/06/2026" in fecha or "/07/2026" in fecha or "/08/2026" in fecha or "/09/2026" in fecha or "/10/2026" in fecha or "/11/2026" in fecha or "/12/2026" in fecha or "2027" in fecha:
+                certificado = str(r.get("Certificados", "")).strip()
+                empresa = str(r.get("Empresa Principal", "")).upper()
+                destinatario = str(r.get("Destinatario/Remitente", "")).upper()
+                texto_cliente = f"{empresa} {destinatario}"
+                
+                # Omitir Prosembra y Los Olivos (se avisan a los 30 mins)
+                if not certificado and "PROSEMBRA" not in texto_cliente and "LOS OLIVOS" not in texto_cliente:
+                    pendientes.append(str(r.get("N° Guía", "S/D")))
+        
+        if pendientes:
+            msg = f"📅 🔔 *RECORDATORIO DE FIN DE MES*\nHay {len(pendientes)} certificados pendientes desde abril:\n\n"
+            msg += ", ".join(pendientes[:20])
+            if len(pendientes) > 20:
+                msg += f" ... y {len(pendientes)-20} más."
+            await context.bot.send_message(chat_id=admin_chat_id, text=msg, parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Error en daily_certificate_reminder: {e}")
 
 # ====================================================================
 # --- HANDLERS BÁSICOS ---
@@ -841,6 +914,12 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(MEMORIA_VINCULACION[user_id]) > 5:
                 MEMORIA_VINCULACION[user_id].pop(0)
             # ----------------------------------------
+            
+            texto_analisis = f"{datos_sheet.get('empresa', '')} {datos_sheet.get('entidad_1', '')}".upper()
+            if "PROSEMBRA" in texto_analisis:
+                context.job_queue.run_once(prosembra_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
+            elif "LOS OLIVOS" in texto_analisis:
+                context.job_queue.run_once(olivos_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
 
         elif modo == MODO_GUIAS_REGISTRAR:
             enlace_drive = await async_subir_a_drive(file_path, mime_type)
@@ -928,6 +1007,12 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=markup)
             else:
                 await update.message.reply_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True)
+                
+            texto_analisis = f"{datos_sheet.get('empresa', '')} {datos_sheet.get('entidad_1', '')}".upper()
+            if "PROSEMBRA" in texto_analisis:
+                context.job_queue.run_once(prosembra_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
+            elif "LOS OLIVOS" in texto_analisis:
+                context.job_queue.run_once(olivos_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
                 
     except Exception as e:
         logger.error(f"Error: {e}")
