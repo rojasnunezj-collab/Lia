@@ -9,4 +9,5 @@ gspread
 google-cloud-aiplatform
 python-telegram-bot
 Pillow
-
+requests
+pytz
