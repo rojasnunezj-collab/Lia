@@ -147,7 +147,8 @@ def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_
     try:
         timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M")
         if not num_guia:
-            sheet.append_row(row_data, value_input_option='USER_ENTERED')
+            next_row = len(sheet.get_all_values()) + 1
+            sheet.insert_row(row_data, index=next_row, value_input_option='USER_ENTERED')
             return "appended"
             
         col_values = sheet.col_values(col_guia_index)
@@ -172,7 +173,8 @@ def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_
                 row_data.append("")
             row_data[col_comentario_index - 1] = f"✅ Nuevo: {timestamp}"
             
-            sheet.append_row(row_data, value_input_option='USER_ENTERED')
+            next_row = len(sheet.get_all_values()) + 1
+            sheet.insert_row(row_data, index=next_row, value_input_option='USER_ENTERED')
             return "appended"
     except Exception as e:
         logger.error(f"Error en upsert: {e}")

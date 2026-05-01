@@ -734,7 +734,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     sheet_bitacora.append_row(["Fecha", "Usuario", "Tipo Archivo", "Enlace Drive", "Nota/Comentario"])
 
                 row_data = [timestamp, username, "Texto/Anotación", "", texto]
-                sheet_bitacora.append_row(row_data, value_input_option='USER_ENTERED')
+                next_row = len(sheet_bitacora.get_all_values()) + 1
+                sheet_bitacora.insert_row(row_data, index=next_row, value_input_option='USER_ENTERED')
                 
             await asyncio.to_thread(save_bitacora)
             await msg.edit_text(f"📓✅ Anotación registrada en Bitácora con éxito:\n\n_{texto}_", parse_mode='Markdown')
@@ -812,7 +813,8 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     sheet_bitacora.append_row(["Fecha", "Usuario", "Tipo Archivo", "Enlace Drive", "Nota/Comentario"])
 
                 row_data = [timestamp, username, tipo_archivo, enlace_drive, comentario]
-                sheet_bitacora.append_row(row_data, value_input_option='USER_ENTERED')
+                next_row = len(sheet_bitacora.get_all_values()) + 1
+                sheet_bitacora.insert_row(row_data, index=next_row, value_input_option='USER_ENTERED')
                 
             await asyncio.to_thread(save_bitacora_file)
             await msg.delete()
@@ -1058,6 +1060,18 @@ async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFA
             await asyncio.to_thread(update_origen)
             
             await query.edit_message_reply_markup(reply_markup=None)
+            
+            # Actualizar el mensaje original para que el usuario no piense que está "desordenado" o "no ligado"
+            texto_original = query.message.text if query.message.text else ""
+            if "Guía Origen Ligada" not in texto_original:
+                nuevo_texto = texto_original + f"\n🔗 **Guía Origen Ligada:** `{num_recibida}`"
+                if fundo and fundo != "S/D" and "Fundo/Planta" not in texto_original:
+                    nuevo_texto += f"\n🏡 **Fundo/Planta:** `{fundo}`"
+                try:
+                    await query.edit_message_text(nuevo_texto, parse_mode='Markdown')
+                except Exception:
+                    pass # Si falla al editar por formato, lo ignoramos
+
             await query.message.reply_text(
                 f"✅ Guía `{num_hecha}` vinculada exitosamente con `{num_recibida}`.\n"
                 f"Fundo asignado: `{fundo}`", 
