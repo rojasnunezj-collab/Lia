@@ -143,7 +143,7 @@ async def async_buscar_link_en_drive(nombre_archivo):
 # ====================================================================
 # --- GOOGLE SHEETS UPSERT ---
 # ====================================================================
-def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_index=9):
+def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_index=9, allow_singuia_update=False):
     try:
         timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M")
         if not num_guia:
@@ -152,7 +152,8 @@ def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_
             return "appended"
             
         col_values = sheet.col_values(col_guia_index)
-        if num_guia in col_values and num_guia not in ["SIN GUIA", "S/D"]:
+        is_singuia = num_guia in ["SIN GUIA", "S/D", "SIN GUIA-SIN GUIA", "-", "S/D-S/D"]
+        if num_guia in col_values and (allow_singuia_update or not is_singuia):
             row_idx = col_values.index(num_guia) + 1  
             
             while len(row_data) < col_comentario_index:
@@ -180,8 +181,8 @@ def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_
         logger.error(f"Error en upsert: {e}")
         raise e
 
-async def async_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_index=9):
-    return await asyncio.to_thread(sync_upsert_row, sheet, num_guia, row_data, col_guia_index, col_comentario_index)
+async def async_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_index=9, allow_singuia_update=False):
+    return await asyncio.to_thread(sync_upsert_row, sheet, num_guia, row_data, col_guia_index, col_comentario_index, allow_singuia_update)
 
 async def async_get_all_records(sheet):
     return await asyncio.to_thread(sheet.get_all_records)

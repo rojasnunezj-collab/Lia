@@ -876,6 +876,30 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
         full_report = re.sub(r'👤 \*\*Entidad 2 \(Dest/Prov\)\*\*: `S/D`\n?', '', full_report)
         full_report = full_report.replace("Motivo: `None`", "Motivo: `Servicio de Transporte`")
         
+
+        if numero_completo in ["SIN GUIA", "SIN GUIA-SIN GUIA", "S/D-S/D", "-", "S/D", ""]:
+            reply_id = update.message.reply_to_message.message_id if (update.message and update.message.reply_to_message) else None
+            user_data_cache[user_id] = user_data_cache.get(user_id, {})
+            user_data_cache[user_id]['pending_singuia'] = {
+                'datos_sheet': datos_sheet,
+                'full_report': full_report,
+                'file_path': file_path,
+                'mime_type': mime_type,
+                'modo': modo,
+                'msg_id': msg.message_id,
+                'reply_id': reply_id
+            }
+            kb = [
+                [InlineKeyboardButton("✅ Registrar como NUEVA", callback_data='doc_sg_nueva')],
+                [InlineKeyboardButton("🔄 Actualizar Existente", callback_data='doc_sg_actualizar')]
+            ]
+            await msg.edit_text(
+                full_report + "\n\n⚠️ **ATENCIÓN:** La IA detectó esta imagen como SIN GUIA.\n¿Deseas registrarla como una guía NUEVA o ACTUALIZAR la primera guía SIN GUIA que encuentre en tu Excel?",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='Markdown'
+            )
+            return
+
         if modo == MODO_GUIAS_LEER:
             folder_solo_leer = DRIVE_FOLDER_LEER
             enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=folder_solo_leer)
