@@ -152,7 +152,7 @@ def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_
             return "appended"
             
         col_values = sheet.col_values(col_guia_index)
-        if num_guia in col_values:
+        if num_guia in col_values and num_guia not in ["SIN GUIA", "S/D"]:
             row_idx = col_values.index(num_guia) + 1  
             
             while len(row_data) < col_comentario_index:
