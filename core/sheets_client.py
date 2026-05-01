@@ -152,7 +152,8 @@ def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_
             return "appended"
             
         col_values = sheet.col_values(col_guia_index)
-        is_singuia = num_guia in ["SIN GUIA", "S/D", "SIN GUIA-SIN GUIA", "-", "S/D-S/D"]
+        num_upper = num_guia.strip().upper()
+        is_singuia = any(term in num_upper for term in ["SIN GUIA", "SIN GUÍA", "S/D"]) or num_upper in ["-", ""]
         if num_guia in col_values and (allow_singuia_update or not is_singuia):
             row_idx = col_values.index(num_guia) + 1  
             

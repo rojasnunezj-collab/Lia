@@ -877,7 +877,9 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
         full_report = full_report.replace("Motivo: `None`", "Motivo: `Servicio de Transporte`")
         
 
-        if numero_completo in ["SIN GUIA", "SIN GUIA-SIN GUIA", "S/D-S/D", "-", "S/D", ""]:
+        numero_upper = numero_completo.strip().upper()
+        is_singuia_match = any(term in numero_upper for term in ["SIN GUIA", "SIN GUÍA", "S/D"]) or numero_upper in ["-", ""]
+        if is_singuia_match:
             reply_id = update.message.reply_to_message.message_id if (update.message and update.message.reply_to_message) else None
             user_data_cache[user_id] = user_data_cache.get(user_id, {})
             user_data_cache[user_id]['pending_singuia'] = {
