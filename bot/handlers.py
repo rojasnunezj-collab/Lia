@@ -291,7 +291,61 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====================================================================
 # --- HANDLER DE TEXTO Y BÚSQUEDA ---
 # ====================================================================
+
+async def process_manual_singuia_decision(update, context, user_id, cache, force_update):
+    msg_id = cache.get('msg_id')
+    try:
+        def save_manual():
+            creds = obtener_credenciales()
+            client = gspread.authorize(creds)
+            book2 = client.open_by_key(SHEET_ID)
+            sheet_recibidas = book2.worksheet("Guias_recibidas")
+            row_data = [
+                cache.get('fecha', ''),
+                cache.get('num_guia', ''),
+                cache.get('tipo_guia', ''),
+                cache.get('empresa', ''),
+                cache.get('fundo', ''),
+                cache.get('enlace_drive', '')
+            ]
+            return sync_upsert_row(sheet_recibidas, cache.get('num_guia', ''), row_data, col_guia_index=2, col_comentario_index=7, allow_singuia_update=force_update)
+        resultado = await asyncio.to_thread(save_manual)
+        estado = "🔄 *Guía Actualizada*" if resultado == "updated" else "✅ *Nueva Guía Registrada Manualmente*"
+        enlace = cache.get('enlace_drive', '')
+        await context.bot.edit_message_text(
+            f"{estado}\n\n"
+            f"📅 **Fecha:** `{cache.get('fecha', 'S/D')}`\n"
+            f"📄 **N° Guía:** `{cache.get('num_guia', 'S/D')}`\n"
+            f"🏷️ **Tipo:** `{cache.get('tipo_guia', 'S/D')}`\n"
+            f"🏢 **Empresa:** `{cache.get('empresa', 'S/D')}`\n"
+            f"🏡 **Fundo:** `{cache.get('fundo', 'S/D')}`\n\n"
+            f"📁 [Ver en Drive]({enlace})",
+            chat_id=user_id, message_id=msg_id,
+            parse_mode='Markdown', disable_web_page_preview=True
+        )
+        
+        if user_id not in MEMORIA_VINCULACION:
+            MEMORIA_VINCULACION[user_id] = []
+        MEMORIA_VINCULACION[user_id].append({
+            "num_guia": cache.get('num_guia', 'S/D'),
+            "fundo": cache.get('fundo', 'S/D'),
+            "message_id": cache.get('img_message_id'),
+            "bot_message_id": msg_id
+        })
+        if len(MEMORIA_VINCULACION[user_id]) > 5:
+            MEMORIA_VINCULACION[user_id].pop(0)
+            
+        user_states[user_id] = None
+        user_data_cache[user_id] = {}
+    except Exception as e:
+        logger.error(f"Error en guardado manual sg: {e}")
+        try:
+            await context.bot.edit_message_text(f"❌ Error al guardar: {e}", chat_id=user_id, message_id=msg_id)
+        except: pass
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text: return
+    text = update.message.text.strip()
     user_id = update.effective_user.id
     modo = user_states.get(user_id)
     
@@ -607,6 +661,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif modo == MODO_GUIAS_MANUAL_FUNDO:
         user_data_cache[user_id]['fundo'] = str(update.message.text).strip().upper()
         cache = user_data_cache.get(user_id, {})
+        
+        num_guia = cache.get('num_guia', '')
+        num_upper = num_guia.strip().upper()
+        is_singuia_match = any(term in num_upper for term in ["SIN GUIA", "SIN GUÍA", "S/D"]) or num_upper in ["-", ""]
+        
+        if is_singuia_match:
+            msg = await update.message.reply_text("⏳ Procesando decisión...")
+            cache['msg_id'] = msg.message_id
+            kb = [
+                [InlineKeyboardButton("✅ Registrar como NUEVA", callback_data='man_sg_nueva')],
+                [InlineKeyboardButton("🔄 Actualizar Existente", callback_data='man_sg_actualizar')]
+            ]
+            await msg.edit_text(
+                "⚠️ **ATENCIÓN:** Has ingresado esta guía manualmente como SIN GUIA.\n¿Deseas registrarla como una guía NUEVA o ACTUALIZAR la primera guía SIN GUIA que encuentre en tu Excel?",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='Markdown'
+            )
+            return
+            
         msg = await update.message.reply_text("⏳ Guardando registro manual en Guias_recibidas...")
         try:
             def save_manual():
@@ -940,7 +1013,8 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "num_guia": numero_completo,
                 "fundo": datos_sheet.get("fundo_planta", "S/D"),
                 "message_id": update.message.message_id,
-                "bot_message_id": bot_reply.message_id
+                "bot_message_id": bot_reply.message_id,
+                "enlace_drive": enlace_drive
             })
             if len(MEMORIA_VINCULACION[user_id]) > 5:
                 MEMORIA_VINCULACION[user_id].pop(0)
@@ -976,6 +1050,15 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             fundo_final = fundo_vinculado if fundo_vinculado and fundo_vinculado != "S/D" else datos_sheet.get("fundo_planta", "S/D")
             
+            # Extraer enlace_guia_recibida de la memoria vinculada si existe
+            enlace_guia_recibida = ""
+            if update.message.reply_to_message and user_id in MEMORIA_VINCULACION:
+                reply_id = update.message.reply_to_message.message_id
+                for reg in MEMORIA_VINCULACION[user_id]:
+                    if reg["message_id"] == reply_id or reg.get("bot_message_id") == reply_id:
+                        enlace_guia_recibida = reg.get("enlace_drive", "")
+                        break
+
             row_data = [
                 datos_sheet.get("fecha", ""),                # A: Fecha
                 numero_completo,                             # B: N° Guía
@@ -985,14 +1068,17 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 datos_sheet.get("empresa", ""),              # F: Empresa Principal
                 datos_sheet.get("entidad_1", ""),            # G: Destinatario/Remitente
                 datos_sheet.get("entidad_2", ""),            # H: Destinario/Proveedor
-                enlace_drive,                                # I: Link Drive
-                "",                                          # J: Observacion ia 
-                "",                                          # K: Observacion
-                fundo_final,                                 # L: Fundo/Planta
-                ""                                           # M: Certificados
+                enlace_drive,                                # I: Guia hecha
+                enlace_guia_recibida,                        # J: Guia recibida
+                "",                                          # K: Observacion ia
+                "",                                          # L: Observacion
+                fundo_final,                                 # M: Fundo/Planta
+                "",                                          # N: Certificados
+                "",                                          # O: Mes
+                ""                                           # P: Sigersol
             ]
             
-            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=10)
+            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=11)
             await async_log_action(user_id, numero_completo, f"REGISTRAR_{resultado_upsert.upper()}")
             
             estado_registro = "🔄 *Guía Actualizada (Sobrescrita)*" if resultado_upsert == "updated" else "✅ *Nueva Guía Registrada*"
@@ -1081,8 +1167,17 @@ async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFA
                     else:
                         num_recibida_l = num_recibida.lstrip('0')
                         
+                    # Buscar enlace_drive de la guia recibida en MEMORIA_VINCULACION
+                    enlace_recibida = ""
+                    if user_id in MEMORIA_VINCULACION:
+                        for reg in MEMORIA_VINCULACION[user_id]:
+                            if reg["num_guia"] == num_recibida:
+                                enlace_recibida = reg.get("enlace_drive", "")
+                                break
+
                     rc.sheet_control.update_cell(row_idx, 3, num_recibida_l) 
-                    rc.sheet_control.update_cell(row_idx, 12, fundo) 
+                    rc.sheet_control.update_cell(row_idx, 10, enlace_recibida)  # J: Guia recibida
+                    rc.sheet_control.update_cell(row_idx, 13, fundo)            # M: Fundo/Planta 
             await asyncio.to_thread(update_origen)
             
             await query.edit_message_reply_markup(reply_markup=None)
