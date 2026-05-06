@@ -22,7 +22,7 @@ from config.settings import (
     MODO_BUSCAR_CERT_FECHA, MODO_BUSCAR_CERT_FUNDO, 
     MODO_BUSCAR_CERT_CORRE, MODO_BUSCAR_CERT_EMPRESA,
     MODO_DIR_EMPRESA, MODO_DIR_FUNDO,
-    MODO_BITACORA_ADD, MODO_BITACORA_SEARCH,
+    MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_OBS_ESCRIBIR,
     DRIVE_FOLDER_LEER
 )
 from utils.helpers import clean_json_response, async_log_action
@@ -815,6 +815,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await msg.edit_text(f"❌ Error al guardar en Bitácora: {e}")
 
+    elif modo == MODO_OBS_ESCRIBIR:
+        cache = user_data_cache.get(user_id, {})
+        num_guia = cache.get("obs_guia")
+        if num_guia:
+            try:
+                await asyncio.to_thread(update_observacion_sheet, num_guia, texto)
+                await update.message.reply_text(f"✅ Observación '{texto}' guardada para la guía `{num_guia}`.", parse_mode='Markdown')
+            except Exception as e:
+                await update.message.reply_text(f"❌ Error al guardar observación: {e}")
+        user_states.pop(user_id, None)
+        user_data_cache.pop(user_id, None)
+        return
+
 # ====================================================================
 # --- HANDLER DE ARCHIVOS Y MULTIMEDIA ---
 # ====================================================================
@@ -1004,7 +1017,14 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             footer = f"\n\n{audit_status}\n📁 [Drive]({enlace_drive})\n📊 [Excel]({SHEET_URL_DIRECT})"
             await msg.delete()
-            bot_reply = await update.message.reply_text(full_report + footer, parse_mode='Markdown')
+            
+            kb_obs = [
+                [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{numero_completo}")],
+                [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{numero_completo}")],
+                [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{numero_completo}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(kb_obs)
+            bot_reply = await update.message.reply_text(full_report + footer, parse_mode='Markdown', reply_markup=reply_markup)
 
             # --- MEMORIA DE VINCULACIÓN HÍBRIDA ---
             if user_id not in MEMORIA_VINCULACION:
@@ -1138,10 +1158,53 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if os.path.exists(file_path): os.remove(file_path)
 
 # ====================================================================
+# --- HANDLER CALLBACK OBSERVACION ---
+# ====================================================================
+def update_observacion_sheet(num_guia, observacion):
+    try:
+        creds = obtener_credenciales()
+        client = gspread.authorize(creds)
+        book2 = client.open_by_key(SHEET_ID)
+        sheet_recibidas = book2.worksheet("Guias_recibidas")
+        col_values = sheet_recibidas.col_values(2) 
+        if num_guia in col_values:
+            row_idx = col_values.index(num_guia) + 1
+            sheet_recibidas.update_cell(row_idx, 9, observacion) 
+    except Exception as e:
+        logger.error(f"Error actualizando observación: {e}")
+
+async def handle_callback_observacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query.data.startswith('obs|'): return
+    
+    await query.answer("Procesando...")
+    partes = query.data.split('|')
+    accion = partes[1]
+    num_guia = partes[2]
+    user_id = update.effective_user.id
+    
+    if accion == "escribir":
+        user_states[user_id] = MODO_OBS_ESCRIBIR
+        user_data_cache[user_id] = {"obs_guia": num_guia, "msg_id": query.message.message_id}
+        await query.message.reply_text(f"✍️ Escribe la observación para la guía `{num_guia}`:", parse_mode='Markdown')
+        return
+        
+    observacion = "Guía hecha" if accion == "hecha" else "Solo certificado"
+    
+    await asyncio.to_thread(update_observacion_sheet, num_guia, observacion)
+    
+    nuevo_texto = query.message.text + f"\n\n📝 *Observación Guardada:* {observacion}"
+    try:
+        await query.edit_message_text(nuevo_texto, parse_mode='Markdown')
+    except Exception:
+        pass
+
+# ====================================================================
 # --- HANDLER CALLBACK VINCULACION ---
 # ====================================================================
 async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = update.effective_user.id
     if not query.data.startswith('vinc|'):
         return
         
