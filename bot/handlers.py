@@ -288,6 +288,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[user_id] = MODO_BITACORA_SEARCH
         kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_bitacora')]]
         await query.edit_message_text("🔎 Buscando en Bitácora\nEscribe el texto, nombre de usuario o fecha que deseas encontrar en tus anotaciones guardadas:", reply_markup=InlineKeyboardMarkup(kb))
+    elif query.data == 'man_sg_nueva':
+        cache = user_data_cache.get(user_id, {})
+        await process_manual_singuia_decision(update, context, user_id, cache, force_update=False)
+    elif query.data == 'man_sg_actualizar':
+        cache = user_data_cache.get(user_id, {})
+        await process_manual_singuia_decision(update, context, user_id, cache, force_update=True)
 # ====================================================================
 # --- HANDLER DE TEXTO Y BÚSQUEDA ---
 # ====================================================================
@@ -664,7 +670,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         num_guia = cache.get('num_guia', '')
         num_upper = num_guia.strip().upper()
-        is_singuia_match = any(term in num_upper for term in ["SIN GUIA", "SIN GUÍA", "S/D"]) or num_upper in ["-", ""]
+        terminos_genericos = ["SIN GUIA", "SIN GUÍA", "S/D", "BALANZA", "TICKET"]
+        is_singuia_match = any(term in num_upper for term in terminos_genericos) or num_upper in ["-", ""]
         
         if is_singuia_match:
             msg = await update.message.reply_text("⏳ Procesando decisión...")
