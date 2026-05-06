@@ -318,16 +318,24 @@ async def process_manual_singuia_decision(update, context, user_id, cache, force
         resultado = await asyncio.to_thread(save_manual)
         estado = "🔄 *Guía Actualizada*" if resultado == "updated" else "✅ *Nueva Guía Registrada Manualmente*"
         enlace = cache.get('enlace_drive', '')
+        num_guia_saved = cache.get('num_guia', 'S/D')
+        kb_obs = [
+            [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{num_guia_saved}")],
+            [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}")],
+            [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{num_guia_saved}")],
+            [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{num_guia_saved}")]
+        ]
         await context.bot.edit_message_text(
             f"{estado}\n\n"
             f"📅 **Fecha:** `{cache.get('fecha', 'S/D')}`\n"
-            f"📄 **N° Guía:** `{cache.get('num_guia', 'S/D')}`\n"
+            f"📄 **N° Guía:** `{num_guia_saved}`\n"
             f"🏷️ **Tipo:** `{cache.get('tipo_guia', 'S/D')}`\n"
             f"🏢 **Empresa:** `{cache.get('empresa', 'S/D')}`\n"
             f"🏡 **Fundo:** `{cache.get('fundo', 'S/D')}`\n\n"
             f"📁 [Ver en Drive]({enlace})",
             chat_id=user_id, message_id=msg_id,
-            parse_mode='Markdown', disable_web_page_preview=True
+            parse_mode='Markdown', disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup(kb_obs)
         )
         
         if user_id not in MEMORIA_VINCULACION:
@@ -678,7 +686,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cache['msg_id'] = msg.message_id
             kb = [
                 [InlineKeyboardButton("✅ Registrar como NUEVA", callback_data='man_sg_nueva')],
-                [InlineKeyboardButton("🔄 Actualizar Existente", callback_data='man_sg_actualizar')]
+                [InlineKeyboardButton("🔄 Actualizar Existente", callback_data='man_sg_actualizar')],
+                [InlineKeyboardButton("❌ Cancelar Registro", callback_data='man_sg_cancelar')]
             ]
             await msg.edit_text(
                 "⚠️ **ATENCIÓN:** Has ingresado esta guía manualmente como SIN GUIA.\n¿Deseas registrarla como una guía NUEVA o ACTUALIZAR la primera guía SIN GUIA que encuentre en tu Excel?",
@@ -706,15 +715,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             resultado = await asyncio.to_thread(save_manual)
             estado = "🔄 *Guía Actualizada*" if resultado == "updated" else "✅ *Nueva Guía Registrada Manualmente*"
             enlace = cache.get('enlace_drive', '')
+            num_guia_saved = cache.get('num_guia', 'S/D')
+            kb_obs = [
+                [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{num_guia_saved}")],
+                [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}")],
+                [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{num_guia_saved}")],
+                [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{num_guia_saved}")]
+            ]
             await msg.edit_text(
                 f"{estado}\n\n"
                 f"📅 **Fecha:** `{cache.get('fecha', 'S/D')}`\n"
-                f"📄 **N° Guía:** `{cache.get('num_guia', 'S/D')}`\n"
+                f"📄 **N° Guía:** `{num_guia_saved}`\n"
                 f"🏷️ **Tipo:** `{cache.get('tipo_guia', 'S/D')}`\n"
                 f"🏢 **Empresa:** `{cache.get('empresa', 'S/D')}`\n"
                 f"🏡 **Fundo:** `{cache.get('fundo', 'S/D')}`\n\n"
                 f"📁 [Ver en Drive]({enlace})",
-                parse_mode='Markdown', disable_web_page_preview=True
+                parse_mode='Markdown', disable_web_page_preview=True,
+                reply_markup=InlineKeyboardMarkup(kb_obs)
             )
             
             # --- MEMORIA DE VINCULACIÓN HÍBRIDA (MANUAL) ---
@@ -1028,7 +1045,8 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb_obs = [
                 [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{numero_completo}")],
                 [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{numero_completo}")],
-                [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{numero_completo}")]
+                [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{numero_completo}")],
+                [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{numero_completo}")]
             ]
             reply_markup = InlineKeyboardMarkup(kb_obs)
             bot_reply = await update.message.reply_text(full_report + footer, parse_mode='Markdown', reply_markup=reply_markup)
@@ -1194,6 +1212,14 @@ async def handle_callback_observacion(update: Update, context: ContextTypes.DEFA
         user_states[user_id] = MODO_OBS_ESCRIBIR
         user_data_cache[user_id] = {"obs_guia": num_guia, "msg_id": query.message.message_id}
         await query.message.reply_text(f"✍️ Escribe la observación para la guía `{num_guia}`:", parse_mode='Markdown')
+        return
+        
+    if accion == "cancelar":
+        nuevo_texto = query.message.text + f"\n\n✅ Registro completado sin observaciones adicionales."
+        try:
+            await query.edit_message_text(nuevo_texto, parse_mode='Markdown', reply_markup=None)
+        except Exception:
+            pass
         return
         
     observacion = "Guía hecha" if accion == "hecha" else "Solo certificado"
