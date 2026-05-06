@@ -7,7 +7,7 @@ google-api-python-client
 gspread
 # oauth2client  # Removido por obsoleto
 google-cloud-aiplatform
-python-telegram-bot
+python-telegram-bot[job-queue]
 Pillow
 requests
 pytz
