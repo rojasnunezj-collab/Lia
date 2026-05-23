@@ -30,8 +30,24 @@ from core.ai_client import generar_con_reintento
 from core.sheets_client import (
     conectar_servicios, async_get_all_records, async_buscar_link_en_drive, 
     async_subir_a_drive, sync_upsert_row, obtener_credenciales, SHEET_ID,
-    SHEET_URL_DIRECT, async_upsert_row
+    SHEET_URL_DIRECT, normalizar_valor_upper
 )
+
+def normalize_guide_number(val):
+    if not val:
+        return ""
+    val_str = str(val).strip().upper()
+    val_clean = re.sub(r'[^A-Z0-9\-]', '', val_str)
+    if "-" in val_clean:
+        parts = val_clean.split("-")
+        normalized_parts = []
+        for p in parts:
+            p_strip = p.lstrip('0')
+            normalized_parts.append(p_strip if p_strip else '0')
+        return "-".join(normalized_parts)
+    else:
+        p_strip = val_clean.lstrip('0')
+        return p_strip if p_strip else '0'
 import core.sheets_client as rc 
 
 # ====================================================================
@@ -344,7 +360,8 @@ async def process_manual_singuia_decision(update, context, user_id, cache, force
             "num_guia": cache.get('num_guia', 'S/D'),
             "fundo": cache.get('fundo', 'S/D'),
             "message_id": cache.get('img_message_id'),
-            "bot_message_id": msg_id
+            "bot_message_id": msg_id,
+            "enlace_drive": cache.get('enlace_drive', '')
         })
         if len(MEMORIA_VINCULACION[user_id]) > 5:
             MEMORIA_VINCULACION[user_id].pop(0)
@@ -502,7 +519,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             def update_col_j():
                 col_values = rc.sheet_control.col_values(2)
                 row_idx = col_values.index(num_guia) + 1
-                rc.sheet_control.update_cell(row_idx, 11, comentario)
+                rc.sheet_control.update_cell(row_idx, 12, normalizar_valor_upper(comentario))
 
             await asyncio.to_thread(update_col_j)
             await async_log_action(user_id, num_guia, "COMENTARIO_MANUAL_GUARDADO")
@@ -649,7 +666,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(f"❌ Error en la búsqueda de directori: {e}")
 
     elif modo == MODO_GUIAS_MANUAL_FECHA:
-        user_data_cache[user_id]['fecha'] = str(update.message.text).strip()
+        fecha_raw = str(update.message.text).strip()
+        fecha_formateada = fecha_raw.replace("/", "-").replace(".", "-")
+        user_data_cache[user_id]['fecha'] = fecha_formateada
         user_states[user_id] = MODO_GUIAS_MANUAL_NUMGUIA
         kb = [[InlineKeyboardButton("🔙 Volver", callback_data='manual_volver_fecha')]]
         await update.message.reply_text("📝 Paso 2/5 — Escribe el N° de Guía (Ej: T001-44 o EG03-293):", reply_markup=InlineKeyboardMarkup(kb))
@@ -705,13 +724,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sheet_recibidas = book2.worksheet("Guias_recibidas")
                 row_data = [
                     cache.get('fecha', ''),
-                    cache.get('num_guia', ''),
-                    cache.get('tipo_guia', ''),
-                    cache.get('empresa', ''),
-                    cache.get('fundo', ''),
+                    str(cache.get('num_guia', '')).upper(),
+                    str(cache.get('tipo_guia', '')).upper(),
+                    str(cache.get('empresa', '')).upper(),
+                    str(cache.get('fundo', '')).upper(),
                     cache.get('enlace_drive', '')
                 ]
-                return sync_upsert_row(sheet_recibidas, cache.get('num_guia', ''), row_data, col_guia_index=2, col_comentario_index=7)
+                return sync_upsert_row(sheet_recibidas, cache.get('num_guia', '').upper(), row_data, col_guia_index=2, col_comentario_index=7)
             resultado = await asyncio.to_thread(save_manual)
             estado = "🔄 *Guía Actualizada*" if resultado == "updated" else "✅ *Nueva Guía Registrada Manualmente*"
             enlace = cache.get('enlace_drive', '')
@@ -741,7 +760,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "num_guia": cache.get('num_guia', 'S/D'),
                 "fundo": cache.get('fundo', 'S/D'),
                 "message_id": cache.get('img_message_id', update.message.message_id),
-                "bot_message_id": msg.message_id
+                "bot_message_id": msg.message_id,
+                "enlace_drive": enlace
             })
             if len(MEMORIA_VINCULACION[user_id]) > 5:
                 MEMORIA_VINCULACION[user_id].pop(0)
@@ -831,6 +851,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     sheet_bitacora.append_row(["Fecha", "Usuario", "Tipo Archivo", "Enlace Drive", "Nota/Comentario"])
 
                 row_data = [timestamp, username, "Texto/Anotación", "", texto]
+                row_data = [normalizar_valor_upper(x) for x in row_data]
                 next_row = len(sheet_bitacora.get_all_values()) + 1
                 sheet_bitacora.insert_row(row_data, index=next_row, value_input_option='USER_ENTERED')
                 
@@ -923,6 +944,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     sheet_bitacora.append_row(["Fecha", "Usuario", "Tipo Archivo", "Enlace Drive", "Nota/Comentario"])
 
                 row_data = [timestamp, username, tipo_archivo, enlace_drive, comentario]
+                row_data = [normalizar_valor_upper(x) for x in row_data]
                 next_row = len(sheet_bitacora.get_all_values()) + 1
                 sheet_bitacora.insert_row(row_data, index=next_row, value_input_option='USER_ENTERED')
                 
@@ -1123,7 +1145,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ""                                           # P: Sigersol
             ]
             
-            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=11)
+            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=12)
             await async_log_action(user_id, numero_completo, f"REGISTRAR_{resultado_upsert.upper()}")
             
             estado_registro = "🔄 *Guía Actualizada (Sobrescrita)*" if resultado_upsert == "updated" else "✅ *Nueva Guía Registrada*"
@@ -1192,9 +1214,17 @@ def update_observacion_sheet(num_guia, observacion):
         book2 = client.open_by_key(SHEET_ID)
         sheet_recibidas = book2.worksheet("Guias_recibidas")
         col_values = sheet_recibidas.col_values(2) 
-        if num_guia in col_values:
-            row_idx = col_values.index(num_guia) + 1
-            sheet_recibidas.update_cell(row_idx, 9, observacion) 
+        
+        norm_guia = normalize_guide_number(num_guia)
+        row_idx = -1
+        for idx, val in enumerate(col_values):
+            if normalize_guide_number(val) == norm_guia:
+                row_idx = idx + 1
+                break
+                
+        if row_idx != -1:
+            sheet_recibidas.update_cell(row_idx, 9, normalizar_valor_upper(observacion))
+            logger.info(f"✅ Observación {observacion} guardada en Guias_recibidas columna I (9), fila {row_idx}")
     except Exception as e:
         logger.error(f"Error actualizando observación: {e}")
 
@@ -1254,26 +1284,32 @@ async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFA
                 await asyncio.to_thread(conectar_servicios)
             def update_origen():
                 col_values = rc.sheet_control.col_values(2) 
-                if num_hecha in col_values:
-                    row_idx = col_values.index(num_hecha) + 1
-                    
+                norm_hecha = normalize_guide_number(num_hecha)
+                row_idx = -1
+                for idx, val in enumerate(col_values):
+                    if normalize_guide_number(val) == norm_hecha:
+                        row_idx = idx + 1
+                        break
+                        
+                if row_idx != -1:
                     if "-" in num_recibida:
                         p = num_recibida.split("-")
                         num_recibida_l = f"{p[0]}-{p[1].lstrip('0')}"
                     else:
                         num_recibida_l = num_recibida.lstrip('0')
                         
-                    # Buscar enlace_drive de la guia recibida en MEMORIA_VINCULACION
+                    # Buscar enlace_drive de la guia recibida en MEMORIA_VINCULACION con normalización robusta
                     enlace_recibida = ""
+                    norm_recibida = normalize_guide_number(num_recibida)
                     if user_id in MEMORIA_VINCULACION:
                         for reg in MEMORIA_VINCULACION[user_id]:
-                            if reg["num_guia"] == num_recibida:
+                            if normalize_guide_number(reg.get("num_guia", "")) == norm_recibida:
                                 enlace_recibida = reg.get("enlace_drive", "")
                                 break
 
-                    rc.sheet_control.update_cell(row_idx, 3, num_recibida_l) 
-                    rc.sheet_control.update_cell(row_idx, 10, enlace_recibida)  # J: Guia recibida
-                    rc.sheet_control.update_cell(row_idx, 13, fundo)            # M: Fundo/Planta 
+                    rc.sheet_control.update_cell(row_idx, 3, normalizar_valor_upper(num_recibida_l)) 
+                    rc.sheet_control.update_cell(row_idx, 10, enlace_recibida)  # J: Guia recibida (URL)
+                    rc.sheet_control.update_cell(row_idx, 13, normalizar_valor_upper(fundo))            # M: Fundo/Planta
             await asyncio.to_thread(update_origen)
             
             await query.edit_message_reply_markup(reply_markup=None)

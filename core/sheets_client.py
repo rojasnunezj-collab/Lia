@@ -110,9 +110,9 @@ def subir_a_drive(file_path, mime_type, folder_id=None):
             final_folder = folder_id if folder_id else DRIVE_FOLDER_ID
             if final_folder: file_metadata['parents'] = [final_folder]
                 
-            media = MediaFileUpload(file_path, mimetype=mime_type)
-            file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink', supportsAllDrives=True).execute()
-            drive_service.permissions().create(fileId=file.get('id'), body={'type': 'anyone', 'role': 'reader'}).execute()
+            media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
+            file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink', supportsAllDrives=True).execute(num_retries=3)
+            drive_service.permissions().create(fileId=file.get('id'), body={'type': 'anyone', 'role': 'reader'}).execute(num_retries=3)
             return file.get('webViewLink')
         except Exception as e:
             if attempt < 2: time.sleep(5)
@@ -140,23 +140,38 @@ def buscar_link_en_drive(nombre_archivo):
 async def async_buscar_link_en_drive(nombre_archivo):
     return await asyncio.to_thread(buscar_link_en_drive, nombre_archivo)
 
+def normalizar_valor_upper(val):
+    if isinstance(val, str):
+        val_strip = val.strip()
+        if val_strip.lower().startswith("http://") or val_strip.lower().startswith("https://"):
+            return val_strip
+        return val_strip.upper()
+    return val
+
 # ====================================================================
 # --- GOOGLE SHEETS UPSERT ---
 # ====================================================================
 def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_index=9, allow_singuia_update=False):
     try:
-        timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M")
+        timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M:%S")
+        
+        # Normalizar todo el row_data a mayúsculas
+        row_data = [normalizar_valor_upper(x) for x in row_data]
+        
         if not num_guia:
             next_row = len(sheet.get_all_values()) + 1
             sheet.insert_row(row_data, index=next_row, value_input_option='USER_ENTERED')
             return "appended"
             
         col_values = sheet.col_values(col_guia_index)
-        num_upper = num_guia.strip().upper()
+        num_upper = str(num_guia).strip().upper()
+        col_values_upper = [str(x).strip().upper() for x in col_values]
+        
         terminos_genericos = ["SIN GUIA", "SIN GUÍA", "S/D", "BALANZA", "TICKET"]
         is_singuia = any(term in num_upper for term in terminos_genericos) or num_upper in ["-", ""]
-        if num_guia in col_values and (allow_singuia_update or not is_singuia):
-            row_idx = col_values.index(num_guia) + 1  
+        
+        if num_upper in col_values_upper and (allow_singuia_update or not is_singuia):
+            row_idx = col_values_upper.index(num_upper) + 1  
             
             while len(row_data) < col_comentario_index:
                 row_data.append("")
