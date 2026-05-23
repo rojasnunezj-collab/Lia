@@ -12,7 +12,7 @@ from telegram.ext import Application, ApplicationBuilder, CommandHandler, Messag
 from config.settings import logger, KEY_FILE
 from utils.helpers import init_db
 from core.sheets_client import conectar_servicios
-from bot.handlers import start, ping, button_handler, handle_text, handle_files, handle_callback_vinculacion, handle_callback_observacion, daily_certificate_reminder
+from bot.handlers import start, ping, button_handler, handle_text, handle_files, handle_callback_vinculacion, handle_callback_observacion, handle_callback_reminder, daily_certificate_reminder
 
 # ====================================================================
 # --- INICIALIZACIÓN DE ENTORNO ---
@@ -89,6 +89,7 @@ def main():
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CallbackQueryHandler(handle_callback_vinculacion, pattern=r"^vinc\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_observacion, pattern=r"^obs\|"))
+    app.add_handler(CallbackQueryHandler(handle_callback_reminder, pattern=r"^rem\|"))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VOICE | filters.AUDIO | filters.VIDEO, handle_files))

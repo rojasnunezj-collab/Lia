@@ -67,20 +67,105 @@ PET_TZ = timezone(timedelta(hours=-5))
 async def prosembra_notification_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     guia = job.data.get("guia", "desconocida")
+    empresa = "PROSEMBRA"
+    
+    kb = [
+        [
+            InlineKeyboardButton("✅ Sí", callback_data=f"rem|si|{guia}|{empresa}"),
+            InlineKeyboardButton("❌ No", callback_data=f"rem|no|{guia}|{empresa}")
+        ]
+    ]
+    
     await context.bot.send_message(
         chat_id=job.chat_id,
-        text=f"🔔 *Recordatorio Prosembra:*\nHan pasado 30 minutos desde la lectura de la guía `{guia}`.\n¿Ya tienes el peso?",
-        parse_mode='Markdown'
+        text=f"🔔 *Recordatorio Prosembra:*\nHan pasado 30 minutos desde el registro de la guía `{guia}`.\n¿Ya tienes el peso?",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
 async def olivos_notification_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     guia = job.data.get("guia", "desconocida")
+    empresa = "LOS OLIVOS"
+    
+    kb = [
+        [
+            InlineKeyboardButton("✅ Sí", callback_data=f"rem|si|{guia}|{empresa}"),
+            InlineKeyboardButton("❌ No", callback_data=f"rem|no|{guia}|{empresa}")
+        ]
+    ]
+    
     await context.bot.send_message(
         chat_id=job.chat_id,
-        text=f"🔔 *Recordatorio Los Olivos:*\nHan pasado 30 minutos desde la lectura de la guía `{guia}`.",
-        parse_mode='Markdown'
+        text=f"🔔 *Recordatorio Los Olivos:*\nHan pasado 30 minutos desde el registro de la guía `{guia}`.\n¿Ya tienes el peso?",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(kb)
     )
+
+async def handle_callback_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query.data.startswith('rem|'):
+        return
+        
+    await query.answer()
+    
+    partes = query.data.split("|")
+    accion = partes[1]
+    
+    if accion == "si":
+        guia = partes[2]
+        empresa = partes[3]
+        await query.edit_message_text(
+            f"🔔 *Recordatorio {empresa.title()}:*\n"
+            f"📄 Guía: `{guia}`\n\n"
+            f"✅ *El peso ya está listo.* ¡Recordatorio finalizado!",
+            parse_mode='Markdown'
+        )
+        
+    elif accion == "no":
+        guia = partes[2]
+        empresa = partes[3]
+        
+        kb = [
+            [InlineKeyboardButton("⏰ 15 min", callback_data=f"rem|set|15|{guia}|{empresa}")],
+            [InlineKeyboardButton("⏰ 30 min", callback_data=f"rem|set|30|{guia}|{empresa}")],
+            [InlineKeyboardButton("⏰ 1 hora", callback_data=f"rem|set|60|{guia}|{empresa}")],
+            [InlineKeyboardButton("⏰ 2 horas", callback_data=f"rem|set|120|{guia}|{empresa}")],
+            [InlineKeyboardButton("❌ Cancelar Recordatorios", callback_data=f"rem|cancel|{guia}|{empresa}")]
+        ]
+        
+        await query.edit_message_text(
+            f"🔔 *Recordatorio {empresa.title()}:*\n"
+            f"📄 Guía: `{guia}`\n\n"
+            f"⏳ El peso aún no está listo. ¿En cuánto tiempo deseas que te vuelva a recordar?",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        
+    elif accion == "set":
+        minutos = int(partes[2])
+        guia = partes[3]
+        empresa = partes[4]
+        chat_id = query.message.chat_id
+        
+        # Programar nuevo recordatorio
+        job_func = prosembra_notification_job if empresa.upper() == "PROSEMBRA" else olivos_notification_job
+        context.job_queue.run_once(job_func, minutos * 60, chat_id=chat_id, data={"guia": guia})
+        
+        tiempo_str = f"{minutos} minutos" if minutos < 60 else f"{minutos // 60} hora(s)"
+        
+        await query.edit_message_text(
+            f"⏰ *Listo.* He programado un nuevo recordatorio en *{tiempo_str}* para la guía `{guia}`.",
+            parse_mode='Markdown'
+        )
+        
+    elif accion == "cancel":
+        guia = partes[2]
+        empresa = partes[3]
+        await query.edit_message_text(
+            f"❌ *Recordatorios cancelados* para la guía `{guia}`.",
+            parse_mode='Markdown'
+        )
 
 async def daily_certificate_reminder(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(PET_TZ)
@@ -138,7 +223,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
         [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
         [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
-        [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')]
+        [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
+        [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
     ]
     await update.message.reply_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -153,6 +239,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Ignorando error al responder query (posiblemente muy antiguo): {e}")
     user_id = query.from_user.id
     
+    if query.data == 'cancelar_start':
+        user_states[user_id] = None
+        user_data_cache[user_id] = {}
+        await query.edit_message_text("👍 Entendido. Me quedo atenta cuando me necesites. ¡Que tengas un excelente día! 👋", reply_markup=None)
+        return
+        
     if query.data == 'cancelar_operacion':
         user_states[user_id] = None
         user_data_cache[user_id] = {}
@@ -160,7 +252,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
             [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
             [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
-            [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')]
+            [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
+            [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
         await query.edit_message_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -170,7 +263,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
             [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
             [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
-            [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')]
+            [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
+            [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
         await query.edit_message_text("👋 Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
         
@@ -363,6 +457,13 @@ async def process_manual_singuia_decision(update, context, user_id, cache, force
             "bot_message_id": msg_id,
             "enlace_drive": cache.get('enlace_drive', '')
         })
+        
+        # --- PROGRAMACIÓN DE RECORDATORIOS PARA MANUAL SINGUIA ---
+        empresa_upper = str(cache.get('empresa', '')).upper()
+        if "PROSEMBRA" in empresa_upper:
+            context.job_queue.run_once(prosembra_notification_job, 30 * 60, chat_id=user_id, data={"guia": num_guia_saved})
+        elif "LOS OLIVOS" in empresa_upper:
+            context.job_queue.run_once(olivos_notification_job, 30 * 60, chat_id=user_id, data={"guia": num_guia_saved})
         if len(MEMORIA_VINCULACION[user_id]) > 5:
             MEMORIA_VINCULACION[user_id].pop(0)
             
@@ -766,6 +867,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(MEMORIA_VINCULACION[user_id]) > 5:
                 MEMORIA_VINCULACION[user_id].pop(0)
             # ----------------------------------------
+            
+            # --- PROGRAMACIÓN DE RECORDATORIOS PARA MANUAL REGULAR ---
+            empresa_upper = str(cache.get('empresa', '')).upper()
+            if "PROSEMBRA" in empresa_upper:
+                context.job_queue.run_once(prosembra_notification_job, 30 * 60, chat_id=user_id, data={"guia": num_guia_saved})
+            elif "LOS OLIVOS" in empresa_upper:
+                context.job_queue.run_once(olivos_notification_job, 30 * 60, chat_id=user_id, data={"guia": num_guia_saved})
             
             user_states[user_id] = None
             user_data_cache[user_id] = {}
@@ -1192,11 +1300,8 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True)
                 
-            texto_analisis = f"{datos_sheet.get('empresa', '')} {datos_sheet.get('entidad_1', '')}".upper()
-            if "PROSEMBRA" in texto_analisis:
-                context.job_queue.run_once(prosembra_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
-            elif "LOS OLIVOS" in texto_analisis:
-                context.job_queue.run_once(olivos_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
+            # Recordatorios eliminados para Registro_Guias (guias hechas) por solicitud del usuario
+            pass
                 
     except Exception as e:
         logger.error(f"Error: {e}")
