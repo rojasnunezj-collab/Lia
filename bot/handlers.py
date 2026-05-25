@@ -1245,15 +1245,15 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 datos_sheet.get("entidad_2", ""),            # H: Destinario/Proveedor
                 enlace_drive,                                # I: Guia hecha
                 enlace_guia_recibida,                        # J: Guia recibida
-                "",                                          # K: Observacion ia
-                "",                                          # L: Observacion
+                "",                                          # K: Sistema/IA (✅ Nuevo...)
+                datos_sheet.get("observacion", ""),          # L: Observacion Manual
                 fundo_final,                                 # M: Fundo/Planta
                 "",                                          # N: Certificados
                 "",                                          # O: Mes
                 ""                                           # P: Sigersol
             ]
             
-            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=12)
+            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=11)
             await async_log_action(user_id, numero_completo, f"REGISTRAR_{resultado_upsert.upper()}")
             
             estado_registro = "🔄 *Guía Actualizada (Sobrescrita)*" if resultado_upsert == "updated" else "✅ *Nueva Guía Registrada*"
