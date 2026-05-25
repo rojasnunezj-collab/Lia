@@ -25,7 +25,7 @@ from config.settings import (
     MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_OBS_ESCRIBIR,
     DRIVE_FOLDER_LEER
 )
-from utils.helpers import clean_json_response, async_log_action
+from utils.helpers import clean_json_response, async_log_action, load_memoria_vinculacion, save_memoria_vinculacion
 from core.ai_client import generar_con_reintento
 from core.sheets_client import (
     conectar_servicios, async_get_all_records, async_buscar_link_en_drive, 
@@ -57,7 +57,7 @@ import core.sheets_client as rc
 # ====================================================================
 user_states = {}
 user_data_cache = {}
-MEMORIA_VINCULACION = {}
+MEMORIA_VINCULACION = load_memoria_vinculacion() or {}
 
 # ====================================================================
 # --- TAREAS PROGRAMADAS (JOBS) ---
@@ -466,6 +466,7 @@ async def process_manual_singuia_decision(update, context, user_id, cache, force
             context.job_queue.run_once(olivos_notification_job, 30 * 60, chat_id=user_id, data={"guia": num_guia_saved})
         if len(MEMORIA_VINCULACION[user_id]) > 5:
             MEMORIA_VINCULACION[user_id].pop(0)
+        save_memoria_vinculacion(MEMORIA_VINCULACION)
             
         user_states[user_id] = None
         user_data_cache[user_id] = {}
@@ -866,6 +867,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             if len(MEMORIA_VINCULACION[user_id]) > 5:
                 MEMORIA_VINCULACION[user_id].pop(0)
+            save_memoria_vinculacion(MEMORIA_VINCULACION)
             # ----------------------------------------
             
             # --- PROGRAMACIÓN DE RECORDATORIOS PARA MANUAL REGULAR ---
@@ -1193,6 +1195,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             if len(MEMORIA_VINCULACION[user_id]) > 5:
                 MEMORIA_VINCULACION[user_id].pop(0)
+            save_memoria_vinculacion(MEMORIA_VINCULACION)
             # ----------------------------------------
             
             texto_analisis = f"{datos_sheet.get('empresa', '')} {datos_sheet.get('entidad_1', '')}".upper()

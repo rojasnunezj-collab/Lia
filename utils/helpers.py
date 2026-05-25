@@ -4,6 +4,7 @@
 import re
 import sqlite3
 import asyncio
+import json
 from datetime import datetime
 from config.settings import logger
 
@@ -35,9 +36,48 @@ def init_db():
                 accion TEXT
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS estado_bot (
+                clave TEXT PRIMARY KEY,
+                valor TEXT
+            )
+        ''')
         conn.commit()
     except Exception as e:
         logger.error(f"Error inicializando BD: {e}")
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+
+def load_memoria_vinculacion():
+    try:
+        conn = sqlite3.connect('lia_logs.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT valor FROM estado_bot WHERE clave = 'MEMORIA_VINCULACION'")
+        row = cursor.fetchone()
+        if row:
+            memoria = json.loads(row[0])
+            return {int(k) if k.isdigit() else k: v for k, v in memoria.items()}
+    except Exception as e:
+        logger.error(f"Error cargando memoria_vinculacion: {e}")
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
+    return {}
+
+def save_memoria_vinculacion(memoria_dict):
+    try:
+        conn = sqlite3.connect('lia_logs.db')
+        cursor = conn.cursor()
+        valor_json = json.dumps(memoria_dict)
+        cursor.execute('''
+            INSERT INTO estado_bot (clave, valor)
+            VALUES (?, ?)
+            ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor
+        ''', ('MEMORIA_VINCULACION', valor_json))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error guardando memoria_vinculacion: {e}")
     finally:
         if 'conn' in locals() and conn:
             conn.close()
