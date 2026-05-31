@@ -184,11 +184,11 @@ async def daily_certificate_reminder(context: ContextTypes.DEFAULT_TYPE):
     if not admin_chat_id: return
 
     try:
-        if not rc.sheet_control:
-            await asyncio.to_thread(rc.conectar_servicios)
-        
         def fetch_guias():
-            return rc.sheet_control.get_all_records()
+            creds = obtener_credenciales()
+            client = gspread.authorize(creds)
+            book2 = client.open_by_key(SHEET_ID)
+            return book2.worksheet("Guias_recibidas").get_all_records()
             
         registros = await asyncio.to_thread(fetch_guias)
         pendientes = []
@@ -198,15 +198,15 @@ async def daily_certificate_reminder(context: ContextTypes.DEFAULT_TYPE):
             if "/04/2026" in fecha or "/05/2026" in fecha or "/06/2026" in fecha or "/07/2026" in fecha or "/08/2026" in fecha or "/09/2026" in fecha or "/10/2026" in fecha or "/11/2026" in fecha or "/12/2026" in fecha or "2027" in fecha:
                 certificado = str(r.get("Certificados", "")).strip()
                 empresa = str(r.get("Empresa Principal", "")).upper()
-                destinatario = str(r.get("Destinatario/Remitente", "")).upper()
-                texto_cliente = f"{empresa} {destinatario}"
+                fundo = str(r.get("Fundo/Planta", "")).upper()
+                texto_cliente = f"{empresa} {fundo}"
                 
                 # Omitir Prosembra y Los Olivos (se avisan a los 30 mins)
                 if not certificado and "PROSEMBRA" not in texto_cliente and "LOS OLIVOS" not in texto_cliente:
                     pendientes.append(str(r.get("N° Guía", "S/D")))
         
         if pendientes:
-            msg = f"📅 🔔 *RECORDATORIO DE FIN DE MES*\nHay {len(pendientes)} certificados pendientes desde abril:\n\n"
+            msg = f"📅 🔔 *RECORDATORIO DE FIN DE MES*\nHay {len(pendientes)} certificados pendientes desde abril en la pestaña Guías Recibidas:\n\n"
             msg += ", ".join(pendientes[:20])
             if len(pendientes) > 20:
                 msg += f" ... y {len(pendientes)-20} más."
