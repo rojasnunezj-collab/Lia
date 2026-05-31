@@ -429,9 +429,11 @@ async def process_manual_singuia_decision(update, context, user_id, cache, force
         estado = "🔄 *Guía Actualizada*" if resultado == "updated" else "✅ *Nueva Guía Registrada Manualmente*"
         enlace = cache.get('enlace_drive', '')
         num_guia_saved = cache.get('num_guia', 'S/D')
+        is_petramas = "PETRAMAS" in str(cache.get('empresa', '')).upper() or "PETRAMAS" in str(cache.get('fundo', '')).upper()
+        pet_flag = "P" if is_petramas else "N"
         kb_obs = [
-            [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{num_guia_saved}")],
-            [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}")],
+            [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{num_guia_saved}|{pet_flag}")],
+            [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}|{pet_flag}")],
             [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{num_guia_saved}")],
             [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{num_guia_saved}")]
         ]
@@ -837,9 +839,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             estado = "🔄 *Guía Actualizada*" if resultado == "updated" else "✅ *Nueva Guía Registrada Manualmente*"
             enlace = cache.get('enlace_drive', '')
             num_guia_saved = cache.get('num_guia', 'S/D')
+            is_petramas = "PETRAMAS" in str(cache.get('empresa', '')).upper() or "PETRAMAS" in str(cache.get('fundo', '')).upper()
+            pet_flag = "P" if is_petramas else "N"
             kb_obs = [
-                [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{num_guia_saved}")],
-                [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}")],
+                [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{num_guia_saved}|{pet_flag}")],
+                [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}|{pet_flag}")],
                 [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{num_guia_saved}")],
                 [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{num_guia_saved}")]
             ]
@@ -1174,9 +1178,11 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             footer = f"\n\n{audit_status}\n📁 [Drive]({enlace_drive})\n📊 [Excel]({SHEET_URL_DIRECT})"
             await msg.delete()
             
+            is_petramas = "PETRAMAS" in full_report.upper()
+            pet_flag = "P" if is_petramas else "N"
             kb_obs = [
-                [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{numero_completo}")],
-                [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{numero_completo}")],
+                [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{numero_completo}|{pet_flag}")],
+                [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{numero_completo}|{pet_flag}")],
                 [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{numero_completo}")],
                 [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{numero_completo}")]
             ]
@@ -1315,7 +1321,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====================================================================
 # --- HANDLER CALLBACK OBSERVACION ---
 # ====================================================================
-def update_observacion_sheet(num_guia, observacion):
+def update_observacion_sheet(num_guia, observacion, pet_flag="N"):
     try:
         creds = obtener_credenciales()
         client = gspread.authorize(creds)
@@ -1325,14 +1331,24 @@ def update_observacion_sheet(num_guia, observacion):
         
         norm_guia = normalize_guide_number(num_guia)
         row_idx = -1
-        for idx, val in enumerate(col_values):
-            if normalize_guide_number(val) == norm_guia:
+        # Iterar al revés para encontrar el registro más reciente (corrige error con "S/D")
+        for idx in range(len(col_values)-1, -1, -1):
+            if normalize_guide_number(col_values[idx]) == norm_guia:
                 row_idx = idx + 1
                 break
                 
         if row_idx != -1:
+            # Escribir la observación en la columna I (9)
             sheet_recibidas.update_cell(row_idx, 9, normalizar_valor_upper(observacion))
             logger.info(f"✅ Observación {observacion} guardada en Guias_recibidas columna I (9), fila {row_idx}")
+            
+            # Lógica para columna J (10) según petramas leída en la IA o flag manual
+            if observacion == "Guía hecha":
+                if pet_flag == "P":
+                    sheet_recibidas.update_cell(row_idx, 10, "DISPOSICIÓN FINAL")
+                else:
+                    sheet_recibidas.update_cell(row_idx, 10, "COMERCIALIZACIÓN")
+                    
     except Exception as e:
         logger.error(f"Error actualizando observación: {e}")
 
@@ -1344,6 +1360,7 @@ async def handle_callback_observacion(update: Update, context: ContextTypes.DEFA
     partes = query.data.split('|')
     accion = partes[1]
     num_guia = partes[2]
+    pet_flag = partes[3] if len(partes) > 3 else "N"
     user_id = update.effective_user.id
     
     if accion == "escribir":
@@ -1362,7 +1379,7 @@ async def handle_callback_observacion(update: Update, context: ContextTypes.DEFA
         
     observacion = "Guía hecha" if accion == "hecha" else "Solo certificado"
     
-    await asyncio.to_thread(update_observacion_sheet, num_guia, observacion)
+    await asyncio.to_thread(update_observacion_sheet, num_guia, observacion, pet_flag)
     
     nuevo_texto = query.message.text + f"\n\n📝 *Observación Guardada:* {observacion}"
     try:
