@@ -1,13 +1,13 @@
 python-dotenv
-google-cloud-documentai
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
 google-api-python-client
 gspread
-# oauth2client  # Removido por obsoleto
-google-cloud-aiplatform
+google-genai
 python-telegram-bot[job-queue]
 Pillow
 requests
 pytz
+
+pytest==8.1.1

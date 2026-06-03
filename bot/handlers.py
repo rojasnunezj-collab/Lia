@@ -7,12 +7,12 @@ import asyncio
 import re
 import calendar
 from datetime import datetime, timezone, timedelta
-import vertexai  # <--- Agregado para inicializar la IA
+from core.security import is_authorized_user
+from google.genai import types
 from google.oauth2 import service_account  # <--- Agregado para las llaves
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 import gspread
-from vertexai.generative_models import Part
 
 from config.settings import (
     logger, MODO_GUIAS_LEER, MODO_GUIAS_REGISTRAR,
@@ -1068,7 +1068,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         with open(file_path, "rb") as bf: content = bf.read()
-        part = Part.from_data(data=content, mime_type=mime_type)
+        part = types.Part.from_bytes(data=content, mime_type=mime_type)
 
         prompt = f"""
         Eres un auditor de SUNAT evaluando una Guía de Remisión (GRE) en Perú. Tienes PROHIBIDO alucinar datos.
