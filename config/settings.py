@@ -24,14 +24,7 @@ load_dotenv(dotenv_path=env_path)
 KEY_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 PROJECT_ID = os.getenv("DOCUMENT_AI_PROJECT_ID")
 REGION_ESTABLE = os.getenv("VERTEX_AI_LOCATION", "us-central1") 
-MODEL_NAME = "gemini-2.0-flash" 
-# ====================================================================
-# --- VARIABLES GLOBALES ---
-# ====================================================================
-KEY_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-PROJECT_ID = os.getenv("DOCUMENT_AI_PROJECT_ID")
-REGION_ESTABLE = os.getenv("VERTEX_AI_LOCATION", "us-central1") 
-MODEL_NAME = "gemini-2.0-flash" 
+MODEL_NAME = "gemini-3.5-flash" 
 
 # --- NUEVAS VARIABLES AGREGADAS ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
