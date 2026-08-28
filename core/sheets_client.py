@@ -34,13 +34,16 @@ from google.oauth2.credentials import Credentials as OAuthCredentials
 def obtener_credenciales():
     token_path = '/app/token.json'
     sa_path = '/app/credenciales_lia.json'
+    render_secret_path = '/etc/secrets/credenciales_lia.json'
     
     # Fallback a archivos locales si no estamos en Docker
     local_token = 'token.json'
     if not os.path.exists(token_path) and os.path.exists(local_token):
         token_path = local_token
         
-    if not os.path.exists(sa_path) and KEY_FILE and os.path.exists(KEY_FILE):
+    if os.path.exists(render_secret_path):
+        sa_path = render_secret_path
+    elif not os.path.exists(sa_path) and KEY_FILE and os.path.exists(KEY_FILE):
         sa_path = KEY_FILE
 
     SCOPES_COMBINED = [
