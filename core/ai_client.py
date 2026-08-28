@@ -5,7 +5,7 @@ import asyncio
 from google import genai
 from google.genai import types
 from google.genai.errors import ClientError, APIError
-from config.settings import PROJECT_ID, REGION_ESTABLE, MODEL_NAME, FALLBACK_MODELS
+from config.settings import PROJECT_ID, REGION_ESTABLE, MODEL_NAME, FALLBACK_MODELS, logger
 
 # ====================================================================
 # --- INICIALIZACIÓN IA ---
