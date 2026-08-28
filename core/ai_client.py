@@ -18,9 +18,11 @@ def init_ai(credentials=None):
     if not credentials:
         from core.sheets_client import obtener_credenciales
         credentials = obtener_credenciales()
-    if credentials:
-        client = genai.Client(vertexai=True, project=PROJECT_ID, location=REGION_ESTABLE, credentials=credentials)
+    try:
+        client = genai.Client(vertexai=True, project=PROJECT_ID, location=REGION_ESTABLE)
         current_model = MODEL_NAME
+    except Exception as e:
+        logger.error(f"Error inicializando IA: {e}")
 
 # ====================================================================
 # --- GENERACIÓN IA Y REINTENTOS ---

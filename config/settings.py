@@ -35,9 +35,28 @@ DRIVE_FOLDER_LEER = os.getenv("DRIVE_FOLDER_LEER")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 # ----------------------------------
 
-if KEY_FILE and not os.path.isabs(KEY_FILE):
-    KEY_FILE = os.path.join(base_path, KEY_FILE)
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = KEY_FILE
+import tempfile
+import base64
+
+b64_creds = os.getenv("GOOGLE_CREDENTIALS_B64")
+json_creds = os.getenv("GOOGLE_CREDENTIALS_JSON")
+
+if b64_creds:
+    temp_path = os.path.join(tempfile.gettempdir(), 'google_credentials.json')
+    with open(temp_path, 'wb') as f:
+        f.write(base64.b64decode(b64_creds))
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
+    KEY_FILE = temp_path
+elif json_creds:
+    temp_path = os.path.join(tempfile.gettempdir(), 'google_credentials.json')
+    with open(temp_path, 'w', encoding='utf-8') as f:
+        f.write(json_creds)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
+    KEY_FILE = temp_path
+else:
+    if KEY_FILE and not os.path.isabs(KEY_FILE):
+        KEY_FILE = os.path.join(base_path, KEY_FILE)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = KEY_FILE
 
 os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"
 
