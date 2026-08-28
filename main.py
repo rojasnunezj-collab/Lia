@@ -11,6 +11,7 @@ from telegram.ext import Application, ApplicationBuilder, CommandHandler, Messag
 
 from config.settings import logger, KEY_FILE
 from utils.helpers import init_db
+from utils.keep_alive import start_keep_alive
 from core.sheets_client import conectar_servicios
 from bot.handlers import start, ping, button_handler, handle_text, handle_files, handle_callback_vinculacion, handle_callback_observacion, handle_callback_reminder, daily_certificate_reminder
 
@@ -75,6 +76,7 @@ def main():
     except Exception:
         pass
 
+    start_keep_alive()
     init_db()
     token = os.getenv("TELEGRAM_TOKEN")
     

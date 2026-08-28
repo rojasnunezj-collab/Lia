@@ -11,3 +11,6 @@ requests
 pytz
 
 pytest==8.1.1
+
+supabase
+aiohttp

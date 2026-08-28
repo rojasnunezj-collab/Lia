@@ -7,7 +7,7 @@ import asyncio
 import re
 import calendar
 from datetime import datetime, timezone, timedelta
-from core.security import is_authorized_user
+
 from google.genai import types
 from google.oauth2 import service_account  # <--- Agregado para las llaves
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
