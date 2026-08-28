@@ -22,9 +22,12 @@ try:
     SUPABASE_URL = os.environ.get("SUPABASE_URL")
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
     if SUPABASE_URL and SUPABASE_KEY:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        USE_SUPABASE = True
-        logger.info("Supabase configurado correctamente.")
+        try:
+            supabase: Client = create_client(SUPABASE_URL.strip(), SUPABASE_KEY.strip())
+            USE_SUPABASE = True
+            logger.info("Supabase configurado correctamente.")
+        except Exception as init_err:
+            logger.error(f"Error al inicializar Supabase (revisa tus credenciales): {init_err}")
 except ImportError:
     pass
 
