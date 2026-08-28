@@ -10,6 +10,11 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot Lia is alive and running!")
         
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        
     def log_message(self, format, *args):
         # Evitar llenar la consola de logs cada 5 minutos
         pass
