@@ -40,8 +40,15 @@ import base64
 
 b64_creds = os.getenv("GOOGLE_CREDENTIALS_B64")
 json_creds = os.getenv("GOOGLE_CREDENTIALS_JSON")
+token_b64 = os.getenv("GOOGLE_TOKEN_B64")
 
-if b64_creds:
+if token_b64:
+    temp_path = os.path.join(tempfile.gettempdir(), 'google_token.json')
+    with open(temp_path, 'wb') as f:
+        f.write(base64.b64decode(token_b64))
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
+    KEY_FILE = temp_path
+elif b64_creds:
     temp_path = os.path.join(tempfile.gettempdir(), 'google_credentials.json')
     with open(temp_path, 'wb') as f:
         f.write(base64.b64decode(b64_creds))

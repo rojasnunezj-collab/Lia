@@ -55,7 +55,16 @@ def obtener_credenciales():
     import json
     import base64
     
-    # Intentar con Base64 (A prueba de errores de copiar/pegar)
+    # Intentar con Token OAuth Base64 (Prioridad máxima para evitar cuotas de Service Account)
+    env_token_b64 = os.environ.get("GOOGLE_TOKEN_B64")
+    if env_token_b64:
+        try:
+            info = json.loads(base64.b64decode(env_token_b64).decode('utf-8'))
+            return OAuthCredentials.from_authorized_user_info(info, SCOPES_COMBINED)
+        except Exception as e:
+            logger.error(f"❌ Error parseando GOOGLE_TOKEN_B64: {e}")
+
+    # Intentar con Base64 de Service Account
     env_b64 = os.environ.get("GOOGLE_CREDENTIALS_B64")
     if env_b64:
         try:
