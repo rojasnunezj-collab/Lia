@@ -44,8 +44,12 @@ token_b64 = os.getenv("GOOGLE_TOKEN_B64")
 
 if token_b64:
     temp_path = os.path.join(tempfile.gettempdir(), 'google_token.json')
-    with open(temp_path, 'wb') as f:
-        f.write(base64.b64decode(token_b64))
+    import json
+    info = json.loads(base64.b64decode(token_b64).decode('utf-8'))
+    if "type" not in info:
+        info["type"] = "authorized_user"
+    with open(temp_path, 'w', encoding='utf-8') as f:
+        json.dump(info, f)
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_path
     KEY_FILE = temp_path
 elif b64_creds:
