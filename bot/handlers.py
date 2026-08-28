@@ -728,6 +728,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             def fetch_direcciones():
                 creds = obtener_credenciales()
+                if not creds:
+                    raise Exception("No se encontraron las credenciales de Google. Verifica GOOGLE_CREDENTIALS_JSON en Render.")
                 client = gspread.authorize(creds)
                 book2 = client.open_by_key(SHEET_ID)
                 try:

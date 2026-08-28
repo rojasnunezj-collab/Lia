@@ -52,6 +52,15 @@ def obtener_credenciales():
         "https://www.googleapis.com/auth/cloud-platform"
     ]
 
+    import json
+    env_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if env_json:
+        try:
+            info = json.loads(env_json)
+            return service_account.Credentials.from_service_account_info(info, scopes=SCOPES_COMBINED)
+        except Exception as e:
+            logger.error(f"❌ Error parseando GOOGLE_CREDENTIALS_JSON: {e}")
+
     # Prioridad 1: Intentar usar Token Humano (token.json) para evitar cuotas de Service Account
     if os.path.exists(token_path):
         try:
