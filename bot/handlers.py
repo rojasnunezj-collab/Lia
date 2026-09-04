@@ -48,6 +48,12 @@ def normalize_guide_number(val):
     else:
         p_strip = val_clean.lstrip('0')
         return p_strip if p_strip else '0'
+
+def check_is_petramas(val):
+    if not val:
+        return False
+    return bool(re.search(r'PETRAM[AÁ]S', str(val), re.IGNORECASE))
+
 import core.sheets_client as rc 
 
 # ====================================================================
@@ -429,12 +435,10 @@ async def process_manual_singuia_decision(update, context, user_id, cache, force
         estado = "🔄 *Guía Actualizada*" if resultado == "updated" else "✅ *Nueva Guía Registrada Manualmente*"
         enlace = cache.get('enlace_drive', '')
         num_guia_saved = cache.get('num_guia', 'S/D')
-        is_petramas = "PETRAMAS" in str(cache.get('empresa', '')).upper() or "PETRAMAS" in str(cache.get('fundo', '')).upper()
-        pet_flag = "P" if is_petramas else "N"
         kb_obs = [
-            [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{num_guia_saved}|{pet_flag}")],
-            [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}|{pet_flag}")],
-            [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{num_guia_saved}")],
+            [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha_man|{num_guia_saved}")],
+            [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}|MANUAL_WAIT")],
+            [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{num_guia_saved}|MANUAL_WAIT")],
             [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{num_guia_saved}")]
         ]
         await context.bot.edit_message_text(
@@ -841,12 +845,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             estado = "🔄 *Guía Actualizada*" if resultado == "updated" else "✅ *Nueva Guía Registrada Manualmente*"
             enlace = cache.get('enlace_drive', '')
             num_guia_saved = cache.get('num_guia', 'S/D')
-            is_petramas = "PETRAMAS" in str(cache.get('empresa', '')).upper() or "PETRAMAS" in str(cache.get('fundo', '')).upper()
-            pet_flag = "P" if is_petramas else "N"
             kb_obs = [
-                [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{num_guia_saved}|{pet_flag}")],
-                [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}|{pet_flag}")],
-                [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{num_guia_saved}")],
+                [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha_man|{num_guia_saved}")],
+                [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{num_guia_saved}|MANUAL_WAIT")],
+                [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{num_guia_saved}|MANUAL_WAIT")],
                 [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{num_guia_saved}")]
             ]
             await msg.edit_text(
@@ -979,20 +981,35 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif modo == MODO_OBS_ESCRIBIR:
         cache = user_data_cache.get(user_id, {})
         num_guia = cache.get("obs_guia")
+        pet_flag = cache.get("pet_flag", "N")
         if num_guia:
             try:
-                await asyncio.to_thread(update_observacion_sheet, num_guia, texto)
-                kb_preg_reg = [
-                    [
-                        InlineKeyboardButton("✅ Sí, Registrar Guía", callback_data=f"preg_reg|si|{num_guia}"),
-                        InlineKeyboardButton("❌ No, terminar", callback_data=f"preg_reg|no|{num_guia}")
+                obs_final = "Guía hecha" if texto.strip().lower() in ["guia hecha", "guía hecha"] else texto
+                await asyncio.to_thread(update_observacion_sheet, num_guia, obs_final, pet_flag)
+                if obs_final == "Guía hecha" and pet_flag == "MANUAL_WAIT":
+                    kb_dest = [
+                        [
+                            InlineKeyboardButton("📦 Comercialización", callback_data=f"dest_man|COMERCIALIZACIÓN|{num_guia}"),
+                            InlineKeyboardButton("♻️ Disposición Final", callback_data=f"dest_man|DISPOSICIÓN FINAL|{num_guia}")
+                        ]
                     ]
-                ]
-                await update.message.reply_text(
-                    f"✅ Observación '{texto}' guardada para la guía `{num_guia}`.\n\n❓ **¿Deseas registrar esta guía ahora?**",
-                    parse_mode='Markdown',
-                    reply_markup=InlineKeyboardMarkup(kb_preg_reg)
-                )
+                    await update.message.reply_text(
+                        f"✅ Observación '{texto}' guardada para la guía `{num_guia}`.\n\n❓ **¿Esta guía corresponde a Comercialización o Disposición Final?**",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(kb_dest)
+                    )
+                else:
+                    kb_preg_reg = [
+                        [
+                            InlineKeyboardButton("✅ Sí, Registrar Guía", callback_data=f"preg_reg|si|{num_guia}"),
+                            InlineKeyboardButton("❌ No, terminar", callback_data=f"preg_reg|no|{num_guia}")
+                        ]
+                    ]
+                    await update.message.reply_text(
+                        f"✅ Observación '{texto}' guardada para la guía `{num_guia}`.\n\n❓ **¿Deseas registrar esta guía ahora?**",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(kb_preg_reg)
+                    )
             except Exception as e:
                 await update.message.reply_text(f"❌ Error al guardar observación: {e}")
         user_states.pop(user_id, None)
@@ -1144,12 +1161,13 @@ async def ejecutar_lectura_ocr(user_id, file_path, mime_type, context, msg_statu
 
         footer = f"\n\n{audit_status}\n📁 [Drive]({enlace_drive})\n📊 [Excel]({SHEET_URL_DIRECT})"
         
-        is_petramas = "PETRAMAS" in full_report.upper()
+        texto_para_petramas = f"{full_report} {json.dumps(datos_sheet)}"
+        is_petramas = check_is_petramas(texto_para_petramas)
         pet_flag = "P" if is_petramas else "N"
         kb_obs = [
             [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{numero_completo}|{pet_flag}")],
             [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{numero_completo}|{pet_flag}")],
-            [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{numero_completo}")],
+            [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{numero_completo}|{pet_flag}")],
             [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{numero_completo}")]
         ]
         reply_markup = InlineKeyboardMarkup(kb_obs)
@@ -1522,12 +1540,24 @@ def update_observacion_sheet(num_guia, observacion, pet_flag="N"):
             sheet_recibidas.update_cell(row_idx, 9, normalizar_valor_upper(observacion))
             logger.info(f"✅ Observación {observacion} guardada en Guias_recibidas columna I (9), fila {row_idx}")
             
-            # Lógica para columna J (10) según petramas leída en la IA o flag manual
+            # Lógica para columna J (10) según petramas exclusivamente cuando la observación sea "Guía hecha"
             if observacion == "Guía hecha":
-                if pet_flag == "P":
-                    sheet_recibidas.update_cell(row_idx, 10, "DISPOSICIÓN FINAL")
-                else:
-                    sheet_recibidas.update_cell(row_idx, 10, "COMERCIALIZACIÓN")
+                if pet_flag == "MANUAL_WAIT":
+                    logger.info(f"⏳ Subida manual: Esperando selección interactiva para Columna J (10)")
+                    return
+                is_pet = (pet_flag == "P")
+                if not is_pet:
+                    try:
+                        # Doble verificación contra los datos guardados de la fila en Guias_recibidas
+                        row_vals = sheet_recibidas.row_values(row_idx)
+                        if check_is_petramas(" ".join(str(v) for v in row_vals)):
+                            is_pet = True
+                    except Exception as e:
+                        logger.warning(f"No se pudo verificar fila para petramas: {e}")
+
+                valor_col_j = "DISPOSICIÓN FINAL" if is_pet else "COMERCIALIZACIÓN"
+                sheet_recibidas.update_cell(row_idx, 10, valor_col_j)
+                logger.info(f"✅ Guía hecha: Columna J (10) guardada como '{valor_col_j}' en Guias_recibidas fila {row_idx}")
                     
     except Exception as e:
         logger.error(f"Error actualizando observación: {e}")
@@ -1543,9 +1573,24 @@ async def handle_callback_observacion(update: Update, context: ContextTypes.DEFA
     pet_flag = partes[3] if len(partes) > 3 else "N"
     user_id = update.effective_user.id
     
+    if accion == "hecha_man":
+        await asyncio.to_thread(update_observacion_sheet, num_guia, "Guía hecha", "MANUAL_WAIT")
+        nuevo_texto = query.message.text + "\n\n📝 *Observación Guardada:* Guía hecha\n\n❓ **¿Esta guía corresponde a Comercialización o Disposición Final?**"
+        kb_dest = [
+            [
+                InlineKeyboardButton("📦 Comercialización", callback_data=f"dest_man|COMERCIALIZACIÓN|{num_guia}"),
+                InlineKeyboardButton("♻️ Disposición Final", callback_data=f"dest_man|DISPOSICIÓN FINAL|{num_guia}")
+            ]
+        ]
+        try:
+            await query.edit_message_text(nuevo_texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_dest))
+        except Exception:
+            pass
+        return
+
     if accion == "escribir":
         user_states[user_id] = MODO_OBS_ESCRIBIR
-        user_data_cache[user_id] = {"obs_guia": num_guia, "msg_id": query.message.message_id}
+        user_data_cache[user_id] = {"obs_guia": num_guia, "msg_id": query.message.message_id, "pet_flag": pet_flag}
         await query.message.reply_text(f"✍️ Escribe la observación para la guía `{num_guia}`:", parse_mode='Markdown')
         return
         
@@ -1568,6 +1613,50 @@ async def handle_callback_observacion(update: Update, context: ContextTypes.DEFA
     await asyncio.to_thread(update_observacion_sheet, num_guia, observacion, pet_flag)
     
     nuevo_texto = query.message.text + f"\n\n📝 *Observación Guardada:* {observacion}\n\n❓ **¿Deseas registrar esta guía ahora?**"
+    kb_preg_reg = [
+        [
+            InlineKeyboardButton("✅ Sí, Registrar Guía", callback_data=f"preg_reg|si|{num_guia}"),
+            InlineKeyboardButton("❌ No, terminar", callback_data=f"preg_reg|no|{num_guia}")
+        ]
+    ]
+    try:
+        await query.edit_message_text(nuevo_texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_preg_reg))
+    except Exception:
+        pass
+
+def update_destino_manual_sheet(num_guia, destino):
+    try:
+        creds = obtener_credenciales()
+        client = gspread.authorize(creds)
+        book2 = client.open_by_key(SHEET_ID)
+        sheet_recibidas = book2.worksheet("Guias_recibidas")
+        col_values = sheet_recibidas.col_values(2) 
+        
+        norm_guia = normalize_guide_number(num_guia)
+        row_idx = -1
+        for idx in range(len(col_values)-1, -1, -1):
+            if normalize_guide_number(col_values[idx]) == norm_guia:
+                row_idx = idx + 1
+                break
+                
+        if row_idx != -1:
+            sheet_recibidas.update_cell(row_idx, 10, destino)
+            logger.info(f"✅ Destino manual '{destino}' guardado en Guias_recibidas columna J (10), fila {row_idx}")
+    except Exception as e:
+        logger.error(f"Error actualizando destino manual: {e}")
+
+async def handle_callback_destino_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query.data.startswith('dest_man|'): return
+    
+    await query.answer("Guardando...")
+    partes = query.data.split('|')
+    destino = partes[1]
+    num_guia = partes[2]
+    
+    await asyncio.to_thread(update_destino_manual_sheet, num_guia, destino)
+    
+    nuevo_texto = query.message.text + f"\n\n🏷️ *Tipo de Destino:* {destino}\n\n❓ **¿Deseas registrar esta guía ahora?**"
     kb_preg_reg = [
         [
             InlineKeyboardButton("✅ Sí, Registrar Guía", callback_data=f"preg_reg|si|{num_guia}"),
