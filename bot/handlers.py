@@ -22,7 +22,7 @@ from config.settings import (
     MODO_BUSCAR_CERT_FECHA, MODO_BUSCAR_CERT_FUNDO, 
     MODO_BUSCAR_CERT_CORRE, MODO_BUSCAR_CERT_EMPRESA,
     MODO_DIR_EMPRESA, MODO_DIR_FUNDO,
-    MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_OBS_ESCRIBIR,
+    MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_OBS_ESCRIBIR, MODO_LIGAR_ESCRIBIR,
     DRIVE_FOLDER_LEER
 )
 from utils.helpers import clean_json_response, async_log_action, load_memoria_vinculacion, save_memoria_vinculacion
@@ -982,69 +982,394 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if num_guia:
             try:
                 await asyncio.to_thread(update_observacion_sheet, num_guia, texto)
-                await update.message.reply_text(f"✅ Observación '{texto}' guardada para la guía `{num_guia}`.", parse_mode='Markdown')
+                kb_preg_reg = [
+                    [
+                        InlineKeyboardButton("✅ Sí, Registrar Guía", callback_data=f"preg_reg|si|{num_guia}"),
+                        InlineKeyboardButton("❌ No, terminar", callback_data=f"preg_reg|no|{num_guia}")
+                    ]
+                ]
+                await update.message.reply_text(
+                    f"✅ Observación '{texto}' guardada para la guía `{num_guia}`.\n\n❓ **¿Deseas registrar esta guía ahora?**",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(kb_preg_reg)
+                )
             except Exception as e:
                 await update.message.reply_text(f"❌ Error al guardar observación: {e}")
         user_states.pop(user_id, None)
         user_data_cache.pop(user_id, None)
         return
 
+    elif modo == MODO_LIGAR_ESCRIBIR:
+        cache = user_data_cache.get(user_id, {})
+        num_hecha = cache.get("ligar_hecha")
+        num_recibida = texto.strip().upper()
+        if not num_hecha:
+            await update.message.reply_text("❌ Error de sesión al vincular.")
+            user_states.pop(user_id, None)
+            return
+
+        msg = await update.message.reply_text(f"⏳ Vinculando guía `{num_hecha}` con `{num_recibida}`...")
+        try:
+            if not rc.sheet_control: await asyncio.to_thread(conectar_servicios)
+            def do_link():
+                col_values = rc.sheet_control.col_values(2)
+                norm_hecha = normalize_guide_number(num_hecha)
+                row_idx = -1
+                for idx, val in enumerate(col_values):
+                    if normalize_guide_number(val) == norm_hecha:
+                        row_idx = idx + 1
+                        break
+                if row_idx != -1:
+                    if "-" in num_recibida:
+                        p = num_recibida.split("-")
+                        num_recibida_l = f"{p[0]}-{p[1].lstrip('0')}"
+                    else:
+                        num_recibida_l = num_recibida.lstrip('0')
+
+                    # Buscar si existe enlace Drive de la guía recibida en memoria
+                    enlace_recibida = ""
+                    norm_recibida = normalize_guide_number(num_recibida)
+                    fundo_recibido = ""
+                    if user_id in MEMORIA_VINCULACION:
+                        for reg in MEMORIA_VINCULACION[user_id]:
+                            if normalize_guide_number(reg.get("num_guia", "")) == norm_recibida:
+                                enlace_recibida = reg.get("enlace_drive", "")
+                                fundo_recibido = reg.get("fundo", "")
+                                break
+
+                    rc.sheet_control.update_cell(row_idx, 3, normalizar_valor_upper(num_recibida_l))
+                    if enlace_recibida:
+                        rc.sheet_control.update_cell(row_idx, 10, enlace_recibida)
+                    if fundo_recibido and fundo_recibido != "S/D":
+                        rc.sheet_control.update_cell(row_idx, 13, normalizar_valor_upper(fundo_recibido))
+                    return True
+                return False
+
+            ok = await asyncio.to_thread(do_link)
+            if ok:
+                await msg.edit_text(f"✅ Guía `{num_hecha}` vinculada exitosamente con la guía origen `{num_recibida}`.", parse_mode='Markdown')
+            else:
+                await msg.edit_text(f"⚠️ No se encontró la fila de la guía `{num_hecha}` en el Excel para vincular.")
+        except Exception as e:
+            await msg.edit_text(f"❌ Error al vincular guía: {e}")
+        user_states.pop(user_id, None)
+        user_data_cache.pop(user_id, None)
+        return
+
+# ====================================================================
+# --- PROMPT AUDITOR SUNAT Y FUNCIONES MODULARES DE PROCESAMIENTO ---
+# ====================================================================
+PROMPT_ANALISIS_GUIA = """
+Eres un auditor de SUNAT evaluando una Guía de Remisión (GRE) en Perú. Tienes PROHIBIDO alucinar datos.
+
+[[RULES]]
+1. TIPO DE GUÍA (CRÍTICO): Lee el título central del documento. Responde "REMITENTE" o "TRANSPORTISTA".
+2. EMPRESA PRINCIPAL: Es la empresa dueña de la guía. Extrae su RUC también.
+3. LÓGICA DINÁMICA DE ENTIDADES (NOMBRES REALES):
+   - Si es TRANSPORTISTA: En 'entidad_1' extrae el NOMBRE REAL de la empresa Remitente. En 'entidad_2' extrae el NOMBRE REAL de la empresa Destinatario.
+   - Si es REMITENTE: En 'entidad_1' extrae el NOMBRE REAL de la empresa Destinatario. En 'entidad_2' extrae el NOMBRE REAL del Proveedor (O pon "S/D" si no hay).
+4. NÚMERO DE GUÍA: Divídelo estrictamente en "serie" y "correlativo".
+5. MOTIVO: Si es "TRANSPORTISTA", el motivo es OBLIGATORIAMENTE "Servicio de Transporte". Si es "REMITENTE", extrae el motivo real (Venta, Traslado, etc.).
+6. PRODUCTOS (SOLO DESCRIPCIÓN - PROHIBIDO CÓDIGOS): DEBES extraer ABSOLUTAMENTE TODOS los productos listados. TÚ TRABAJO CRÍTICO ES ELIMINAR CUALQUIER CÓDIGO NUMÉRICO, SKU O REFERENCIA (ej: '0001 Fertilizante', borra '0001'). Quédate ÚNICAMENTE con la descripción real del producto. Usa backticks (`) alrededor del nombre y peso para facilitar la copia:
+   `[PRODUCTO LIMPIO 1]`
+   `[PESO NUMERICO 1] [UNIDAD 1]`
+
+   `[PRODUCTO LIMPIO 2]`
+   `[PESO NUMERICO 2] [UNIDAD 2]`
+7. PESO TOTAL: Busca en el documento el "Peso Bruto Total de la carga" y extráelo.
+8. FUNDO O PLANTA: Busca atentamente en el documento (observaciones o punto de partida/llegada) si menciona algún "Fundo", "Planta" o nombre de local específico. Si no menciona ninguno, pon "S/D".
+9. TRANSPORTE (PLACA): Busca la información del vehículo (Placa). A menudo viene acompañada de la marca y modelo (ej: 'VOLVO FMX PLACA XYZ-123'). TU TRABAJO FIRME ES AISLAR Y EXTRAER ÚNICAMENTE LA PLACA (ej: 'XYZ-123'). No incluyas marcas, modelos, colores o el texto 'Placa:'.
+10. UBIGEO ANTI-ALUCINACIONES: 
+   - Si dice "PISCO", "MINSUR" o "PARACAS" -> Dpto: ICA | Prov: PISCO | Dist: PARACAS.
+   - Si dice "CHOSICA" -> Dpto: LIMA | Prov: LIMA | Dist: LURIGANCHO.
+
+[[OUTPUT_STRUCTURE]]
+Responde ÚNICAMENTE con este JSON válido. No uses backticks en las llaves JSON, solo en el texto interno del full_text:
+{
+  "datos_sheet": {
+    "fecha": "[FECHA]", "serie": "[SERIE]", "correlativo": "[CORRELATIVO]", "tipo": "[REMITENTE/TRANSPORTISTA]", 
+    "empresa": "[EMPRESA_PRINCIPAL]", "ruc_emisor": "[RUC_EMISOR]", "motivo": "[MOTIVO]",
+    "entidad_1": "[NOMBRE ENTIDAD 1]", "entidad_2": "[NOMBRE ENTIDAD 2]",
+    "peso_total": "[PESO TOTAL BRUTO]", "fundo_planta": "[FUNDO O PLANTA]",
+    "dpto_partida": "[DPTO_P]", "prov_partida": "[PROV_P]", "dist_partida": "[DIST_P]",
+    "dpto_llegada": "[DPTO_LL]", "prov_llegada": "[PROV_LL]", "dist_llegada": "[DIST_LL]"
+  },
+  "full_text": "📅 **Datos Principales**\\nFecha: `[FECHA]`\\nTipo: `[TIPO]`\\nSerie: `[SERIE]`\\nNúmero: `[CORRELATIVO]`\\n🔄 Motivo: `[MOTIVO]`\\n\\n🏢 **Empresa Emisora**: `[EMPRESA_PRINCIPAL]`\\n🆔 **RUC Emisor**: `[RUC_EMISOR]`\\n👤 **Entidad 1 (Rem/Dest)**: `[ENTIDAD_1]`\\n👤 **Entidad 2 (Dest/Prov)**: `[ENTIDAD_2]`\\n\\n📍 **Partida**: `[DIR_PARTIDA]`\\n🗺️ Dpto: `[DPTO_P]` | Prov: `[PROV_P]` | Dist: `[DIST_P]`\\n\\n🏁 **Llegada**: `[DIR_LLEGADA]`\\n🗺️ Dpto: `[DPTO_LL]` | Prov: `[PROV_LL]` | Dist: `[DIST_LL]`\\n\\n🚚 **Transporte**\\nPlaca: `[PLACA]`\\nChofer: `[CHOFER]`\\nLicencia: `[LICENCIA]`\\n\\n📦 **Productos Detallados**\\n[LISTA_DE_TODOS_LOS_PRODUCTOS]\\n\\n⚖️ **Peso Bruto Total:** `[PESO TOTAL BRUTO]`"
+}
+"""
+
+async def ejecutar_lectura_ocr(user_id, file_path, mime_type, context, msg_status, original_msg_id=None):
+    try:
+        with open(file_path, "rb") as bf: content = bf.read()
+        part = types.Part.from_bytes(data=content, mime_type=mime_type)
+
+        response = await generar_con_reintento([part], PROMPT_ANALISIS_GUIA, msg_status, is_json=True)
+        data = json.loads(clean_json_response(response.text))
+        datos_sheet = data.get("datos_sheet", {})
+        
+        if datos_sheet.get("tipo", "").upper() == "TRANSPORTISTA":
+            datos_sheet["motivo"] = "Servicio de Transporte"
+            
+        numero_completo = f"{datos_sheet.get('serie', '')}-{datos_sheet.get('correlativo', '')}"
+        
+        full_report = data.get("full_text", "Error formateando el reporte")
+        full_report = re.sub(r'👤 \*\*Entidad 2 \(Dest/Prov\)\*\*: `S/D`\n?', '', full_report)
+        full_report = full_report.replace("Motivo: `None`", "Motivo: `Servicio de Transporte`")
+
+        folder_solo_leer = DRIVE_FOLDER_LEER
+        enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=folder_solo_leer)
+        
+        try:
+            second_sheet_id = SHEET_ID
+            def register_audit_sheet():
+                creds = obtener_credenciales()
+                client = gspread.authorize(creds)
+                book2 = client.open_by_key(second_sheet_id)
+                sheet_recibidas = book2.worksheet("Guias_recibidas")
+                row_data = [
+                    datos_sheet.get("fecha", ""), 
+                    numero_completo, 
+                    datos_sheet.get("tipo", ""), 
+                    datos_sheet.get("empresa", ""), 
+                    datos_sheet.get("fundo_planta", "S/D"), 
+                    enlace_drive
+                ]
+                return sync_upsert_row(sheet_recibidas, numero_completo, row_data, col_guia_index=2, col_comentario_index=7)
+            
+            resultado_upsert = await asyncio.to_thread(register_audit_sheet)
+            audit_status = "🔄 *Auditoría: Guía Actualizada*" if resultado_upsert == "updated" else "📌 *Auditoría: Nueva Guía Registrada*"
+            await async_log_action(user_id, numero_completo, f"LEER_AUDIT_{resultado_upsert.upper()}")
+        except Exception as e:
+            audit_status = f"⚠️ Error registro Audit: {str(e)[:20]}"
+
+        footer = f"\n\n{audit_status}\n📁 [Drive]({enlace_drive})\n📊 [Excel]({SHEET_URL_DIRECT})"
+        
+        is_petramas = "PETRAMAS" in full_report.upper()
+        pet_flag = "P" if is_petramas else "N"
+        kb_obs = [
+            [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{numero_completo}|{pet_flag}")],
+            [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{numero_completo}|{pet_flag}")],
+            [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{numero_completo}")],
+            [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{numero_completo}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(kb_obs)
+        
+        bot_reply = await msg_status.edit_text(full_report + footer, parse_mode='Markdown', reply_markup=reply_markup, disable_web_page_preview=True)
+
+        # --- MEMORIA DE VINCULACIÓN HÍBRIDA ---
+        if user_id not in MEMORIA_VINCULACION:
+            MEMORIA_VINCULACION[user_id] = []
+        MEMORIA_VINCULACION[user_id].append({
+            "num_guia": numero_completo,
+            "fundo": datos_sheet.get("fundo_planta", "S/D"),
+            "message_id": original_msg_id,
+            "bot_message_id": bot_reply.message_id,
+            "enlace_drive": enlace_drive
+        })
+        if len(MEMORIA_VINCULACION[user_id]) > 5:
+            MEMORIA_VINCULACION[user_id].pop(0)
+        save_memoria_vinculacion(MEMORIA_VINCULACION)
+        
+        texto_analisis = f"{datos_sheet.get('empresa', '')} {datos_sheet.get('entidad_1', '')}".upper()
+        if "PROSEMBRA" in texto_analisis:
+            context.job_queue.run_once(prosembra_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
+        elif "LOS OLIVOS" in texto_analisis:
+            context.job_queue.run_once(olivos_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
+
+    except Exception as e:
+        logger.error(f"Error en ejecutar_lectura_ocr: {e}")
+        await msg_status.edit_text(f"❌ Error durante la lectura de la guía: {e}")
+    finally:
+        if os.path.exists(file_path):
+            try: os.remove(file_path)
+            except Exception: pass
+        user_states[user_id] = None
+
+async def ejecutar_lectura_manual(user_id, file_path, mime_type, context, msg_status, original_msg_id=None):
+    try:
+        folder_solo_leer = DRIVE_FOLDER_LEER
+        enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=folder_solo_leer)
+        if user_id not in user_data_cache:
+            user_data_cache[user_id] = {}
+        user_data_cache[user_id]['enlace_drive'] = enlace_drive
+        user_data_cache[user_id]['img_message_id'] = original_msg_id
+        user_states[user_id] = MODO_GUIAS_MANUAL_FECHA
+        kb = [[InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]]
+        await msg_status.edit_text("✅ Imagen subida a Drive.\n\n📅 Paso 1/5 — Escribe la Fecha de la guía (Ej: 04/04/2026):", reply_markup=InlineKeyboardMarkup(kb))
+    except Exception as e:
+        logger.error(f"Error en ejecutar_lectura_manual: {e}")
+        await msg_status.edit_text(f"❌ Error al subir imagen a Drive: {e}")
+    finally:
+        if os.path.exists(file_path):
+            try: os.remove(file_path)
+            except Exception: pass
+
+async def ejecutar_registro_guia(user_id, file_path, mime_type, context, msg_status, guia_origen_auto=None, original_msg_id=None, reply_to_message=None):
+    try:
+        with open(file_path, "rb") as bf: content = bf.read()
+        part = types.Part.from_bytes(data=content, mime_type=mime_type)
+
+        response = await generar_con_reintento([part], PROMPT_ANALISIS_GUIA, msg_status, is_json=True)
+        data = json.loads(clean_json_response(response.text))
+        datos_sheet = data.get("datos_sheet", {})
+        
+        if datos_sheet.get("tipo", "").upper() == "TRANSPORTISTA":
+            datos_sheet["motivo"] = "Servicio de Transporte"
+            
+        numero_completo = f"{datos_sheet.get('serie', '')}-{datos_sheet.get('correlativo', '')}"
+        
+        enlace_drive = await async_subir_a_drive(file_path, mime_type)
+        if not rc.sheet_control: await asyncio.to_thread(conectar_servicios)
+        
+        guia_ligada_limpia = ""
+        fundo_vinculado = ""
+        enlace_guia_recibida = ""
+        
+        # Caso 1: Se pasó guia_origen_auto
+        if guia_origen_auto:
+            norm_origen = normalize_guide_number(guia_origen_auto)
+            if "-" in guia_origen_auto:
+                partes_g = guia_origen_auto.split("-")
+                guia_ligada_limpia = f"{partes_g[0]}-{partes_g[1].lstrip('0')}"
+            else:
+                guia_ligada_limpia = guia_origen_auto.lstrip('0')
+                
+            if user_id in MEMORIA_VINCULACION:
+                for reg in MEMORIA_VINCULACION[user_id]:
+                    if normalize_guide_number(reg.get("num_guia", "")) == norm_origen:
+                        fundo_vinculado = reg.get("fundo", "")
+                        enlace_guia_recibida = reg.get("enlace_drive", "")
+                        break
+        # Caso 2: El usuario usó reply_to_message
+        elif reply_to_message:
+            reply_id = reply_to_message.message_id
+            if user_id in MEMORIA_VINCULACION:
+                for reg in MEMORIA_VINCULACION[user_id]:
+                    if reg["message_id"] == reply_id or reg.get("bot_message_id") == reply_id:
+                        n_guia = reg["num_guia"]
+                        if "-" in n_guia:
+                            partes_g = n_guia.split("-")
+                            guia_ligada_limpia = f"{partes_g[0]}-{partes_g[1].lstrip('0')}"
+                        else:
+                            guia_ligada_limpia = n_guia.lstrip('0')
+                        fundo_vinculado = reg["fundo"]
+                        enlace_guia_recibida = reg.get("enlace_drive", "")
+                        break
+
+        fundo_final = fundo_vinculado if fundo_vinculado and fundo_vinculado != "S/D" else datos_sheet.get("fundo_planta", "S/D")
+
+        row_data = [
+            datos_sheet.get("fecha", ""),                # A: Fecha
+            numero_completo,                             # B: N° Guía
+            guia_ligada_limpia,                          # C: Guía ligada
+            datos_sheet.get("tipo", ""),                 # D: Tipo Guía
+            datos_sheet.get("motivo", ""),               # E: Motivo
+            datos_sheet.get("empresa", ""),              # F: Empresa Principal
+            datos_sheet.get("entidad_1", ""),            # G: Destinatario/Remitente
+            datos_sheet.get("entidad_2", ""),            # H: Destinario/Proveedor
+            enlace_drive,                                # I: Guia hecha
+            enlace_guia_recibida,                        # J: Guia recibida
+            "",                                          # K: Sistema/IA
+            datos_sheet.get("observacion", ""),          # L: Observacion Manual
+            fundo_final,                                 # M: Fundo/Planta
+            "",                                          # N: Certificados
+            "",                                          # O: Mes
+            ""                                           # P: Sigersol
+        ]
+        
+        resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=11)
+        await async_log_action(user_id, numero_completo, f"REGISTRAR_{resultado_upsert.upper()}")
+        
+        estado_registro = "🔄 *Guía Actualizada (Sobrescrita)*" if resultado_upsert == "updated" else "✅ *Nueva Guía Registrada*"
+        motivo_visual = datos_sheet.get('motivo', 'S/D')
+        if not motivo_visual or str(motivo_visual).strip().lower() == 'none':
+            motivo_visual = 'S/D'
+
+        resumen_registro = (
+            f"{estado_registro}\n\n"
+            f"📄 **Guía:** `{numero_completo}`\n"
+            f"🏢 **Empresa:** `{datos_sheet.get('empresa', 'S/D')}`\n"
+            f"🔄 **Motivo:** `{motivo_visual}`\n"
+        )
+        
+        if guia_ligada_limpia:
+            resumen_registro += f"🔗 **Guía Origen Ligada:** `{guia_ligada_limpia}`\n"
+        if fundo_final and fundo_final != "S/D":
+            resumen_registro += f"🏡 **Fundo/Planta:** `{fundo_final}`\n"
+            
+        resumen_registro += (
+            f"\n📁 [Ver PDF en Drive]({enlace_drive})\n"
+            f"📊 [Abrir Excel]({SHEET_URL_DIRECT})"
+        )
+        
+        user_states[user_id] = None
+        user_data_cache[user_id] = {}
+
+        if guia_ligada_limpia:
+            await msg_status.edit_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True)
+            return
+
+        kb_preg_ligar = [
+            [
+                InlineKeyboardButton("🔗 Sí, Ligar", callback_data=f"preg_ligar|si|{numero_completo}"),
+                InlineKeyboardButton("❌ No Ligar", callback_data=f"preg_ligar|no|{numero_completo}")
+            ]
+        ]
+        resumen_registro += "\n\n❓ **¿Deseas ligar esta guía a una guía recibida?**"
+        await msg_status.edit_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(kb_preg_ligar))
+
+    except Exception as e:
+        logger.error(f"Error en ejecutar_registro_guia: {e}")
+        await msg_status.edit_text(f"❌ Error durante el procesamiento: {e}")
+    finally:
+        if os.path.exists(file_path):
+            try: os.remove(file_path)
+            except Exception: pass
+
 # ====================================================================
 # --- HANDLER DE ARCHIVOS Y MULTIMEDIA ---
 # ====================================================================
 async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message: return
     user_id = update.effective_user.id
     modo = user_states.get(user_id)
-    if modo not in [MODO_GUIAS_LEER, MODO_GUIAS_REGISTRAR, MODO_GUIAS_MANUAL, MODO_BITACORA_ADD]: return
 
-    msg = await update.message.reply_text("⏳ Analizando y procesando archivo...")
-    file_path = f"archivo_{user_id}_{update.message.id}.jpg"
-    
-    try:
-        tipo_archivo = "Desconocido"
-        if update.message.photo:
-            f = await update.message.photo[-1].get_file()
-            mime_type = "image/jpeg"
-            tipo_archivo = "Foto"
-        elif update.message.document:
-            f = await update.message.document.get_file()
-            mime_type = update.message.document.mime_type
-            if 'pdf' in mime_type: file_path = file_path.replace('.jpg', '.pdf')
-            tipo_archivo = "Documento"
-        elif update.message.voice:
-            f = await update.message.voice.get_file()
-            mime_type = update.message.voice.mime_type
-            file_path = file_path.replace('.jpg', '.ogg')
-            tipo_archivo = "Nota de Voz"
-        elif update.message.audio:
-            f = await update.message.audio.get_file()
-            mime_type = update.message.audio.mime_type
-            file_path = file_path.replace('.jpg', '.mp3')
-            tipo_archivo = "Audio"
-        elif update.message.video:
-            f = await update.message.video.get_file()
-            mime_type = update.message.video.mime_type
-            file_path = file_path.replace('.jpg', '.mp4')
-            tipo_archivo = "Video"
-        else: return
+    # 1. Modo Bitácora
+    if modo == MODO_BITACORA_ADD:
+        msg = await update.message.reply_text("⏳ Analizando y procesando archivo...")
+        file_path = f"archivo_{user_id}_{update.message.id}.jpg"
+        try:
+            tipo_archivo = "Desconocido"
+            if update.message.photo:
+                f = await update.message.photo[-1].get_file()
+                mime_type = "image/jpeg"
+                tipo_archivo = "Foto"
+            elif update.message.document:
+                f = await update.message.document.get_file()
+                mime_type = update.message.document.mime_type
+                if 'pdf' in mime_type: file_path = file_path.replace('.jpg', '.pdf')
+                tipo_archivo = "Documento"
+            elif update.message.voice:
+                f = await update.message.voice.get_file()
+                mime_type = update.message.voice.mime_type
+                file_path = file_path.replace('.jpg', '.ogg')
+                tipo_archivo = "Nota de Voz"
+            elif update.message.audio:
+                f = await update.message.audio.get_file()
+                mime_type = update.message.audio.mime_type
+                file_path = file_path.replace('.jpg', '.mp3')
+                tipo_archivo = "Audio"
+            elif update.message.video:
+                f = await update.message.video.get_file()
+                mime_type = update.message.video.mime_type
+                file_path = file_path.replace('.jpg', '.mp4')
+                tipo_archivo = "Video"
+            else: return
 
-        await f.download_to_drive(file_path)
-        
-        if modo == MODO_GUIAS_MANUAL:
-            folder_solo_leer = DRIVE_FOLDER_LEER
-            enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=folder_solo_leer)
-            user_data_cache[user_id]['enlace_drive'] = enlace_drive
-            user_data_cache[user_id]['img_message_id'] = update.message.message_id
-            user_states[user_id] = MODO_GUIAS_MANUAL_FECHA
-            kb = [[InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]]
-            await msg.edit_text("✅ Imagen subida a Drive.\n\n📅 Paso 1/5 — Escribe la Fecha de la guía (Ej: 04/04/2026):", reply_markup=InlineKeyboardMarkup(kb))
-            return
-        
-        if modo == MODO_BITACORA_ADD:
+            await f.download_to_drive(file_path)
             enlace_drive = await async_subir_a_drive(file_path, mime_type)
             comentario = update.message.caption if update.message.caption else ""
             
-            from datetime import datetime, timezone, timedelta
             PET = timezone(timedelta(hours=-5))
             timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M")
             username = update.effective_user.username or update.effective_user.first_name
@@ -1068,257 +1393,110 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.delete()
             await update.message.reply_text(f"📓✅ {tipo_archivo} subido a la Bitácora con éxito.\n📁 [Acceder al Archivo]({enlace_drive})", parse_mode='Markdown', disable_web_page_preview=True)
             return
+        except Exception as e:
+            logger.error(f"Error en bitácora: {e}")
+            await msg.edit_text(f"❌ Error al procesar archivo en Bitácora: {e}")
+        finally:
+            if os.path.exists(file_path):
+                try: os.remove(file_path)
+                except: pass
+        return
 
-        with open(file_path, "rb") as bf: content = bf.read()
-        part = types.Part.from_bytes(data=content, mime_type=mime_type)
+    # 2. Detección de Foto o Documento para Guías
+    is_pdf = False
+    is_image = False
+    file_obj = None
+    mime_type = ""
+    tipo_label = "Archivo"
 
-        prompt = f"""
-        Eres un auditor de SUNAT evaluando una Guía de Remisión (GRE) en Perú. Tienes PROHIBIDO alucinar datos.
+    if update.message.photo:
+        file_obj = await update.message.photo[-1].get_file()
+        mime_type = "image/jpeg"
+        is_image = True
+        tipo_label = "Foto"
+    elif update.message.document:
+        file_obj = await update.message.document.get_file()
+        mime_type = update.message.document.mime_type or ""
+        file_name = update.message.document.file_name or ""
+        if 'pdf' in mime_type.lower() or file_name.lower().endswith('.pdf'):
+            is_pdf = True
+            mime_type = "application/pdf"
+            tipo_label = "Documento PDF"
+        elif mime_type.startswith('image/') or any(file_name.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp']):
+            is_image = True
+            tipo_label = "Imagen"
+        else:
+            if modo is None:
+                return
+    else:
+        return
 
-        [[RULES]]
-        1. TIPO DE GUÍA (CRÍTICO): Lee el título central del documento. Responde "REMITENTE" o "TRANSPORTISTA".
-        2. EMPRESA PRINCIPAL: Es la empresa dueña de la guía. Extrae su RUC también.
-        3. LÓGICA DINÁMICA DE ENTIDADES (NOMBRES REALES):
-           - Si es TRANSPORTISTA: En 'entidad_1' extrae el NOMBRE REAL de la empresa Remitente. En 'entidad_2' extrae el NOMBRE REAL de la empresa Destinatario.
-           - Si es REMITENTE: En 'entidad_1' extrae el NOMBRE REAL de la empresa Destinatario. En 'entidad_2' extrae el NOMBRE REAL del Proveedor (O pon "S/D" si no hay).
-        4. NÚMERO DE GUÍA: Divídelo estrictamente en "serie" y "correlativo".
-        5. MOTIVO: Si es "TRANSPORTISTA", el motivo es OBLIGATORIAMENTE "Servicio de Transporte". Si es "REMITENTE", extrae el motivo real (Venta, Traslado, etc.).
-        6. PRODUCTOS (SOLO DESCRIPCIÓN - PROHIBIDO CÓDIGOS): DEBES extraer ABSOLUTAMENTE TODOS los productos listados. TÚ TRABAJO CRÍTICO ES ELIMINAR CUALQUIER CÓDIGO NUMÉRICO, SKU O REFERENCIA (ej: '0001 Fertilizante', borra '0001'). Quédate ÚNICAMENTE con la descripción real del producto. Usa backticks (`) alrededor del nombre y peso para facilitar la copia:
-           `[PRODUCTO LIMPIO 1]`
-           `[PESO NUMERICO 1] [UNIDAD 1]`
+    if not file_obj or not (is_pdf or is_image):
+        return
 
-           `[PRODUCTO LIMPIO 2]`
-           `[PESO NUMERICO 2] [UNIDAD 2]`
-        7. PESO TOTAL: Busca en el documento el "Peso Bruto Total de la carga" y extráelo.
-        8. FUNDO O PLANTA: Busca atentamente en el documento (observaciones o punto de partida/llegada) si menciona algún "Fundo", "Planta" o nombre de local específico. Si no menciona ninguno, pon "S/D".
-        9. TRANSPORTE (PLACA): Busca la información del vehículo (Placa). A menudo viene acompañada de la marca y modelo (ej: 'VOLVO FMX PLACA XYZ-123'). TU TRABAJO FIRME ES AISLAR Y EXTRAER ÚNICAMENTE LA PLACA (ej: 'XYZ-123'). No incluyas marcas, modelos, colores o el texto 'Placa:'.
-        10. UBIGEO ANTI-ALUCINACIONES: 
-           - Si dice "PISCO", "MINSUR" o "PARACAS" -> Dpto: ICA | Prov: PISCO | Dist: PARACAS.
-           - Si dice "CHOSICA" -> Dpto: LIMA | Prov: LIMA | Dist: LURIGANCHO.
+    ext = "pdf" if is_pdf else "jpg"
+    file_path = f"archivo_{user_id}_{update.message.id}.{ext}"
+    await file_obj.download_to_drive(file_path)
 
-        [[OUTPUT_STRUCTURE]]
-        Responde ÚNICAMENTE con este JSON válido. No uses backticks en las llaves JSON, solo en el texto interno del full_text:
-        {{
-          "datos_sheet": {{
-            "fecha": "[FECHA]", "serie": "[SERIE]", "correlativo": "[CORRELATIVO]", "tipo": "[REMITENTE/TRANSPORTISTA]", 
-            "empresa": "[EMPRESA_PRINCIPAL]", "ruc_emisor": "[RUC_EMISOR]", "motivo": "[MOTIVO]",
-            "entidad_1": "[NOMBRE ENTIDAD 1]", "entidad_2": "[NOMBRE ENTIDAD 2]",
-            "peso_total": "[PESO TOTAL BRUTO]", "fundo_planta": "[FUNDO O PLANTA]",
-            "dpto_partida": "[DPTO_P]", "prov_partida": "[PROV_P]", "dist_partida": "[DIST_P]",
-            "dpto_llegada": "[DPTO_LL]", "prov_llegada": "[PROV_LL]", "dist_llegada": "[DIST_LL]"
-          }},
-          "full_text": "📅 **Datos Principales**\\nFecha: `[FECHA]`\\nTipo: `[TIPO]`\\nSerie: `[SERIE]`\\nNúmero: `[CORRELATIVO]`\\n🔄 Motivo: `[MOTIVO]`\\n\\n🏢 **Empresa Emisora**: `[EMPRESA_PRINCIPAL]`\\n🆔 **RUC Emisor**: `[RUC_EMISOR]`\\n👤 **Entidad 1 (Rem/Dest)**: `[ENTIDAD_1]`\\n👤 **Entidad 2 (Dest/Prov)**: `[ENTIDAD_2]`\\n\\n📍 **Partida**: `[DIR_PARTIDA]`\\n🗺️ Dpto: `[DPTO_P]` | Prov: `[PROV_P]` | Dist: `[DIST_P]`\\n\\n🏁 **Llegada**: `[DIR_LLEGADA]`\\n🗺️ Dpto: `[DPTO_LL]` | Prov: `[PROV_LL]` | Dist: `[DIST_LL]`\\n\\n🚚 **Transporte**\\nPlaca: `[PLACA]`\\nChofer: `[CHOFER]`\\nLicencia: `[LICENCIA]`\\n\\n📦 **Productos Detallados**\\n[LISTA_DE_TODOS_LOS_PRODUCTOS]\\n\\n⚖️ **Peso Bruto Total:** `[PESO TOTAL BRUTO]`"
-        }}
-        """
-
-        response = await generar_con_reintento([part], prompt, msg, is_json=True)
-        data = json.loads(clean_json_response(response.text))
-        datos_sheet = data.get("datos_sheet", {})
-        
-        if datos_sheet.get("tipo", "").upper() == "TRANSPORTISTA":
-            datos_sheet["motivo"] = "Servicio de Transporte"
-            
-        numero_completo = f"{datos_sheet.get('serie', '')}-{datos_sheet.get('correlativo', '')}"
-        
-        full_report = data.get("full_text", "Error formateando el reporte")
-        full_report = re.sub(r'👤 \*\*Entidad 2 \(Dest/Prov\)\*\*: `S/D`\n?', '', full_report)
-        full_report = full_report.replace("Motivo: `None`", "Motivo: `Servicio de Transporte`")
-        
-
-        numero_upper = numero_completo.strip().upper()
-        is_singuia_match = any(term in numero_upper for term in ["SIN GUIA", "SIN GUÍA", "S/D"]) or numero_upper in ["-", ""]
-        if is_singuia_match:
-            reply_id = update.message.reply_to_message.message_id if (update.message and update.message.reply_to_message) else None
-            user_data_cache[user_id] = user_data_cache.get(user_id, {})
-            user_data_cache[user_id]['pending_singuia'] = {
-                'datos_sheet': datos_sheet,
-                'full_report': full_report,
-                'file_path': file_path,
-                'mime_type': mime_type,
-                'modo': modo,
-                'msg_id': msg.message_id,
-                'reply_id': reply_id
-            }
-            kb = [
-                [InlineKeyboardButton("✅ Registrar como NUEVA", callback_data='doc_sg_nueva')],
-                [InlineKeyboardButton("🔄 Actualizar Existente", callback_data='doc_sg_actualizar')]
+    # CASO A: Subida directa sin comando /start previo (modo is None)
+    if modo is None:
+        if user_id not in user_data_cache:
+            user_data_cache[user_id] = {}
+        user_data_cache[user_id]['direct_file'] = {
+            'file_path': file_path,
+            'mime_type': mime_type,
+            'is_pdf': is_pdf,
+            'is_image': is_image,
+            'tipo_label': tipo_label,
+            'message_id': update.message.id
+        }
+        kb = [
+            [
+                InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer"),
+                InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar")
+            ],
+            [
+                InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")
             ]
-            await msg.edit_text(
-                full_report + "\n\n⚠️ **ATENCIÓN:** La IA detectó esta imagen como SIN GUIA.\n¿Deseas registrarla como una guía NUEVA o ACTUALIZAR la primera guía SIN GUIA que encuentre en tu Excel?",
-                reply_markup=InlineKeyboardMarkup(kb),
-                parse_mode='Markdown'
-            )
-            return
+        ]
+        await update.message.reply_text(
+            f"📄 **Guía recibida** ({tipo_label})\n\n¿Deseas **leer** la guía o **registrarla**?",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode='Markdown'
+        )
+        return
 
-        if modo == MODO_GUIAS_LEER:
-            folder_solo_leer = DRIVE_FOLDER_LEER
-            enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=folder_solo_leer)
-            
-            try:
-                second_sheet_id = SHEET_ID
-                def register_audit_sheet():
-                    creds = obtener_credenciales()
-                    client = gspread.authorize(creds)
-                    book2 = client.open_by_key(second_sheet_id)
-                    sheet_recibidas = book2.worksheet("Guias_recibidas")
-                    row_data = [
-                        datos_sheet.get("fecha", ""), 
-                        numero_completo, 
-                        datos_sheet.get("tipo", ""), 
-                        datos_sheet.get("empresa", ""), 
-                        datos_sheet.get("fundo_planta", "S/D"), 
-                        enlace_drive
-                    ]
-                    return sync_upsert_row(sheet_recibidas, numero_completo, row_data, col_guia_index=2, col_comentario_index=7)
-                
-                resultado_upsert = await asyncio.to_thread(register_audit_sheet)
-                audit_status = "🔄 *Auditoría: Guía Actualizada*" if resultado_upsert == "updated" else "📌 *Auditoría: Nueva Guía Registrada*"
-                await async_log_action(user_id, numero_completo, f"LEER_AUDIT_{resultado_upsert.upper()}")
-            except Exception as e:
-                audit_status = f"⚠️ Error registro Audit: {str(e)[:20]}"
+    # CASO B: Modo Lectura activo
+    if modo == MODO_GUIAS_LEER:
+        if is_pdf:
+            msg_status = await update.message.reply_text("⏳ Leyendo guía (PDF) con OCR e IA...")
+            await ejecutar_lectura_ocr(user_id, file_path, mime_type, context, msg_status, original_msg_id=update.message.id)
+        else:
+            msg_status = await update.message.reply_text("⏳ Subiendo imagen a Drive para registro manual...")
+            await ejecutar_lectura_manual(user_id, file_path, mime_type, context, msg_status, original_msg_id=update.message.id)
+        return
 
-            footer = f"\n\n{audit_status}\n📁 [Drive]({enlace_drive})\n📊 [Excel]({SHEET_URL_DIRECT})"
-            await msg.delete()
-            
-            is_petramas = "PETRAMAS" in full_report.upper()
-            pet_flag = "P" if is_petramas else "N"
-            kb_obs = [
-                [InlineKeyboardButton("Guía hecha", callback_data=f"obs|hecha|{numero_completo}|{pet_flag}")],
-                [InlineKeyboardButton("Solo certificado", callback_data=f"obs|solocert|{numero_completo}|{pet_flag}")],
-                [InlineKeyboardButton("Escribir manualmente", callback_data=f"obs|escribir|{numero_completo}")],
-                [InlineKeyboardButton("❌ Sin Observación", callback_data=f"obs|cancelar|{numero_completo}")]
-            ]
-            reply_markup = InlineKeyboardMarkup(kb_obs)
-            bot_reply = await update.message.reply_text(full_report + footer, parse_mode='Markdown', reply_markup=reply_markup)
+    # CASO C: Modo Registro activo
+    if modo == MODO_GUIAS_REGISTRAR:
+        guia_origen = user_data_cache.get(user_id, {}).get('guia_origen_vinculada')
+        msg_status = await update.message.reply_text("⏳ Procesando registro de guía con IA...")
+        await ejecutar_registro_guia(
+            user_id=user_id,
+            file_path=file_path,
+            mime_type=mime_type,
+            context=context,
+            msg_status=msg_status,
+            guia_origen_auto=guia_origen,
+            original_msg_id=update.message.id,
+            reply_to_message=update.message.reply_to_message
+        )
+        return
 
-            # --- MEMORIA DE VINCULACIÓN HÍBRIDA ---
-            if user_id not in MEMORIA_VINCULACION:
-                MEMORIA_VINCULACION[user_id] = []
-            MEMORIA_VINCULACION[user_id].append({
-                "num_guia": numero_completo,
-                "fundo": datos_sheet.get("fundo_planta", "S/D"),
-                "message_id": update.message.message_id,
-                "bot_message_id": bot_reply.message_id,
-                "enlace_drive": enlace_drive
-            })
-            if len(MEMORIA_VINCULACION[user_id]) > 5:
-                MEMORIA_VINCULACION[user_id].pop(0)
-            save_memoria_vinculacion(MEMORIA_VINCULACION)
-            # ----------------------------------------
-            
-            texto_analisis = f"{datos_sheet.get('empresa', '')} {datos_sheet.get('entidad_1', '')}".upper()
-            if "PROSEMBRA" in texto_analisis:
-                context.job_queue.run_once(prosembra_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
-            elif "LOS OLIVOS" in texto_analisis:
-                context.job_queue.run_once(olivos_notification_job, 30 * 60, chat_id=user_id, data={"guia": numero_completo})
-
-        elif modo == MODO_GUIAS_REGISTRAR:
-            enlace_drive = await async_subir_a_drive(file_path, mime_type)
-            if not rc.sheet_control: await asyncio.to_thread(conectar_servicios)
-            
-            # --- MEMORIA DE VINCULACIÓN HÍBRIDA (LECTURA) ---
-            guia_ligada_limpia = ""
-            fundo_vinculado = ""
-            if update.message.reply_to_message:
-                reply_id = update.message.reply_to_message.message_id
-                if user_id in MEMORIA_VINCULACION:
-                    for reg in MEMORIA_VINCULACION[user_id]:
-                        if reg["message_id"] == reply_id or reg.get("bot_message_id") == reply_id:
-                            n_guia = reg["num_guia"]
-                            if "-" in n_guia:
-                                partes_g = n_guia.split("-")
-                                guia_ligada_limpia = f"{partes_g[0]}-{partes_g[1].lstrip('0')}"
-                            else:
-                                guia_ligada_limpia = n_guia.lstrip('0')
-                            fundo_vinculado = reg["fundo"]
-                            break
-            # ------------------------------------------------
-            
-            fundo_final = fundo_vinculado if fundo_vinculado and fundo_vinculado != "S/D" else datos_sheet.get("fundo_planta", "S/D")
-            
-            # Extraer enlace_guia_recibida de la memoria vinculada si existe
-            enlace_guia_recibida = ""
-            if update.message.reply_to_message and user_id in MEMORIA_VINCULACION:
-                reply_id = update.message.reply_to_message.message_id
-                for reg in MEMORIA_VINCULACION[user_id]:
-                    if reg["message_id"] == reply_id or reg.get("bot_message_id") == reply_id:
-                        enlace_guia_recibida = reg.get("enlace_drive", "")
-                        break
-
-            row_data = [
-                datos_sheet.get("fecha", ""),                # A: Fecha
-                numero_completo,                             # B: N° Guía
-                guia_ligada_limpia,                          # C: Guía ligada
-                datos_sheet.get("tipo", ""),                 # D: Tipo Guía
-                datos_sheet.get("motivo", ""),               # E: Motivo
-                datos_sheet.get("empresa", ""),              # F: Empresa Principal
-                datos_sheet.get("entidad_1", ""),            # G: Destinatario/Remitente
-                datos_sheet.get("entidad_2", ""),            # H: Destinario/Proveedor
-                enlace_drive,                                # I: Guia hecha
-                enlace_guia_recibida,                        # J: Guia recibida
-                "",                                          # K: Sistema/IA (✅ Nuevo...)
-                datos_sheet.get("observacion", ""),          # L: Observacion Manual
-                fundo_final,                                 # M: Fundo/Planta
-                "",                                          # N: Certificados
-                "",                                          # O: Mes
-                ""                                           # P: Sigersol
-            ]
-            
-            resultado_upsert = await async_upsert_row(rc.sheet_control, numero_completo, row_data, col_guia_index=2, col_comentario_index=11)
-            await async_log_action(user_id, numero_completo, f"REGISTRAR_{resultado_upsert.upper()}")
-            
-            estado_registro = "🔄 *Guía Actualizada (Sobrescrita)*" if resultado_upsert == "updated" else "✅ *Nueva Guía Registrada*"
-            
-            motivo_visual = datos_sheet.get('motivo', 'S/D')
-            if not motivo_visual or str(motivo_visual).strip().lower() == 'none':
-                motivo_visual = 'S/D'
-
-            resumen_registro = (
-                f"{estado_registro}\n\n"
-                f"📄 **Guía:** `{numero_completo}`\n"
-                f"🏢 **Empresa:** `{datos_sheet.get('empresa', 'S/D')}`\n"
-                f"🔄 **Motivo:** `{motivo_visual}`\n"
-            )
-            
-            if guia_ligada_limpia:
-                resumen_registro += f"🔗 **Guía Origen Ligada:** `{guia_ligada_limpia}`\n"
-            if fundo_final and fundo_final != "S/D":
-                resumen_registro += f"🏡 **Fundo/Planta:** `{fundo_final}`\n"
-                
-            resumen_registro += (
-                f"\n📁 [Ver PDF en Drive]({enlace_drive})\n"
-                f"📊 [Abrir Excel]({SHEET_URL_DIRECT})"
-            )
-            
-            await msg.delete()
-            
-            # --- TECLADO DE VINCULACIÓN ---
-            markup = None
-            if not update.message.reply_to_message and user_id in MEMORIA_VINCULACION and len(MEMORIA_VINCULACION[user_id]) > 0:
-                botones = []
-                for reg in reversed(MEMORIA_VINCULACION[user_id]):
-                    n_rec = reg["num_guia"]
-                    f_rec = reg["fundo"]
-                    f_rec_short = f_rec[:10] + "..." if len(f_rec) > 10 else f_rec
-                    cb_data = f"vinc|{numero_completo}|{n_rec}|{f_rec}"
-                    if len(cb_data) > 64:
-                        cb_data = cb_data[:64]
-                    botones.append([InlineKeyboardButton(f"Vincular con {n_rec} ({f_rec_short})", callback_data=cb_data)])
-                markup = InlineKeyboardMarkup(botones)
-                
-            if markup:
-                await update.message.reply_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=markup)
-            else:
-                await update.message.reply_text(resumen_registro, parse_mode='Markdown', disable_web_page_preview=True)
-                
-            # Recordatorios eliminados para Registro_Guias (guias hechas) por solicitud del usuario
-            pass
-                
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        await msg.edit_text(f"❌ Error durante el procesamiento: {e}")
-    finally:
-        if os.path.exists(file_path): os.remove(file_path)
+    # CASO D: Modo Manual activo
+    if modo == MODO_GUIAS_MANUAL:
+        msg_status = await update.message.reply_text("⏳ Subiendo imagen a Drive para registro manual...")
+        await ejecutar_lectura_manual(user_id, file_path, mime_type, context, msg_status, original_msg_id=update.message.id)
+        return
 
 # ====================================================================
 # --- HANDLER CALLBACK OBSERVACION ---
@@ -1372,9 +1550,15 @@ async def handle_callback_observacion(update: Update, context: ContextTypes.DEFA
         return
         
     if accion == "cancelar":
-        nuevo_texto = query.message.text + f"\n\n✅ Registro completado sin observaciones adicionales."
+        nuevo_texto = query.message.text + f"\n\n✅ Registro completado sin observaciones adicionales.\n\n❓ **¿Deseas registrar esta guía ahora?**"
+        kb_preg_reg = [
+            [
+                InlineKeyboardButton("✅ Sí, Registrar Guía", callback_data=f"preg_reg|si|{num_guia}"),
+                InlineKeyboardButton("❌ No, terminar", callback_data=f"preg_reg|no|{num_guia}")
+            ]
+        ]
         try:
-            await query.edit_message_text(nuevo_texto, parse_mode='Markdown', reply_markup=None)
+            await query.edit_message_text(nuevo_texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_preg_reg))
         except Exception:
             pass
         return
@@ -1383,11 +1567,178 @@ async def handle_callback_observacion(update: Update, context: ContextTypes.DEFA
     
     await asyncio.to_thread(update_observacion_sheet, num_guia, observacion, pet_flag)
     
-    nuevo_texto = query.message.text + f"\n\n📝 *Observación Guardada:* {observacion}"
+    nuevo_texto = query.message.text + f"\n\n📝 *Observación Guardada:* {observacion}\n\n❓ **¿Deseas registrar esta guía ahora?**"
+    kb_preg_reg = [
+        [
+            InlineKeyboardButton("✅ Sí, Registrar Guía", callback_data=f"preg_reg|si|{num_guia}"),
+            InlineKeyboardButton("❌ No, terminar", callback_data=f"preg_reg|no|{num_guia}")
+        ]
+    ]
     try:
-        await query.edit_message_text(nuevo_texto, parse_mode='Markdown')
+        await query.edit_message_text(nuevo_texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb_preg_reg))
     except Exception:
         pass
+
+async def handle_callback_pregunta_registro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query.data.startswith('preg_reg|'): return
+    await query.answer()
+    
+    partes = query.data.split('|')
+    accion = partes[1]
+    num_guia = partes[2] if len(partes) > 2 else "S/D"
+    user_id = update.effective_user.id
+    
+    if accion == "si":
+        user_states[user_id] = MODO_GUIAS_REGISTRAR
+        if user_id not in user_data_cache:
+            user_data_cache[user_id] = {}
+        user_data_cache[user_id]['guia_origen_vinculada'] = num_guia
+        
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+            
+        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_operacion')]]
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"📁 *Modo Registro Activado*\n\nPor favor, sube el PDF o foto de la guía emitida/hecha que deseas registrar en el sistema.\n_(Se vinculará automáticamente con la guía origen `{num_guia}`)_",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+    elif accion == "no":
+        user_states[user_id] = None
+        user_data_cache[user_id] = {}
+        try:
+            texto_base = query.message.text or ""
+            await query.edit_message_text(
+                texto_base + "\n\n👍 Proceso completado.",
+                parse_mode='Markdown',
+                reply_markup=None,
+                disable_web_page_preview=True
+            )
+        except Exception:
+            await query.edit_message_reply_markup(reply_markup=None)
+
+async def handle_callback_pregunta_ligar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query.data.startswith('preg_ligar|'): return
+    await query.answer()
+    
+    partes = query.data.split('|')
+    accion = partes[1]
+    num_hecha = partes[2]
+    user_id = update.effective_user.id
+    
+    if accion == "no":
+        user_states[user_id] = None
+        user_data_cache[user_id] = {}
+        texto_base = query.message.text or ""
+        nuevo_texto = texto_base + "\n\n✅ *Guía registrada sin vincular a otra guía.*"
+        try:
+            await query.edit_message_text(nuevo_texto, parse_mode='Markdown', reply_markup=None, disable_web_page_preview=True)
+        except Exception:
+            await query.edit_message_reply_markup(reply_markup=None)
+            
+    elif accion == "si":
+        botones = []
+        if user_id in MEMORIA_VINCULACION and len(MEMORIA_VINCULACION[user_id]) > 0:
+            for reg in reversed(MEMORIA_VINCULACION[user_id]):
+                n_rec = reg["num_guia"]
+                f_rec = reg["fundo"]
+                f_rec_short = f_rec[:10] + "..." if len(f_rec) > 10 else f_rec
+                cb_data = f"vinc|{num_hecha}|{n_rec}|{f_rec}"
+                if len(cb_data) > 64:
+                    cb_data = cb_data[:64]
+                botones.append([InlineKeyboardButton(f"🔗 Con {n_rec} ({f_rec_short})", callback_data=cb_data)])
+        
+        botones.append([InlineKeyboardButton("✍️ Escribir N° de Guía", callback_data=f"preg_ligar|escribir|{num_hecha}")])
+        botones.append([InlineKeyboardButton("❌ No Ligar / Cancelar", callback_data=f"preg_ligar|no|{num_hecha}")])
+        
+        texto_base = query.message.text or ""
+        await query.edit_message_text(
+            texto_base + "\n\n🔗 **Selecciona la guía recibida con la que deseas vincularla:**",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(botones),
+            disable_web_page_preview=True
+        )
+        
+    elif accion == "escribir":
+        user_states[user_id] = MODO_LIGAR_ESCRIBIR
+        if user_id not in user_data_cache:
+            user_data_cache[user_id] = {}
+        user_data_cache[user_id]["ligar_hecha"] = num_hecha
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await query.message.reply_text(
+            f"✍️ Escribe el N° de la Guía Recibida (Ej: `EG03-293`) a la que deseas vincular la guía `{num_hecha}`:",
+            parse_mode='Markdown'
+        )
+
+async def handle_callback_direct_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query.data.startswith('direct_action|'): return
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    partes = query.data.split('|')
+    accion = partes[1]
+    
+    direct_file = user_data_cache.get(user_id, {}).get('direct_file')
+    if not direct_file:
+        await query.edit_message_text("❌ No se encontró el archivo temporal o la sesión expiró. Por favor, vuelve a subir la guía.")
+        return
+        
+    file_path = direct_file.get('file_path', '')
+    mime_type = direct_file.get('mime_type', '')
+    is_pdf = direct_file.get('is_pdf', False)
+    original_msg_id = direct_file.get('message_id')
+    
+    if accion == "cancelar":
+        if os.path.exists(file_path):
+            try: os.remove(file_path)
+            except Exception: pass
+        user_data_cache.pop(user_id, None)
+        user_states[user_id] = None
+        await query.edit_message_text("❌ Operación cancelada. Archivo descartado.")
+        return
+        
+    elif accion == "registrar":
+        msg_status = await query.edit_message_text("⏳ Procesando registro de guía con IA...")
+        await ejecutar_registro_guia(
+            user_id=user_id,
+            file_path=file_path,
+            mime_type=mime_type,
+            context=context,
+            msg_status=msg_status,
+            guia_origen_auto=None,
+            original_msg_id=original_msg_id
+        )
+        
+    elif accion == "leer":
+        if is_pdf:
+            msg_status = await query.edit_message_text("⏳ Leyendo guía (PDF) con OCR e IA...")
+            await ejecutar_lectura_ocr(
+                user_id=user_id,
+                file_path=file_path,
+                mime_type=mime_type,
+                context=context,
+                msg_status=msg_status,
+                original_msg_id=original_msg_id
+            )
+        else:
+            msg_status = await query.edit_message_text("⏳ Subiendo imagen a Drive para registro manual...")
+            await ejecutar_lectura_manual(
+                user_id=user_id,
+                file_path=file_path,
+                mime_type=mime_type,
+                context=context,
+                msg_status=msg_status,
+                original_msg_id=original_msg_id
+            )
 
 # ====================================================================
 # --- HANDLER CALLBACK VINCULACION ---
