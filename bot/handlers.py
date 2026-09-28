@@ -21,11 +21,11 @@ from config.settings import (
     MODO_REPORTE_REGISTRO, MODO_REPORTE_RECIBIDAS, MODO_COMENTAR_GUIA, MODO_COMENTAR_TEXTO,
     MODO_BUSCAR_CERT_FECHA, MODO_BUSCAR_CERT_FUNDO, 
     MODO_BUSCAR_CERT_CORRE, MODO_BUSCAR_CERT_EMPRESA,
-    MODO_DIR_EMPRESA, MODO_DIR_FUNDO,
+    MODO_DIR_EMPRESA, MODO_DIR_FUNDO, MODO_BUSCAR_CLIENTE,
     MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_OBS_ESCRIBIR, MODO_LIGAR_ESCRIBIR,
     DRIVE_FOLDER_LEER
 )
-from utils.helpers import clean_json_response, async_log_action, load_memoria_vinculacion, save_memoria_vinculacion
+from utils.helpers import clean_json_response, async_log_action, load_memoria_vinculacion, save_memoria_vinculacion, match_company_flexible
 from core.ai_client import generar_con_reintento
 from core.sheets_client import (
     conectar_servicios, async_get_all_records, async_buscar_link_en_drive, 
@@ -283,10 +283,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text("📘 Módulo: Guías\nSelecciona la operación:", reply_markup=InlineKeyboardMarkup(keyboard))
     elif query.data == 'menu_busqueda':
+        user_states[user_id] = None
         keyboard = [
             [InlineKeyboardButton("🔍 Buscar Reporte", callback_data='modo_buscar')],
             [InlineKeyboardButton("💬 Añadir Observación", callback_data='modo_comentar')],
             [InlineKeyboardButton("📍 Buscar Direcciones", callback_data='modo_direcciones')],
+            [InlineKeyboardButton("👥 Buscar Clientes", callback_data='modo_buscar_cliente')],
             [InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]
         ]
         await query.edit_message_text("🔍 Módulo: Búsquedas\nSelecciona la operación:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -389,6 +391,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[user_id] = MODO_DIR_FUNDO
         kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_direcciones')]]
         await query.edit_message_text("🏡 Direcciones: Por Fundo/Planta\nIngresa un nombre parcial o clave del Fundo/Planta:", reply_markup=InlineKeyboardMarkup(kb))
+    elif query.data == 'modo_buscar_cliente':
+        user_states[user_id] = MODO_BUSCAR_CLIENTE
+        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='menu_busqueda')]]
+        await query.edit_message_text(
+            "👥 **Búsqueda de Clientes**\n\n"
+            "Ingresa el nombre o una parte del nombre de la empresa (Ej: `Olivos`, `Petramas`, `Laran`):\n\n"
+            "💡 _Búsqueda flexible: no distingue mayúsculas/minúsculas ni tildes, y tolera pequeños errores de tipeo._",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode='Markdown'
+        )
     elif query.data == 'modo_bitacora':
         keyboard = [
             [InlineKeyboardButton("✍️ Nueva Anotación/Archivo", callback_data='bitacora_add')],
@@ -774,6 +786,84 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error en búsqueda de direcciones: {e}")
             await msg.edit_text(f"❌ Error en la búsqueda de directori: {e}")
+
+    elif modo == MODO_BUSCAR_CLIENTE:
+        raw_query = str(update.message.text).strip()
+        msg = await update.message.reply_text(f"⏳ Buscando cliente `{raw_query}` en la base de datos...")
+        
+        try:
+            def fetch_clientes():
+                creds = obtener_credenciales()
+                if not creds:
+                    raise Exception("No se encontraron las credenciales de Google.")
+                client = gspread.authorize(creds)
+                book2 = client.open_by_key(SHEET_ID)
+                ws_target = None
+                for ws in book2.worksheets():
+                    if ws.title.strip().upper() == "CLIENTES":
+                        ws_target = ws
+                        break
+                if not ws_target:
+                    return []
+                return ws_target.get_all_records()
+                
+            registros = await asyncio.to_thread(fetch_clientes)
+            
+            matches_scored = []
+            for r in registros:
+                empresa_val = str(r.get('EMPRESA', '')).strip()
+                is_match, score = match_company_flexible(raw_query, empresa_val)
+                if is_match:
+                    matches_scored.append((r, score))
+                    
+            matches_scored.sort(key=lambda x: x[1], reverse=True)
+            encontrados = [m[0] for m in matches_scored]
+            
+            kb = [
+                [InlineKeyboardButton("🔙 Menú Búsquedas", callback_data='menu_busqueda')]
+            ]
+            
+            if encontrados:
+                reporte = f"✅ **{len(encontrados)} Cliente(s) Encontrado(s)**\n\n"
+                for r in encontrados:
+                    empresa = str(r.get('EMPRESA', 'S/D')).strip()
+                    ruc = str(r.get('RUC', '')).strip()
+                    registro = str(r.get('REGISTRO', '')).strip()
+                    dir_cert = str(r.get('DIRECCION CERTIFICADO', '')).strip()
+                    dom_fiscal = str(r.get('DOMICILIO FISCAL', '')).strip()
+                    dir1 = str(r.get('DIRECCION 1', '')).strip()
+                    dir2 = str(r.get('DIRECCION 2', '')).strip()
+                    
+                    reporte += f"🏢 **Empresa:** `{empresa}`\n"
+                    if ruc:
+                        reporte += f"🆔 **RUC:** `{ruc}`\n"
+                    if registro:
+                        reporte += f"📝 **Registro:** `{registro}`\n"
+                    if dir_cert:
+                        reporte += f"📜 **Dir. Certificado:** `{dir_cert}`\n"
+                    if dom_fiscal:
+                        reporte += f"🏠 **Domicilio Fiscal:** `{dom_fiscal}`\n"
+                    if dir1:
+                        reporte += f"📍 **Dirección 1:** `{dir1}`\n"
+                    if dir2:
+                        reporte += f"📍 **Dirección 2:** `{dir2}`\n"
+                    reporte += "➖➖➖➖➖➖➖➖➖➖\n"
+                    
+                if len(reporte) > 4000:
+                    reporte = reporte[:4000] + "\n\n⚠️ _[Reporte recortado por límite de caracteres]_"
+                    
+                try:
+                    await msg.edit_text(reporte, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                except Exception:
+                    await msg.edit_text(reporte, reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await msg.edit_text(
+                    f"❌ No se encontró ningún cliente con `{raw_query}`.\n\nPuedes ingresar otro nombre o pulsar el botón para volver:",
+                    reply_markup=InlineKeyboardMarkup(kb)
+                )
+        except Exception as e:
+            logger.error(f"Error en búsqueda de clientes: {e}")
+            await msg.edit_text(f"❌ Error en la búsqueda de clientes: {e}")
 
     elif modo == MODO_GUIAS_MANUAL_FECHA:
         fecha_raw = str(update.message.text).strip()

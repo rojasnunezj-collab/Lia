@@ -6,6 +6,8 @@ import re
 import sqlite3
 import asyncio
 import json
+import unicodedata
+import difflib
 from datetime import datetime
 from config.settings import logger
 
@@ -38,6 +40,68 @@ def clean_json_response(text):
     text = re.sub(r'```json\s*|\s*```', '', text, flags=re.IGNORECASE)
     match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
     return match.group(1) if match else text
+
+def normalize_search_text(text: str) -> str:
+    """Normaliza texto para búsqueda: mayúsculas, sin tildes/diacríticos y sin puntuación."""
+    if not text:
+        return ""
+    text = str(text).strip().upper()
+    text = ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
+    text = re.sub(r'[^A-Z0-9\s]', ' ', text)
+    return ' '.join(text.split())
+
+def match_company_flexible(query: str, target: str) -> tuple[bool, float]:
+    """
+    Búsqueda flexible por nombre de empresa (Solución 3):
+    - Insensible a mayúsculas/minúsculas.
+    - Insensible a tildes y acentos.
+    - Búsqueda por subcadena parcial o palabras contenidas.
+    - Tolerancia a errores ortográficos / leves de digitación (fuzzy matching con difflib).
+    Retorna (is_match, score).
+    """
+    q_norm = normalize_search_text(query)
+    t_norm = normalize_search_text(target)
+    if not q_norm or not t_norm:
+        return False, 0.0
+
+    # 1. Coincidencia directa de subcadena
+    if q_norm in t_norm:
+        return True, 1.0
+
+    q_words = q_norm.split()
+    t_words = t_norm.split()
+
+    def word_matches_target(qw, target_words, target_full):
+        if qw in target_full:
+            return True
+        for tw in target_words:
+            if len(qw) >= 4 and len(tw) >= 4:
+                if difflib.SequenceMatcher(None, qw, tw).ratio() >= 0.78:
+                    return True
+        return False
+
+    # 2. Múltiples palabras: todas deben coincidir (exacta o fuzzy)
+    if len(q_words) > 1:
+        if all(word_matches_target(qw, t_words, t_norm) for qw in q_words):
+            return True, 0.95
+    else:
+        # 3. Palabra única: fuzzy match contra palabras del nombre
+        qw = q_words[0]
+        best_ratio = 0.0
+        for tw in t_words:
+            if len(qw) >= 4 and len(tw) >= 4:
+                ratio = difflib.SequenceMatcher(None, qw, tw).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+        if best_ratio >= 0.78:
+            return True, best_ratio
+
+    # 4. Similitud global de toda la cadena
+    ratio = difflib.SequenceMatcher(None, q_norm, t_norm).ratio()
+    if ratio >= 0.75:
+        return True, ratio
+
+    return False, 0.0
 
 # ====================================================================
 # --- CONFIGURACIÓN DE BASE DE DATOS Y LOGS ---
