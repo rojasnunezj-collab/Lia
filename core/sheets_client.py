@@ -60,7 +60,10 @@ def obtener_credenciales():
     if env_token_b64:
         try:
             info = json.loads(base64.b64decode(env_token_b64).decode('utf-8'))
-            return OAuthCredentials.from_authorized_user_info(info, SCOPES_COMBINED)
+            creds = OAuthCredentials.from_authorized_user_info(info, SCOPES_COMBINED)
+            if (creds.expired or not creds.valid) and creds.refresh_token:
+                creds.refresh(Request())
+            return creds
         except Exception as e:
             logger.error(f"❌ Error parseando GOOGLE_TOKEN_B64: {e}")
 
@@ -84,7 +87,10 @@ def obtener_credenciales():
     # Prioridad 1: Intentar usar Token Humano (token.json) para evitar cuotas de Service Account
     if os.path.exists(token_path):
         try:
-            return OAuthCredentials.from_authorized_user_file(token_path, SCOPES_COMBINED)
+            creds = OAuthCredentials.from_authorized_user_file(token_path, SCOPES_COMBINED)
+            if (creds.expired or not creds.valid) and creds.refresh_token:
+                creds.refresh(Request())
+            return creds
         except Exception as e:
             logger.error(f"❌ Error leyendo token.json: {e}")
 

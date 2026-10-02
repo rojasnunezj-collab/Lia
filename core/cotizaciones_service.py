@@ -308,8 +308,16 @@ def procesar_generacion_cotizacion(datos):
             fields='id, webViewLink',
             supportsAllDrives=True
         ).execute()
-        drive.permissions().create(fileId=pdf_file.get('id'), body={'type': 'anyone', 'role': 'reader'}, supportsAllDrives=True).execute()
+        try:
+            drive.permissions().create(fileId=pdf_file.get('id'), body={'type': 'anyone', 'role': 'reader'}, supportsAllDrives=True).execute()
+        except Exception as e_p:
+            logger.warning(f"No se pudo asignar permiso público a PDF: {e_p}")
         pdf_link = pdf_file.get('webViewLink')
+
+        try:
+            drive.permissions().create(fileId=doc_id, body={'type': 'anyone', 'role': 'writer'}, supportsAllDrives=True).execute()
+        except Exception as e_d:
+            logger.warning(f"No se pudo asignar permiso público a Doc: {e_d}")
 
         doc_link = f"https://docs.google.com/document/d/{doc_id}/edit"
 

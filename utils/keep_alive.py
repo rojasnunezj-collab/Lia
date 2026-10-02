@@ -80,19 +80,23 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 target_chat_id = payload.get('user_id') or ADMIN_CHAT_ID
                 if target_chat_id and TELEGRAM_TOKEN:
                     url_edit = obtener_url_webapp(correlativo=res['correlativo'], datos_edicion=res['datos_json'], user_id=target_chat_id)
+                    import html
+                    c_cliente = html.escape(str(res['cliente']))
+                    c_codigo = html.escape(str(res['codigo']))
+                    c_fecha = html.escape(str(res['fecha']))
                     caption = (
-                        f"✅ *Cotización Generada Exitosamente*\n\n"
-                        f"📌 *Código:* `COTIZACION N°{res['codigo']}`\n"
-                        f"🏢 *Cliente:* `{res['cliente']}`\n"
-                        f"📅 *Fecha:* `{res['fecha']}`\n"
-                        f"💰 *Ítems cotizados:* `{len(payload.get('items', []))}` residuos\n\n"
+                        f"✅ <b>Cotización Generada Exitosamente</b>\n\n"
+                        f"📌 <b>Código:</b> <code>COTIZACION N°{c_codigo}</code>\n"
+                        f"🏢 <b>Cliente:</b> <code>{c_cliente}</code>\n"
+                        f"📅 <b>Fecha:</b> <code>{c_fecha}</code>\n"
+                        f"💰 <b>Ítems cotizados:</b> {len(payload.get('items', []))} residuos\n\n"
                         f"💾 Guardada en Google Drive y registrada en Sheets."
                     )
                     files = {'document': (res['nombre_archivo'], res['pdf_bytes'], 'application/pdf')}
                     data = {
                         'chat_id': str(target_chat_id),
                         'caption': caption,
-                        'parse_mode': 'Markdown',
+                        'parse_mode': 'HTML',
                         'reply_markup': json.dumps({
                             'inline_keyboard': [
                                 [{'text': '✏️ Modificar Cotización', 'web_app': {'url': url_edit}}],

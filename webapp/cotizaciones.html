@@ -409,12 +409,19 @@
       return `${String(d.getDate()).padStart(2, '0')} de ${meses[d.getMonth()]} del ${d.getFullYear()}`;
     }
 
+    function getApiUrl(path) {
+      if (window.location.origin.includes('github.io') || window.location.origin === 'null' || window.location.protocol === 'file:') {
+        return 'https://lia-3j3z.onrender.com' + path;
+      }
+      return path;
+    }
+
     // Cargar Catálogo de Clientes si viene en URL o cargar iniciales
     function inicializarFormulario() {
       poblarSelectClientes(CLIENTES_PREDETERMINADOS);
 
       // Refrescar catálogo en vivo desde /api/clientes
-      fetch('/api/clientes')
+      fetch(getApiUrl('/api/clientes'))
         .then(r => r.json())
         .then(data => {
           if (Array.isArray(data) && data.length > 0) {
@@ -596,54 +603,48 @@
 
       const btn = document.getElementById('btnSubmit');
       btn.disabled = true;
-      btn.innerText = "⏳ Generando documento...";
+      btn.innerText = "⏳ Generando documento y PDF en Drive...";
 
       // Obtener user_id desde Telegram o parámetro URL
       const urlParams = new URLSearchParams(window.location.search);
       let userId = tg?.initDataUnsafe?.user?.id || urlParams.get('uid');
       payload.user_id = userId;
 
-      let enviadoViaTelegram = false;
-      if (tg && typeof tg.sendData === 'function') {
-        try {
-          tg.sendData(JSON.stringify(payload));
-          enviadoViaTelegram = true;
-          btn.innerText = "✅ Enviado a Lía. Cerrando...";
-          setTimeout(() => { try { tg.close(); } catch(e){} }, 800);
-          return;
-        } catch (err) {
-          console.warn("tg.sendData no permitido en este contexto, usando envío directo HTTP:", err);
-        }
-      }
-
-      // Si tg.sendData falló o no está disponible (ej. abierto desde botón Inline o navegador)
-      btn.innerText = "⏳ Creando PDF en Drive y Sheets...";
-      fetch('/api/cotizacion', {
+      fetch(getApiUrl('/api/cotizacion'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
-      .then(r => r.json())
-      .then(res => {
-        if (res.success) {
-          btn.innerText = "✅ ¡Listo! PDF enviado a tu Telegram";
+      .then(async r => {
+        let res;
+        try {
+          res = await r.json();
+        } catch (e) {
+          throw new Error("Respuesta no válida del servidor (HTTP " + r.status + ")");
+        }
+        if (r.ok && res.success) {
+          btn.innerText = "✅ ¡Listo! Cotización enviada a Telegram";
           btn.style.background = "#198754";
+          try {
+            if (tg && typeof tg.sendData === 'function') {
+              tg.sendData(JSON.stringify({ tipo: "COMPLETADO", codigo: res.codigo }));
+            }
+          } catch (e) {}
+
           setTimeout(() => {
             if (tg && typeof tg.close === 'function') {
               try { tg.close(); } catch(e){}
             } else {
               alert("✅ ¡Cotización N°" + res.codigo + " generada exitosamente!\nRevisa tu chat en Telegram.");
             }
-          }, 1200);
+          }, 1500);
         } else {
-          alert("❌ Error: " + (res.error || "No se pudo generar la cotización"));
-          btn.disabled = false;
-          btn.innerText = "🚀 Generar Cotización en PDF";
+          throw new Error(res.error || "No se pudo generar la cotización");
         }
       })
       .catch(err => {
         console.error("Error enviando cotización:", err);
-        alert("⚠️ No se pudo conectar al servidor de Lía directamente. Intenta nuevamente.");
+        alert("❌ Error: " + (err.message || err));
         btn.disabled = false;
         btn.innerText = "🚀 Generar Cotización en PDF";
       });
