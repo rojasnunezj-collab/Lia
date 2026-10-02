@@ -285,7 +285,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'menu_cotizaciones':
         user_states[user_id] = None
         corr_sig = obtener_siguiente_correlativo()
-        url_app = obtener_url_webapp(correlativo=corr_sig)
+        url_app = obtener_url_webapp(correlativo=corr_sig, user_id=user_id)
         keyboard = [
             [InlineKeyboardButton("➕ Nueva Cotización", web_app=WebAppInfo(url=url_app))],
             [InlineKeyboardButton("🔍 Buscar / Modificar Cotización", callback_data='coti_buscar')],
@@ -317,7 +317,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not coti_data:
             await query.answer("❌ No se encontró la cotización.", show_alert=True)
             return
-        url_edit = obtener_url_webapp(correlativo=corr, datos_edicion=coti_data)
+        url_edit = obtener_url_webapp(correlativo=corr, datos_edicion=coti_data, user_id=user_id)
         keyboard = [
             [InlineKeyboardButton("✏️ Abrir Formulario de Edición", web_app=WebAppInfo(url=url_edit))],
             [InlineKeyboardButton("🔙 Volver", callback_data='menu_cotizaciones')]
@@ -577,7 +577,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             doc_link = coti_data.get("doc_link", "")
             pdf_link = coti_data.get("pdf_link", "")
 
-            url_edit = obtener_url_webapp(correlativo=corr, datos_edicion=coti_data)
+            url_edit = obtener_url_webapp(correlativo=corr, datos_edicion=coti_data, user_id=user_id)
 
             kb = [
                 [InlineKeyboardButton("✏️ Modificar Cotización", web_app=WebAppInfo(url=url_edit))]
@@ -2135,7 +2135,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         codigo = res["codigo"]
         fecha = res["fecha"]
 
-        url_edit = obtener_url_webapp(correlativo=correlativo, datos_edicion=res["datos_json"])
+        url_edit = obtener_url_webapp(correlativo=correlativo, datos_edicion=res["datos_json"], user_id=update.effective_user.id)
 
         kb = [
             [InlineKeyboardButton("✏️ Modificar Cotización", web_app=WebAppInfo(url=url_edit))],

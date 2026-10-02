@@ -23,7 +23,7 @@ MESES_ES = {
     9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
 }
 
-def obtener_url_webapp(correlativo=None, datos_edicion=None):
+def obtener_url_webapp(correlativo=None, datos_edicion=None, user_id=None):
     """Construye la URL segura HTTPS para abrir la Telegram Mini App."""
     import urllib.parse
     import base64
@@ -39,6 +39,8 @@ def obtener_url_webapp(correlativo=None, datos_edicion=None):
     params = {}
     if correlativo:
         params['corr'] = str(correlativo)
+    if user_id:
+        params['uid'] = str(user_id)
     if datos_edicion:
         json_str = json.dumps(datos_edicion, ensure_ascii=False)
         params['data'] = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')

@@ -52,6 +52,73 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot Lia is alive and running!")
 
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == '/api/cotizacion':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                from core.cotizaciones_service import procesar_generacion_cotizacion, obtener_url_webapp
+                import requests
+                from config.settings import TELEGRAM_TOKEN, ADMIN_CHAT_ID
+
+                res = procesar_generacion_cotizacion(payload)
+
+                target_chat_id = payload.get('user_id') or ADMIN_CHAT_ID
+                if target_chat_id and TELEGRAM_TOKEN:
+                    url_edit = obtener_url_webapp(correlativo=res['correlativo'], datos_edicion=res['datos_json'], user_id=target_chat_id)
+                    caption = (
+                        f"✅ *Cotización Generada Exitosamente*\n\n"
+                        f"📌 *Código:* `COTIZACION N°{res['codigo']}`\n"
+                        f"🏢 *Cliente:* `{res['cliente']}`\n"
+                        f"📅 *Fecha:* `{res['fecha']}`\n"
+                        f"💰 *Ítems cotizados:* `{len(payload.get('items', []))}` residuos\n\n"
+                        f"💾 Guardada en Google Drive y registrada en Sheets."
+                    )
+                    files = {'document': (res['nombre_archivo'], res['pdf_bytes'], 'application/pdf')}
+                    data = {
+                        'chat_id': str(target_chat_id),
+                        'caption': caption,
+                        'parse_mode': 'Markdown',
+                        'reply_markup': json.dumps({
+                            'inline_keyboard': [
+                                [{'text': '✏️ Modificar Cotización', 'web_app': {'url': url_edit}}],
+                                [{'text': '📄 Doc Editable', 'url': res['doc_link']}, {'text': '📂 Ver en Drive', 'url': res['pdf_link']}],
+                                [{'text': '📋 Menú Cotizaciones', 'callback_data': 'menu_cotizaciones'}]
+                            ]
+                        })
+                    }
+                    try:
+                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument", data=data, files=files, timeout=30)
+                    except Exception as e:
+                        logger.error(f"Error enviando documento por Telegram Bot API: {e}")
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'codigo': res['codigo']}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/cotizacion: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
     def do_HEAD(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
