@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Cotización - EPMI SAC</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --primary: #198754;
+      --primary-dark: #146c43;
+      --primary-light: #e8f5e9;
+      --bg: #f8f9fa;
+      --card-bg: #ffffff;
+      --text: #212529;
+      --text-muted: #6c757d;
+      --border: #dee2e6;
+      --danger: #dc3545;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      padding-bottom: 90px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      background: white;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+
+    .header-logo {
+      width: 44px;
+      height: 44px;
+      background: var(--primary);
+      color: white;
+      font-weight: 800;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    .header-info h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .header-info p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      border: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--primary-dark);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .form-group {
+      margin-bottom: 10px;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .form-row .form-group {
+      flex: 1;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 9px 12px;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      outline: none;
+      background: #fafafa;
+      transition: border-color 0.2s;
+    }
+
+    input:focus, select:focus {
+      border-color: var(--primary);
+      background: #fff;
+    }
+
+    /* Tabla de Ítems */
+    .item-card {
+      background: #fdfdfd;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 8px;
+      position: relative;
+    }
+
+    .item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .item-badge {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+
+    .btn-delete {
+      background: transparent;
+      border: none;
+      color: var(--danger);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 2px 6px;
+    }
+
+    .btn-add {
+      width: 100%;
+      padding: 10px;
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      border: 1px dashed var(--primary);
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    /* Floating Submit Button */
+    .footer-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: white;
+      padding: 12px 16px;
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.08);
+      border-top: 1px solid var(--border);
+      z-index: 100;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 13px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.2s;
+    }
+
+    .btn-submit:hover {
+      background: var(--primary-dark);
+    }
+
+    .btn-submit:disabled {
+      background: #adb5bd;
+      cursor: not-allowed;
+    }
+
+    .notice {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-logo">E</div>
+    <div class="header-info">
+      <h1>EPMI S.A.C.</h1>
+      <p id="subtitulo_header">Generador de Cotización Técnica - Económica</p>
+    </div>
+  </div>
+
+  <form id="cotizacionForm">
+    <!-- 1. Datos Generales -->
+    <div class="card">
+      <div class="card-title">📌 Datos de la Cotización</div>
+      <div class="form-row">
+        <div class="form-group" style="flex: 0 0 100px;">
+          <label for="correlativo">N° Correl.</label>
+          <input type="text" id="correlativo" placeholder="081" required>
+        </div>
+        <div class="form-group">
+          <label for="fecha">Fecha de Emisión</label>
+          <input type="text" id="fecha" placeholder="01 de octubre del 2026" required>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Datos del Generador (Cliente) -->
+    <div class="card">
+      <div class="card-title">🏢 Datos del Generador (Cliente)</div>
+      
+      <div class="form-group">
+        <label for="cliente">Razón Social / Empresa</label>
+        <input type="text" id="cliente" list="clientesList" placeholder="Ej: AGRICOLA ANDREA S.A.C." required oninput="onClienteInput()">
+        <datalist id="clientesList"></datalist>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex: 0 0 130px;">
+          <label for="ruc">RUC</label>
+          <input type="text" id="ruc" placeholder="20505688903" maxlength="11" required>
+        </div>
+        <div class="form-group">
+          <label for="direccion">Dirección / Fundo</label>
+          <input type="text" id="direccion" placeholder="Ej: PISCO - ICA" required>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Propuesta Económica (Tabla) -->
+    <div class="card">
+      <div class="card-title">💰 Propuesta Económica (Residuos)</div>
+      
+      <div id="itemsContainer"></div>
+
+      <button type="button" class="btn-add" onclick="agregarItem()">
+        ➕ Agregar Residuo
+      </button>
+    </div>
+
+    <!-- 4. Firmante -->
+    <div class="card">
+      <div class="card-title">✍️ Responsable Técnico</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="responsable">Firmante</label>
+          <input type="text" id="responsable" value="Alexander Chamochumbi Chávez" required>
+        </div>
+        <div class="form-group">
+          <label for="cargo">Cargo</label>
+          <input type="text" id="cargo" value="Responsable Técnico" required>
+        </div>
+      </div>
+    </div>
+
+    <!-- Botón Fijo Inferior -->
+    <div class="footer-bar">
+      <button type="button" id="btnSubmit" class="btn-submit" onclick="enviarCotizacion()">
+        🚀 Generar Cotización en PDF
+      </button>
+      <div class="notice">Se guardará en Drive y se registrará en Google Sheets</div>
+    </div>
+  </form>
+
+  <!-- Lista sugerida de residuos -->
+  <datalist id="residuosSugeridos">
+    <option value="CARTÓN">
+    <option value="PLÁSTICO FILM">
+    <option value="CHATARRA METAL">
+    <option value="GALONERAS DE 20, 10, 5, 2 Y 1 LT">
+    <option value="CILINDROS DE 200 LITROS PLÁSTICOS">
+    <option value="PARIHUELAS DE MADERA">
+    <option value="SACOS / BIG BAGS">
+    <option value="ACEITE USADO">
+    <option value="MADERA / PALLETS">
+    <option value="PAPEL Y ARCHIVO">
+    <option value="RESIDUOS COMUNES">
+  </datalist>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.expand();
+      tg.ready();
+    }
+
+    let clientesCatalogo = [];
+    let itemsCount = 0;
+
+    // Inicialización de Fecha
+    function fechaHoyTexto() {
+      const meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+      const d = new Date();
+      return `${String(d.getDate()).padStart(2, '0')} de ${meses[d.getMonth()]} del ${d.getFullYear()}`;
+    }
+
+    // Cargar Catálogo de Clientes si viene en URL o cargar iniciales
+    function inicializarFormulario() {
+      document.getElementById('fecha').value = fechaHoyTexto();
+
+      // Revisar si viene data por URL (Modo Edición)
+      const urlParams = new URLSearchParams(window.location.search);
+      const dataParam = urlParams.get('data');
+      const corrParam = urlParams.get('corr');
+
+      if (dataParam) {
+        try {
+          const editData = JSON.parse(decodeURIComponent(escape(atob(dataParam))));
+          cargarDatosEdicion(editData);
+          return;
+        } catch (e) {
+          console.warn("No se pudo decodificar data de edición:", e);
+        }
+      }
+
+      if (corrParam) {
+        document.getElementById('correlativo').value = corrParam;
+      }
+
+      // Items predeterminados sugeridos (igual a la plantilla)
+      const itemsDefault = [
+        { desc: "CARTÓN", unidad: "KG", precio: "S/.0,10" },
+        { desc: "PLÁSTICO FILM", unidad: "KG", precio: "S/.0,35" },
+        { desc: "CHATARRA METAL", unidad: "KG", precio: "S/.0.30" },
+        { desc: "GALONERAS DE 20, 10, 5, 2 Y 1 LT", unidad: "KG", precio: "S/.1.00" },
+        { desc: "CILINDROS DE 200 LITROS PLÁSTICOS", unidad: "KG", precio: "S/.40,00" },
+        { desc: "PARIHUELAS DE MADERA", unidad: "KG", precio: "S/.0,00" }
+      ];
+
+      itemsDefault.forEach(it => agregarItem(it.desc, it.unidad, it.precio));
+    }
+
+    function cargarDatosEdicion(data) {
+      document.getElementById('subtitulo_header').innerText = "✏️ Modificando Cotización N°" + (data.codigo || data.correlativo);
+      document.getElementById('correlativo').value = data.correlativo || '';
+      document.getElementById('correlativo').readOnly = true;
+      document.getElementById('fecha').value = data.fecha || fechaHoyTexto();
+      document.getElementById('cliente').value = data.cliente || '';
+      document.getElementById('ruc').value = data.ruc || '';
+      document.getElementById('direccion').value = data.direccion || '';
+      document.getElementById('responsable').value = data.responsable || 'Alexander Chamochumbi Chávez';
+      document.getElementById('cargo').value = data.cargo || 'Responsable Técnico';
+
+      const btn = document.getElementById('btnSubmit');
+      btn.innerText = "💾 Guardar Cambios en Cotización";
+      btn.style.background = "#0d6efd";
+
+      document.getElementById('itemsContainer').innerHTML = '';
+      itemsCount = 0;
+      if (data.items && data.items.length > 0) {
+        data.items.forEach(it => agregarItem(it.descripcion, it.unidad, it.precio));
+      } else {
+        agregarItem();
+      }
+    }
+
+    function agregarItem(desc = '', unidad = 'KG', precio = '') {
+      itemsCount++;
+      const id = itemsCount;
+      const container = document.getElementById('itemsContainer');
+      const div = document.createElement('div');
+      div.className = 'item-card';
+      div.id = `item_row_${id}`;
+      div.innerHTML = `
+        <div class="item-header">
+          <span class="item-badge">Ítem #${id}</span>
+          <button type="button" class="btn-delete" onclick="eliminarItem(${id})">🗑 Eliminar</button>
+        </div>
+        <div class="form-group">
+          <label>Residuo / Descripción</label>
+          <input type="text" class="item-desc" list="residuosSugeridos" placeholder="Ej: CARTÓN" value="${desc}" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex: 0 0 110px;">
+            <label>Unidad</label>
+            <select class="item-unidad">
+              <option value="KG" ${unidad === 'KG' ? 'selected' : ''}>KG</option>
+              <option value="TN" ${unidad === 'TN' ? 'selected' : ''}>TN</option>
+              <option value="UNID" ${unidad === 'UNID' ? 'selected' : ''}>UNID</option>
+              <option value="M3" ${unidad === 'M3' ? 'selected' : ''}>M3</option>
+              <option value="GL" ${unidad === 'GL' ? 'selected' : ''}>GL</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Precio Unitario</label>
+            <input type="text" class="item-precio" placeholder="S/. 0.00" value="${precio}" required>
+          </div>
+        </div>
+      `;
+      container.appendChild(div);
+      renumerarBadges();
+    }
+
+    function eliminarItem(id) {
+      const el = document.getElementById(`item_row_${id}`);
+      if (el) el.remove();
+      renumerarBadges();
+    }
+
+    function renumerarBadges() {
+      const cards = document.querySelectorAll('.item-card');
+      cards.forEach((card, index) => {
+        const badge = card.querySelector('.item-badge');
+        if (badge) badge.innerText = `Ítem #${index + 1}`;
+      });
+    }
+
+    function onClienteInput() {
+      const val = document.getElementById('cliente').value.toUpperCase().trim();
+      const match = clientesCatalogo.find(c => c.empresa.toUpperCase() === val);
+      if (match) {
+        if (match.ruc) document.getElementById('ruc').value = match.ruc;
+        if (match.direccion) document.getElementById('direccion').value = match.direccion;
+      }
+    }
+
+    function cargarClientesDatalist(clientes) {
+      clientesCatalogo = clientes;
+      const datalist = document.getElementById('clientesList');
+      datalist.innerHTML = '';
+      clientes.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.empresa;
+        datalist.appendChild(opt);
+      });
+    }
+
+    function enviarCotizacion() {
+      const correlativo = document.getElementById('correlativo').value.trim();
+      const fecha = document.getElementById('fecha').value.trim();
+      const cliente = document.getElementById('cliente').value.trim();
+      const ruc = document.getElementById('ruc').value.trim();
+      const direccion = document.getElementById('direccion').value.trim();
+      const responsable = document.getElementById('responsable').value.trim();
+      const cargo = document.getElementById('cargo').value.trim();
+
+      if (!correlativo || !cliente || !ruc || !direccion) {
+        alert("Por favor completa los campos del cliente, RUC, dirección y correlativo.");
+        return;
+      }
+
+      const rows = document.querySelectorAll('.item-card');
+      if (rows.length === 0) {
+        alert("Agrega al menos 1 residuo a la cotización.");
+        return;
+      }
+
+      const items = [];
+      let valid = true;
+      rows.forEach((row, idx) => {
+        const desc = row.querySelector('.item-desc').value.trim();
+        const unidad = row.querySelector('.item-unidad').value.trim();
+        let precio = row.querySelector('.item-precio').value.trim();
+
+        if (!desc || !precio) {
+          valid = false;
+        }
+
+        if (precio && !precio.startsWith("S/")) {
+          precio = "S/." + precio.replace(/^[^\d]+/, '');
+        }
+
+        items.push({
+          item: String(idx + 1),
+          descripcion: desc,
+          unidad: unidad,
+          precio: precio
+        });
+      });
+
+      if (!valid) {
+        alert("Todos los ítems deben tener descripción y precio.");
+        return;
+      }
+
+      const payload = {
+        tipo: "COTIZACION",
+        correlativo: correlativo,
+        fecha: fecha,
+        cliente: cliente,
+        ruc: ruc,
+        direccion: direccion,
+        responsable: responsable,
+        cargo: cargo,
+        items: items
+      };
+
+      const btn = document.getElementById('btnSubmit');
+      btn.disabled = true;
+      btn.innerText = "⏳ Enviando a Lía...";
+
+      if (tg && tg.sendData) {
+        tg.sendData(JSON.stringify(payload));
+      } else {
+        // En caso de prueba fuera de Telegram
+        alert("Datos listos para enviar a Telegram:\n" + JSON.stringify(payload, null, 2));
+        btn.disabled = false;
+        btn.innerText = "🚀 Generar Cotización en PDF";
+      }
+    }
+
+    window.onload = inicializarFormulario;
+  </script>
+</body>
+</html>

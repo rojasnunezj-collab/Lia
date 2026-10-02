@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 
 from google.genai import types
 from google.oauth2 import service_account  # <--- Agregado para las llaves
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import ContextTypes
 import gspread
 
@@ -23,6 +23,7 @@ from config.settings import (
     MODO_BUSCAR_CERT_CORRE, MODO_BUSCAR_CERT_EMPRESA,
     MODO_DIR_EMPRESA, MODO_DIR_FUNDO, MODO_BUSCAR_CLIENTE,
     MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_OBS_ESCRIBIR, MODO_LIGAR_ESCRIBIR,
+    MODO_COTIZACION_BUSCAR,
     DRIVE_FOLDER_LEER
 )
 from utils.helpers import clean_json_response, async_log_action, load_memoria_vinculacion, save_memoria_vinculacion, match_company_flexible
@@ -31,6 +32,10 @@ from core.sheets_client import (
     conectar_servicios, async_get_all_records, async_buscar_link_en_drive, 
     async_subir_a_drive, sync_upsert_row, async_upsert_row, obtener_credenciales, SHEET_ID,
     SHEET_URL_DIRECT, normalizar_valor_upper
+)
+from core.cotizaciones_service import (
+    async_generar_cotizacion, async_buscar_cotizacion_por_correlativo,
+    obtener_siguiente_correlativo, obtener_url_webapp
 )
 
 def normalize_guide_number(val):
@@ -226,6 +231,7 @@ async def daily_certificate_reminder(context: ContextTypes.DEFAULT_TYPE):
 # ====================================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
+        [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
         [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
         [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
         [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
@@ -255,6 +261,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[user_id] = None
         user_data_cache[user_id] = {}
         keyboard = [
+            [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
             [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
             [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
             [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
@@ -266,6 +273,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'volver_inicio':
         user_states[user_id] = None
         keyboard = [
+            [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
             [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
             [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
             [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
@@ -273,6 +281,55 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
         await query.edit_message_text("👋 Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    elif query.data == 'menu_cotizaciones':
+        user_states[user_id] = None
+        corr_sig = obtener_siguiente_correlativo()
+        url_app = obtener_url_webapp(correlativo=corr_sig)
+        keyboard = [
+            [InlineKeyboardButton("➕ Nueva Cotización", web_app=WebAppInfo(url=url_app))],
+            [InlineKeyboardButton("🔍 Buscar / Modificar Cotización", callback_data='coti_buscar')],
+            [InlineKeyboardButton("🔙 Volver al Inicio", callback_data='volver_inicio')]
+        ]
+        texto = (
+            f"📋 *Módulo de Cotizaciones - EPMI SAC*\n\n"
+            f"• *Siguiente Correlativo sugerido:* `{corr_sig}`\n"
+            f"• Pulsa *➕ Nueva Cotización* para abrir el formulario en tu celular.\n"
+            f"• Para revisar o editar una cotización previa, pulsa *🔍 Buscar / Modificar*."
+        )
+        await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data == 'coti_buscar':
+        user_states[user_id] = MODO_COTIZACION_BUSCAR
+        keyboard = [
+            [InlineKeyboardButton("🔙 Cancelar", callback_data='menu_cotizaciones')]
+        ]
+        await query.edit_message_text(
+            "🔍 *Buscar o Modificar Cotización:*\n\n"
+            "Escribe el número correlativo de la cotización (por ejemplo: `080` o `081`):",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif query.data.startswith('coti_edit|'):
+        corr = query.data.split('|')[1]
+        coti_data = await async_buscar_cotizacion_por_correlativo(corr)
+        if not coti_data:
+            await query.answer("❌ No se encontró la cotización.", show_alert=True)
+            return
+        url_edit = obtener_url_webapp(correlativo=corr, datos_edicion=coti_data)
+        keyboard = [
+            [InlineKeyboardButton("✏️ Abrir Formulario de Edición", web_app=WebAppInfo(url=url_edit))],
+            [InlineKeyboardButton("🔙 Volver", callback_data='menu_cotizaciones')]
+        ]
+        await query.edit_message_text(
+            f"✏️ *Editar Cotización N°{corr}*\n\n"
+            f"• *Cliente:* `{coti_data.get('cliente', '')}`\n"
+            f"• *Fecha:* `{coti_data.get('fecha', '')}`\n\n"
+            f"Pulsa el botón abajo para abrir la app con los datos cargados:",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         
     elif query.data == 'menu_guias':
         keyboard = [
@@ -499,6 +556,55 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
     modo = user_states.get(user_id)
+
+    if modo == MODO_COTIZACION_BUSCAR:
+        user_states[user_id] = None
+        corr_query = text.strip()
+        msg_wait = await update.message.reply_text(f"🔍 Buscando cotización `{corr_query}` en Google Sheets...")
+        try:
+            coti_data = await async_buscar_cotizacion_por_correlativo(corr_query)
+            if not coti_data:
+                await msg_wait.edit_text(
+                    f"❌ No se encontró ninguna cotización con el número `{corr_query}`.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones')]])
+                )
+                return
+
+            corr = coti_data.get("correlativo", corr_query)
+            cod = coti_data.get("codigo", f"{corr}-2026-EO-RS")
+            cli = coti_data.get("cliente", "")
+            fec = coti_data.get("fecha", "")
+            doc_link = coti_data.get("doc_link", "")
+            pdf_link = coti_data.get("pdf_link", "")
+
+            url_edit = obtener_url_webapp(correlativo=corr, datos_edicion=coti_data)
+
+            kb = [
+                [InlineKeyboardButton("✏️ Modificar Cotización", web_app=WebAppInfo(url=url_edit))]
+            ]
+            links_row = []
+            if doc_link and doc_link.startswith("http"):
+                links_row.append(InlineKeyboardButton("📄 Doc Editable", url=doc_link))
+            if pdf_link and pdf_link.startswith("http"):
+                links_row.append(InlineKeyboardButton("📂 PDF en Drive", url=pdf_link))
+            if links_row:
+                kb.append(links_row)
+            kb.append([InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones')])
+
+            texto_coti = (
+                f"📋 *Cotización Encontrada*\n\n"
+                f"• *Código:* `COTIZACION N°{cod}`\n"
+                f"• *Cliente:* `{cli}`\n"
+                f"• *RUC:* `{coti_data.get('ruc', '')}`\n"
+                f"• *Fecha:* `{fec}`\n"
+                f"• *Dirección:* `{coti_data.get('direccion', '')}`\n\n"
+                f"Puedes presionar *✏️ Modificar Cotización* para cambiar cualquier dato o ver los enlaces en Drive:"
+            )
+            await msg_wait.edit_text(texto_coti, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+        except Exception as e:
+            logger.error(f"Error buscando cotización: {e}")
+            await msg_wait.edit_text(f"❌ Ocurrió un error al buscar la cotización: {e}")
+        return
     
     if modo in [MODO_REPORTE_REGISTRO, MODO_REPORTE_RECIBIDAS]:
         raw_query = str(update.message.text).strip()
@@ -1990,4 +2096,87 @@ async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFA
         except Exception as e:
             logger.error(f"Error vinculando guía: {e}")
             await query.message.reply_text(f"❌ Error al vincular: {e}")
+
+# ====================================================================
+# --- HANDLER PARA TELEGRAM MINI APP (COTIZACIONES) ---
+# ====================================================================
+async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Maneja el envío de datos desde la Telegram Mini App para generar o modificar cotizaciones."""
+    if not update.message or not update.message.web_app_data:
+        return
+
+    raw_data = update.message.web_app_data.data
+    try:
+        payload = json.loads(raw_data)
+    except Exception as e:
+        logger.error(f"Error decodificando web_app_data: {e}")
+        await update.message.reply_text("❌ Error al procesar los datos de la cotización.")
+        return
+
+    correlativo = payload.get("correlativo", "---")
+    cliente = payload.get("cliente", "---")
+
+    msg_status = await update.message.reply_text(
+        f"⏳ *Procesando Cotización N°{correlativo}* para `{cliente}`...\n"
+        f"1. Clonando plantilla de Google Docs...\n"
+        f"2. Insertando propuesta económica y reemplazos...\n"
+        f"3. Exportando PDF y registrando en Google Sheets...",
+        parse_mode='Markdown'
+    )
+
+    try:
+        from io import BytesIO
+        res = await async_generar_cotizacion(payload)
+
+        pdf_bytes = res["pdf_bytes"]
+        nombre_pdf = res["nombre_archivo"]
+        doc_link = res["doc_link"]
+        pdf_link = res["pdf_link"]
+        codigo = res["codigo"]
+        fecha = res["fecha"]
+
+        url_edit = obtener_url_webapp(correlativo=correlativo, datos_edicion=res["datos_json"])
+
+        kb = [
+            [InlineKeyboardButton("✏️ Modificar Cotización", web_app=WebAppInfo(url=url_edit))],
+            [InlineKeyboardButton("📄 Doc Editable", url=doc_link), InlineKeyboardButton("📂 Ver en Drive", url=pdf_link)],
+            [InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones')]
+        ]
+
+        caption = (
+            f"✅ *Cotización Generada Exitosamente*\n\n"
+            f"📌 *Código:* `COTIZACION N°{codigo}`\n"
+            f"🏢 *Cliente:* `{cliente}`\n"
+            f"📅 *Fecha:* `{fecha}`\n"
+            f"💰 *Ítems cotizados:* `{len(payload.get('items', []))}` residuos\n\n"
+            f"💾 *Guardada en Google Drive y registrada en Sheets.*\n"
+            f"Puedes descargar el PDF, abrir el Google Doc o modificarla con los botones abajo."
+        )
+
+        bio = BytesIO(pdf_bytes)
+        bio.name = nombre_pdf
+
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=bio,
+            caption=caption,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        try:
+            await msg_status.delete()
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.error(f"Error generando cotización: {e}", exc_info=True)
+        try:
+            await msg_status.edit_text(
+                f"❌ *Ocurrió un error al generar la cotización:*\n`{e}`\n\n"
+                f"Por favor verifica que la plantilla de Google Docs y la carpeta de Drive tengan los permisos adecuados.",
+                parse_mode='Markdown'
+            )
+        except Exception:
+            await update.message.reply_text(f"❌ Error al generar cotización: {e}")
+
 

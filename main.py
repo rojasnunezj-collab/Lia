@@ -18,7 +18,8 @@ from bot.handlers import (
     handle_callback_vinculacion, handle_callback_observacion,
     handle_callback_reminder, daily_certificate_reminder,
     handle_callback_direct_action, handle_callback_pregunta_registro,
-    handle_callback_pregunta_ligar, handle_callback_destino_manual
+    handle_callback_pregunta_ligar, handle_callback_destino_manual,
+    handle_web_app_data
 )
 
 # ====================================================================
@@ -103,6 +104,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback_pregunta_ligar, pattern=r"^preg_ligar\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_destino_manual, pattern=r"^dest_man\|"))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VOICE | filters.AUDIO | filters.VIDEO, handle_files))
     
