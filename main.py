@@ -108,6 +108,18 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VOICE | filters.AUDIO | filters.VIDEO, handle_files))
     
+    async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        logger.error("❌ Excepción no manejada en Telegram handler:", exc_info=context.error)
+        admin_id = os.getenv("ADMIN_CHAT_ID")
+        if admin_id and context.bot:
+            try:
+                err_text = f"⚠️ ALERTA LÍA: Error en bot:\n{str(context.error)[:300]}"
+                await context.bot.send_message(chat_id=admin_id, text=err_text)
+            except Exception:
+                pass
+    
+    app.add_error_handler(global_error_handler)
+    
     app.run_polling(stop_signals=())
 
 if __name__ == '__main__':

@@ -70,7 +70,12 @@ def obtener_o_crear_carpeta_cotizaciones(drive_service):
         q = f"name='Cotizaciones EPMI' and mimeType='application/vnd.google-apps.folder' and trashed=false"
         if parent_folder:
             q += f" and '{parent_folder}' in parents"
-        res = drive_service.files().list(q=q, fields="files(id, name)").execute()
+        res = drive_service.files().list(
+            q=q,
+            fields="files(id, name)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
         files = res.get('files', [])
         if files:
             DRIVE_FOLDER_COTIZACIONES = files[0]['id']
@@ -83,7 +88,7 @@ def obtener_o_crear_carpeta_cotizaciones(drive_service):
         }
         if parent_folder:
             meta['parents'] = [parent_folder]
-        folder = drive_service.files().create(body=meta, fields='id').execute()
+        folder = drive_service.files().create(body=meta, fields='id', supportsAllDrives=True).execute()
         DRIVE_FOLDER_COTIZACIONES = folder['id']
         logger.info(f"📁 Carpeta 'Cotizaciones EPMI' creada con ID: {DRIVE_FOLDER_COTIZACIONES}")
         return DRIVE_FOLDER_COTIZACIONES
@@ -220,7 +225,7 @@ def procesar_generacion_cotizacion(datos):
         'name': nombre_doc,
         'parents': [folder_id]
     }
-    copy_file = drive.files().copy(fileId=TEMPLATE_DOC_ID, body=meta).execute()
+    copy_file = drive.files().copy(fileId=TEMPLATE_DOC_ID, body=meta, supportsAllDrives=True).execute()
     doc_id = copy_file['id']
 
     try:
@@ -302,9 +307,10 @@ def procesar_generacion_cotizacion(datos):
         pdf_file = drive.files().create(
             body={'name': nombre_pdf, 'parents': [folder_id]},
             media_body=media,
-            fields='id, webViewLink'
+            fields='id, webViewLink',
+            supportsAllDrives=True
         ).execute()
-        drive.permissions().create(fileId=pdf_file.get('id'), body={'type': 'anyone', 'role': 'reader'}).execute()
+        drive.permissions().create(fileId=pdf_file.get('id'), body={'type': 'anyone', 'role': 'reader'}, supportsAllDrives=True).execute()
         pdf_link = pdf_file.get('webViewLink')
 
         doc_link = f"https://docs.google.com/document/d/{doc_id}/edit"

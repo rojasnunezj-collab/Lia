@@ -255,9 +255,16 @@
       <div class="card-title">🏢 Datos del Generador (Cliente)</div>
       
       <div class="form-group">
+        <label for="clienteSelect">Seleccionar Empresa (Lista)</label>
+        <select id="clienteSelect" onchange="onClienteSelectChange()" style="font-weight: 600; color: #198754; background: #f0fdf4; border-color: #86efac;">
+          <option value="">-- Toca aquí para elegir una empresa --</option>
+          <option value="__OTRO__">➕ Otra Empresa (Escribir manualmente)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
         <label for="cliente">Razón Social / Empresa</label>
-        <input type="text" id="cliente" list="clientesList" placeholder="Ej: AGRICOLA ANDREA S.A.C." required oninput="onClienteInput()">
-        <datalist id="clientesList"></datalist>
+        <input type="text" id="cliente" placeholder="Ej: AGRICOLA ANDREA S.A.C." required>
       </div>
 
       <div class="form-row">
@@ -329,8 +336,71 @@
       tg.ready();
     }
 
-    let clientesCatalogo = [];
+    const CLIENTES_PREDETERMINADOS = [
+      {"empresa": "AGRICOLA ANDREA S.A.C", "ruc": "20505688903", "direccion": "FND. ELISE S/N, LOTE 1 Y LOTE A6 1A-4, SAN ANDRES, PISCO, ICA"},
+      {"empresa": "AGRICOLA FUNDO DON ALFONSO S.A.C.", "ruc": "20610314466", "direccion": "C.RU SANTA CRUZ NRO. S/N FND. FUNDO DON ALFONSO"},
+      {"empresa": "AGRICOLA ROMA S.A.C.", "ruc": "20491292548", "direccion": ""},
+      {"empresa": "AGRO FLORAL PERU S.A.C.", "ruc": "20495175210", "direccion": "Pred. Rustico La Victoria Lote 583 Fundo Los Sauces Lima-Cañete-Quilmana"},
+      {"empresa": "AGROINDUSTRIAS ICELS S.A.C.", "ruc": "20334885560", "direccion": ""},
+      {"empresa": "AGROPECUARIA SAN IGNACIO DE LOYOLA S.A.C", "ruc": "20492699781", "direccion": "MAMACONA L-15 SUBTAJALLA ICA ICA SUBTAJALLA"},
+      {"empresa": "COMPLEJO AGROINDUSTRIAL BETA S.A.", "ruc": "20297939131", "direccion": ""},
+      {"empresa": "CONSORCIO ELECTRICO DE VILLACURI S.A.C.", "ruc": "20178344952", "direccion": ""},
+      {"empresa": "CORPORACIÓN AGROLATINA S.A.C", "ruc": "20176770474", "direccion": ""},
+      {"empresa": "EMPRESA AGRICOLA M Y A S.A.C.", "ruc": "20603285558", "direccion": ""},
+      {"empresa": "FALL CREEK PERU S.R.L.", "ruc": "20563614723", "direccion": ""},
+      {"empresa": "FUNDO EL PADUA S.A.C.", "ruc": "20602377351", "direccion": ""},
+      {"empresa": "GREEN PERU S.A.", "ruc": "20397680038", "direccion": ""},
+      {"empresa": "INGENIERIA & ECONOMIA VERDE S.A.C.", "ruc": "20608643924", "direccion": ""},
+      {"empresa": "LOS OLIVOS DE VILLACURI S.A.C.", "ruc": "20602872760", "direccion": "Villacuri Panamericana Sur KM. 278.5 Salas Guadalupe - Ica - Peru"},
+      {"empresa": "NEWTERRA S.A.C", "ruc": "20610344314", "direccion": "OTR. 153.51 HAS NRO. 0 FND. ADOLFO – OLMOS – LAMBAYEQUE."},
+      {"empresa": "PESQUERA EXALMAR S.A.A.", "ruc": "20380336384", "direccion": ""},
+      {"empresa": "PETRAMAS S.A.C.", "ruc": "20297566866", "direccion": "QUEBRADA HUAYCOLORO S/N DISTRITO DE SAN ANTONIO PROVINCIA DE HUAROCHIRI DEPARTAMENTO DE LIMA"},
+      {"empresa": "PROCESADORA LARAN S.A.C.", "ruc": "20451899881", "direccion": "CARRETERA A LARÁN KM 5.8 N°901, ALTO LARÁN, CHINCHA, ICA, PERÚ - PLANTA ENVASADOS"},
+      {"empresa": "PROSEMBRA S.A.C.", "ruc": "20611744391", "direccion": ""},
+      {"empresa": "SAN FELIPE S.A.", "ruc": "20322766018", "direccion": ""},
+      {"empresa": "TEXTIL SAN RAMON S.A.", "ruc": "20102261551", "direccion": ""},
+      {"empresa": "VIVERO LOS VIÑEDOS S.A.C.", "ruc": "20482074724", "direccion": ""}
+    ];
+
+    let clientesCatalogo = CLIENTES_PREDETERMINADOS;
     let itemsCount = 0;
+
+    function poblarSelectClientes(lista) {
+      clientesCatalogo = lista;
+      const sel = document.getElementById('clienteSelect');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">-- Toca aquí para elegir una empresa --</option>';
+      lista.forEach((c, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.textContent = c.empresa;
+        sel.appendChild(opt);
+      });
+      const optOtro = document.createElement('option');
+      optOtro.value = "__OTRO__";
+      optOtro.textContent = "➕ Otra Empresa (Escribir manualmente)";
+      sel.appendChild(optOtro);
+    }
+
+    function onClienteSelectChange() {
+      const sel = document.getElementById('clienteSelect');
+      const val = sel.value;
+      if (val === "" || val === "__OTRO__") {
+        if (val === "__OTRO__") {
+          document.getElementById('cliente').value = '';
+          document.getElementById('ruc').value = '';
+          document.getElementById('direccion').value = '';
+          document.getElementById('cliente').focus();
+        }
+        return;
+      }
+      const c = clientesCatalogo[parseInt(val)];
+      if (c) {
+        document.getElementById('cliente').value = c.empresa;
+        document.getElementById('ruc').value = c.ruc || '';
+        document.getElementById('direccion').value = c.direccion || '';
+      }
+    }
 
     // Inicialización de Fecha
     function fechaHoyTexto() {
@@ -341,6 +411,18 @@
 
     // Cargar Catálogo de Clientes si viene en URL o cargar iniciales
     function inicializarFormulario() {
+      poblarSelectClientes(CLIENTES_PREDETERMINADOS);
+
+      // Refrescar catálogo en vivo desde /api/clientes
+      fetch('/api/clientes')
+        .then(r => r.json())
+        .then(data => {
+          if (Array.isArray(data) && data.length > 0) {
+            poblarSelectClientes(data);
+          }
+        })
+        .catch(err => console.log("Usando catálogo local"));
+
       document.getElementById('fecha').value = fechaHoyTexto();
 
       // Revisar si viene data por URL (Modo Edición)
@@ -450,24 +532,14 @@
       });
     }
 
-    function onClienteInput() {
+    function onClienteManualInput() {
+      // Si el usuario escribe manualmente en el input cliente
       const val = document.getElementById('cliente').value.toUpperCase().trim();
       const match = clientesCatalogo.find(c => c.empresa.toUpperCase() === val);
       if (match) {
-        if (match.ruc) document.getElementById('ruc').value = match.ruc;
-        if (match.direccion) document.getElementById('direccion').value = match.direccion;
+        if (match.ruc && !document.getElementById('ruc').value) document.getElementById('ruc').value = match.ruc;
+        if (match.direccion && !document.getElementById('direccion').value) document.getElementById('direccion').value = match.direccion;
       }
-    }
-
-    function cargarClientesDatalist(clientes) {
-      clientesCatalogo = clientes;
-      const datalist = document.getElementById('clientesList');
-      datalist.innerHTML = '';
-      clientes.forEach(c => {
-        const opt = document.createElement('option');
-        opt.value = c.empresa;
-        datalist.appendChild(opt);
-      });
     }
 
     function enviarCotizacion() {

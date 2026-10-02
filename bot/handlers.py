@@ -2102,81 +2102,81 @@ async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFA
 # ====================================================================
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja el envío de datos desde la Telegram Mini App para generar o modificar cotizaciones."""
-    if not update.message or not update.message.web_app_data:
-        return
-
-    raw_data = update.message.web_app_data.data
     try:
-        payload = json.loads(raw_data)
-    except Exception as e:
-        logger.error(f"Error decodificando web_app_data: {e}")
-        await update.message.reply_text("❌ Error al procesar los datos de la cotización.")
-        return
+        if not update.message or not update.message.web_app_data:
+            return
 
-    correlativo = payload.get("correlativo", "---")
-    cliente = payload.get("cliente", "---")
+        raw_data = update.message.web_app_data.data
+        try:
+            payload = json.loads(raw_data)
+        except Exception as e:
+            logger.error(f"Error decodificando web_app_data: {e}")
+            await update.message.reply_text("❌ Error al procesar los datos de la cotización.")
+            return
 
-    msg_status = await update.message.reply_text(
-        f"⏳ *Procesando Cotización N°{correlativo}* para `{cliente}`...\n"
-        f"1. Clonando plantilla de Google Docs...\n"
-        f"2. Insertando propuesta económica y reemplazos...\n"
-        f"3. Exportando PDF y registrando en Google Sheets...",
-        parse_mode='Markdown'
-    )
+        correlativo = payload.get("correlativo", "---")
+        cliente = payload.get("cliente", "---")
 
-    try:
-        from io import BytesIO
-        res = await async_generar_cotizacion(payload)
-
-        pdf_bytes = res["pdf_bytes"]
-        nombre_pdf = res["nombre_archivo"]
-        doc_link = res["doc_link"]
-        pdf_link = res["pdf_link"]
-        codigo = res["codigo"]
-        fecha = res["fecha"]
-
-        url_edit = obtener_url_webapp(correlativo=correlativo, datos_edicion=res["datos_json"], user_id=update.effective_user.id)
-
-        kb = [
-            [InlineKeyboardButton("✏️ Modificar Cotización", web_app=WebAppInfo(url=url_edit))],
-            [InlineKeyboardButton("📄 Doc Editable", url=doc_link), InlineKeyboardButton("📂 Ver en Drive", url=pdf_link)],
-            [InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones')]
-        ]
-
-        caption = (
-            f"✅ *Cotización Generada Exitosamente*\n\n"
-            f"📌 *Código:* `COTIZACION N°{codigo}`\n"
-            f"🏢 *Cliente:* `{cliente}`\n"
-            f"📅 *Fecha:* `{fecha}`\n"
-            f"💰 *Ítems cotizados:* `{len(payload.get('items', []))}` residuos\n\n"
-            f"💾 *Guardada en Google Drive y registrada en Sheets.*\n"
-            f"Puedes descargar el PDF, abrir el Google Doc o modificarla con los botones abajo."
+        msg_status = await update.message.reply_text(
+            f"⏳ Procesando Cotización N°{correlativo} para {cliente}...\n"
+            f"1. Clonando plantilla de Google Docs...\n"
+            f"2. Insertando propuesta económica y reemplazos...\n"
+            f"3. Exportando PDF y registrando en Google Sheets..."
         )
 
-        bio = BytesIO(pdf_bytes)
-        bio.name = nombre_pdf
-
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=bio,
-            caption=caption,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
         try:
-            await msg_status.delete()
-        except Exception:
-            pass
+            from io import BytesIO
+            res = await async_generar_cotizacion(payload)
 
-    except Exception as e:
-        logger.error(f"Error generando cotización: {e}", exc_info=True)
-        try:
-            await msg_status.edit_text(
-                f"❌ *Ocurrió un error al generar la cotización:*\n`{e}`\n\n"
-                f"Por favor verifica que la plantilla de Google Docs y la carpeta de Drive tengan los permisos adecuados.",
-                parse_mode='Markdown'
+            pdf_bytes = res["pdf_bytes"]
+            nombre_pdf = res["nombre_archivo"]
+            doc_link = res["doc_link"]
+            pdf_link = res["pdf_link"]
+            codigo = res["codigo"]
+            fecha = res["fecha"]
+
+            url_edit = obtener_url_webapp(correlativo=correlativo, datos_edicion=res["datos_json"], user_id=update.effective_user.id)
+
+            kb = [
+                [InlineKeyboardButton("✏️ Modificar Cotización", web_app=WebAppInfo(url=url_edit))],
+                [InlineKeyboardButton("📄 Doc Editable", url=doc_link), InlineKeyboardButton("📂 Ver en Drive", url=pdf_link)],
+                [InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones')]
+            ]
+
+            caption = (
+                f"✅ Cotización Generada Exitosamente\n\n"
+                f"📌 Código: COTIZACION N°{codigo}\n"
+                f"🏢 Cliente: {cliente}\n"
+                f"📅 Fecha: {fecha}\n"
+                f"💰 Ítems cotizados: {len(payload.get('items', []))} residuos\n\n"
+                f"💾 Guardada en Google Drive y registrada en Sheets."
             )
-        except Exception:
-            await update.message.reply_text(f"❌ Error al generar cotización: {e}")
+
+            bio = BytesIO(pdf_bytes)
+            bio.name = nombre_pdf
+
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=bio,
+                caption=caption,
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
+            try:
+                await msg_status.delete()
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.error(f"Error generando cotización: {e}", exc_info=True)
+            err_msg = f"❌ Ocurrió un error al generar la cotización:\n{e}"
+            try:
+                await msg_status.edit_text(err_msg)
+            except Exception:
+                await update.message.reply_text(err_msg)
+
+    except Exception as e:
+        logger.error(f"Error crítico en handle_web_app_data: {e}", exc_info=True)
+        if update.effective_chat:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Error en recepción: {e}")
 
 
