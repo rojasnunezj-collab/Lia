@@ -40,6 +40,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # ====================================================================
-# --- PUNTO DE ENTRADA ---
+# --- PUERTO Y PUNTO DE ENTRADA ---
 # ====================================================================
+EXPOSE 10000
 CMD ["python", "-u", "main.py"]

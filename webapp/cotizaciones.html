@@ -444,17 +444,9 @@
         document.getElementById('correlativo').value = corrParam;
       }
 
-      // Items predeterminados sugeridos (igual a la plantilla)
-      const itemsDefault = [
-        { desc: "CARTÓN", unidad: "KG", precio: "S/.0,10" },
-        { desc: "PLÁSTICO FILM", unidad: "KG", precio: "S/.0,35" },
-        { desc: "CHATARRA METAL", unidad: "KG", precio: "S/.0.30" },
-        { desc: "GALONERAS DE 20, 10, 5, 2 Y 1 LT", unidad: "KG", precio: "S/.1.00" },
-        { desc: "CILINDROS DE 200 LITROS PLÁSTICOS", unidad: "KG", precio: "S/.40,00" },
-        { desc: "PARIHUELAS DE MADERA", unidad: "KG", precio: "S/.0,00" }
-      ];
-
-      itemsDefault.forEach(it => agregarItem(it.desc, it.unidad, it.precio));
+      // La tabla de residuos inicia vacía
+      document.getElementById('itemsContainer').innerHTML = '';
+      itemsCount = 0;
     }
 
     function cargarDatosEdicion(data) {

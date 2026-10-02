@@ -33,10 +33,10 @@ def obtener_url_webapp(correlativo=None, datos_edicion=None, user_id=None):
     if not base_url and RENDER_EXTERNAL_URL:
         base_url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/cotizaciones"
     if not base_url:
-        # Fallback genérico para GitHub Pages o render
-        base_url = "https://rojasnunezj.github.io/Bot_lia_guias_notas/webapp/cotizaciones.html"
+        # Fallback para GitHub Pages oficial del repo Lia
+        base_url = "https://rojasnunezj-collab.github.io/Lia/webapp/cotizaciones.html"
 
-    params = {}
+    params = {'v': str(int(time.time()))}
     if correlativo:
         params['corr'] = str(correlativo)
     if user_id:
@@ -45,10 +45,8 @@ def obtener_url_webapp(correlativo=None, datos_edicion=None, user_id=None):
         json_str = json.dumps(datos_edicion, ensure_ascii=False)
         params['data'] = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
 
-    if params:
-        sep = '&' if '?' in base_url else '?'
-        return f"{base_url}{sep}{urllib.parse.urlencode(params)}"
-    return base_url
+    sep = '&' if '?' in base_url else '?'
+    return f"{base_url}{sep}{urllib.parse.urlencode(params)}"
 
 def get_fecha_formato_peru(dt=None):
     if dt is None:

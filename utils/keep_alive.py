@@ -22,7 +22,9 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                         content = f.read()
                     self.send_response(200)
                     self.send_header('Content-Type', 'text/html; charset=utf-8')
-                    self.send_header('Cache-Control', 'no-cache')
+                    self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                    self.send_header('Pragma', 'no-cache')
+                    self.send_header('Expires', '0')
                     self.end_headers()
                     self.wfile.write(content.encode('utf-8'))
                     return
@@ -129,7 +131,7 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
         pass
 
 def run_keep_alive():
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get('PORT', 10000))
     try:
         server = HTTPServer(('0.0.0.0', port), KeepAliveHandler)
         logger.info(f"Iniciando Keep-Alive server en puerto {port}...")
