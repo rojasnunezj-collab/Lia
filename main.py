@@ -86,6 +86,11 @@ def main():
     start_keep_alive()
     init_db()
     token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        logger.critical("❌ ERROR: TELEGRAM_TOKEN no está definido en las variables de entorno de Render.")
+        import time as _t
+        while True:
+            _t.sleep(30)
     
     app = ApplicationBuilder().token(token).post_init(post_init).build()
     
