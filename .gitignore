@@ -30,6 +30,7 @@ __pycache__/
 # =============================================
 archivo_*.jpg
 archivo_*.pdf
+archivo_*.xml
 archivo_*.ogg
 archivo_*.mp3
 archivo_*.mp4

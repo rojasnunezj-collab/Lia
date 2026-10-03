@@ -24,7 +24,8 @@ from config.settings import (
     MODO_DIR_EMPRESA, MODO_DIR_FUNDO, MODO_BUSCAR_CLIENTE,
     MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_OBS_ESCRIBIR, MODO_LIGAR_ESCRIBIR,
     MODO_COTIZACION_BUSCAR,
-    DRIVE_FOLDER_LEER
+    MODO_FACTURAS_REGISTRAR, MODO_FACTURAS_BUSCAR,
+    DRIVE_FOLDER_LEER, DRIVE_FOLDER_FACTURAS
 )
 from utils.helpers import clean_json_response, async_log_action, load_memoria_vinculacion, save_memoria_vinculacion, match_company_flexible
 from core.ai_client import generar_con_reintento
@@ -36,6 +37,10 @@ from core.sheets_client import (
 from core.cotizaciones_service import (
     async_generar_cotizacion, async_buscar_cotizacion_por_correlativo,
     obtener_siguiente_correlativo, obtener_url_webapp
+)
+from core.invoices_service import (
+    async_parse_factura_xml, parse_factura_pdf, async_detectar_tipo_documento_pdf,
+    async_guardar_factura_en_sheet, async_buscar_facturas_en_sheet
 )
 
 def normalize_guide_number(val):
@@ -231,7 +236,7 @@ async def daily_certificate_reminder(context: ContextTypes.DEFAULT_TYPE):
 # ====================================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
+        [InlineKeyboardButton("📘 Guías", callback_data='menu_guias'), InlineKeyboardButton("🧾 Facturas", callback_data='menu_facturas')],
         [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
         [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
         [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
@@ -274,7 +279,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[user_id] = None
         user_data_cache[user_id] = {}
         keyboard = [
-            [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
+            [InlineKeyboardButton("📘 Guías", callback_data='menu_guias'), InlineKeyboardButton("🧾 Facturas", callback_data='menu_facturas')],
             [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
             [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
             [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
@@ -286,7 +291,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'volver_inicio':
         user_states[user_id] = None
         keyboard = [
-            [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
+            [InlineKeyboardButton("📘 Guías", callback_data='menu_guias'), InlineKeyboardButton("🧾 Facturas", callback_data='menu_facturas')],
             [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
             [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
             [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
@@ -294,6 +299,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
         await safe_edit_or_reply(query, "👋 Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data == 'menu_facturas':
+        user_states[user_id] = None
+        keyboard = [
+            [InlineKeyboardButton("📥 Registrar Factura (PDF / XML)", callback_data='modo_facturas_registrar')],
+            [InlineKeyboardButton("🔍 Buscar Factura", callback_data='modo_facturas_buscar')],
+            [InlineKeyboardButton("🔙 Volver al Inicio", callback_data='volver_inicio')]
+        ]
+        texto = (
+            "🧾 *Módulo de Facturas*\n\n"
+            "• *Archivos XML:* Procesamiento instantáneo (100% exacto UBL 2.1 SUNAT).\n"
+            "• *Archivos PDF:* Lectura inteligente y extracción con IA.\n"
+            "• *Google Drive:* Respaldo automático en carpeta Facturas.\n\n"
+            "Selecciona una opción:"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data == 'modo_facturas_registrar':
+        user_states[user_id] = MODO_FACTURAS_REGISTRAR
+        kb = [[InlineKeyboardButton("🔙 Volver", callback_data='menu_facturas'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]]
+        texto = (
+            "📥 *Modo Registro de Facturas*\n\n"
+            "Envía el archivo de la factura (**XML** o **PDF**).\n\n"
+            "💡 _Si tienes el archivo XML, envíalo directamente: se procesa al instante con precisión exacta._"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+
+    elif query.data == 'modo_facturas_buscar':
+        user_states[user_id] = MODO_FACTURAS_BUSCAR
+        kb = [[InlineKeyboardButton("🔙 Volver", callback_data='menu_facturas'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]]
+        texto = (
+            "🔍 *Buscar Factura en el Sheet*\n\n"
+            "Escribe el *N° de Factura* (ej: `F001-4567`), el *RUC* o el *nombre del emisor*:"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
         
     elif query.data == 'menu_cotizaciones':
         user_states[user_id] = None
@@ -616,8 +656,47 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg_wait.edit_text(texto_coti, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
         except Exception as e:
             logger.error(f"Error buscando cotización: {e}")
-            await msg_wait.edit_text(f"❌ Ocurrió un error al buscar la cotización: {e}")
         return
+
+    if modo == MODO_FACTURAS_BUSCAR:
+        user_states[user_id] = None
+        q = text.strip()
+        msg_wait = await update.message.reply_text(f"🔍 Buscando factura `{q}` en Registro_Facturas...")
+        try:
+            resultados = await async_buscar_facturas_en_sheet(q)
+            if not resultados:
+                await msg_wait.edit_text(
+                    f"❌ No se encontraron facturas con el criterio `{q}`.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Volver a Facturas", callback_data='menu_facturas'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+                    ])
+                )
+                return
+
+            resp_text = f"🧾 *Facturas Encontradas ({len(resultados)}):*\n\n"
+            for f in resultados[:5]:
+                mon_simb = "S/." if f.get("moneda") == "PEN" else "$"
+                tot = f.get('importe_total', 0.0)
+                tot_num = float(tot) if isinstance(tot, (int, float)) or (isinstance(tot, str) and tot.replace('.', '', 1).isdigit()) else 0.0
+                resp_text += (
+                    f"📄 *Factura:* `{f.get('numero_factura')}`\n"
+                    f"🏢 *Emisor:* {f.get('emisor_nombre')} (RUC: `{f.get('emisor_ruc')}`)\n"
+                    f"📅 *Fecha:* {f.get('fecha_emision')} | 💵 *Total:* {mon_simb} {tot_num:,.2f}\n"
+                )
+                if f.get("enlace_drive"):
+                    resp_text += f"📁 [Ver en Drive]({f.get('enlace_drive')})\n"
+                resp_text += "────────────────────\n"
+
+            resp_text += f"\n📊 [Abrir Sheet Completo]({SHEET_URL_DIRECT})"
+            kb = [
+                [InlineKeyboardButton("🔍 Nueva Búsqueda", callback_data='modo_facturas_buscar'), InlineKeyboardButton("🔙 Facturas", callback_data='menu_facturas')]
+            ]
+            await msg_wait.edit_text(resp_text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
+            return
+        except Exception as e:
+            logger.error(f"Error buscando facturas: {e}")
+            await msg_wait.edit_text(f"❌ Error buscando facturas: {e}")
+            return
     
     if modo in [MODO_REPORTE_REGISTRO, MODO_REPORTE_RECIBIDAS]:
         raw_query = str(update.message.text).strip()
@@ -1554,6 +1633,103 @@ async def ejecutar_registro_guia(user_id, file_path, mime_type, context, msg_sta
             except Exception: pass
 
 # ====================================================================
+# --- EJECUTOR DE REGISTRO DE FACTURAS (PDF / XML) ---
+# ====================================================================
+async def ejecutar_registro_factura(user_id, file_path, mime_type, context, msg_status, is_xml=False, original_msg_id=None):
+    try:
+        if is_xml:
+            if msg_status:
+                try: await msg_status.edit_text("⏳ Procesando Factura XML con motor nativo UBL 2.1 SUNAT...")
+                except: pass
+            datos = await async_parse_factura_xml(file_path)
+        else:
+            if msg_status:
+                try: await msg_status.edit_text("⏳ Analizando Factura (PDF) con IA (Gemini)...")
+                except: pass
+            datos = await parse_factura_pdf(file_path, msg_status)
+
+        numero_factura = datos.get("numero_factura", "S/N")
+        emisor_nombre = datos.get("emisor_nombre", "EMISOR DESCONOCIDO")
+        emisor_ruc = datos.get("emisor_ruc", "")
+        fecha_emision = datos.get("fecha_emision", "")
+        moneda = datos.get("moneda", "PEN")
+        igv = datos.get("igv", 0.0)
+        importe_total = datos.get("importe_total", 0.0)
+        items = datos.get("items", [])
+
+        if msg_status:
+            try: await msg_status.edit_text("⏳ Subiendo comprobante a Google Drive (Carpeta Facturas)...")
+            except: pass
+        enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=DRIVE_FOLDER_FACTURAS)
+        datos["enlace_drive"] = enlace_drive
+
+        if msg_status:
+            try: await msg_status.edit_text("⏳ Guardando datos en Google Sheets (Registro_Facturas)...")
+            except: pass
+        accion, num_items = await async_guardar_factura_en_sheet(datos)
+        await async_log_action(user_id, numero_factura, f"FACTURA_{accion.upper()}")
+
+        estado_registro = "🔄 *Factura Actualizada (Sobrescrita)*" if accion == "updated" else "✅ *Nueva Factura Registrada*"
+        simb = "S/." if moneda == "PEN" else "$"
+
+        resumen = (
+            f"{estado_registro}\n\n"
+            f"📄 *N° Factura:* `{numero_factura}`\n"
+            f"🏢 *Emisor:* `{emisor_nombre}`\n"
+        )
+        if emisor_ruc:
+            resumen += f"🆔 *RUC:* `{emisor_ruc}`\n"
+        resumen += (
+            f"📅 *Fecha Emisión:* `{fecha_emision}`\n"
+            f"💰 *Moneda:* `{moneda}`\n"
+            f"🧾 *IGV:* `{simb} {igv:,.2f}`\n"
+            f"💵 *Importe Total:* `{simb} {importe_total:,.2f}`\n"
+            f"📦 *Ítems Registrados:* `{num_items}`\n"
+        )
+
+        if items:
+            resumen += "\n📋 *Detalle de Ítems:*\n"
+            for it in items[:4]:
+                desc = it.get('descripcion', '')
+                if len(desc) > 35: desc = desc[:32] + "..."
+                cant = it.get('cantidad', 1)
+                vt = it.get('valor_total', 0.0)
+                resumen += f" • {cant}x `{desc}` — {simb} {vt:,.2f}\n"
+            if len(items) > 4:
+                resumen += f" • _...y {len(items)-4} ítem(s) más en el Sheet._\n"
+
+        resumen += (
+            f"\n📁 [Ver Archivo en Drive]({enlace_drive})\n"
+            f"📊 [Abrir Google Sheet]({SHEET_URL_DIRECT})"
+        )
+
+        kb = [
+            [InlineKeyboardButton("➕ Registrar Otra Factura", callback_data="modo_facturas_registrar")],
+            [InlineKeyboardButton("🔙 Menú Principal", callback_data="volver_inicio")]
+        ]
+
+        if msg_status:
+            try:
+                await msg_status.edit_text(resumen, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
+            except Exception:
+                await context.bot.send_message(chat_id=user_id, text=resumen, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
+        else:
+            await context.bot.send_message(chat_id=user_id, text=resumen, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
+
+        user_states[user_id] = None
+        user_data_cache.pop(user_id, None)
+
+    except Exception as e:
+        logger.error(f"❌ Error durante el registro de factura: {e}")
+        if msg_status:
+            try: await msg_status.edit_text(f"❌ Error durante el registro de la factura:\n`{e}`", parse_mode='Markdown')
+            except: pass
+    finally:
+        if os.path.exists(file_path):
+            try: os.remove(file_path)
+            except Exception: pass
+
+# ====================================================================
 # --- HANDLER DE ARCHIVOS Y MULTIMEDIA ---
 # ====================================================================
 async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1629,12 +1805,14 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except: pass
         return
 
-    # 2. Detección de Foto o Documento para Guías
+    # 2. Detección de Archivo (XML, PDF, Imagen)
+    is_xml = False
     is_pdf = False
     is_image = False
     file_obj = None
     mime_type = ""
     tipo_label = "Archivo"
+    file_name = ""
 
     if update.message.photo:
         file_obj = await update.message.photo[-1].get_file()
@@ -1645,7 +1823,11 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_obj = await update.message.document.get_file()
         mime_type = update.message.document.mime_type or ""
         file_name = update.message.document.file_name or ""
-        if 'pdf' in mime_type.lower() or file_name.lower().endswith('.pdf'):
+        if 'xml' in mime_type.lower() or file_name.lower().endswith('.xml'):
+            is_xml = True
+            mime_type = "application/xml"
+            tipo_label = "Archivo XML (Factura)"
+        elif 'pdf' in mime_type.lower() or file_name.lower().endswith('.pdf'):
             is_pdf = True
             mime_type = "application/pdf"
             tipo_label = "Documento PDF"
@@ -1658,40 +1840,143 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
-    if not file_obj or not (is_pdf or is_image):
+    if not file_obj or not (is_xml or is_pdf or is_image):
         return
 
-    ext = "pdf" if is_pdf else "jpg"
+    ext = "xml" if is_xml else ("pdf" if is_pdf else "jpg")
     file_path = f"archivo_{user_id}_{update.message.id}.{ext}"
     await file_obj.download_to_drive(file_path)
+
+    # REGLA PRIORITARIA: Archivo XML -> Factura Electrónica INMEDIATA
+    # (Los archivos XML siempre corresponden a facturas y no requieren confirmación)
+    if is_xml:
+        msg_status = await update.message.reply_text("⏳ Factura XML detectada. Procesando y registrando en el Sheet...")
+        await ejecutar_registro_factura(
+            user_id=user_id,
+            file_path=file_path,
+            mime_type=mime_type,
+            context=context,
+            msg_status=msg_status,
+            is_xml=True,
+            original_msg_id=update.message.id
+        )
+        return
+
+    # CASO: Modo Registro de Facturas activo
+    if modo == MODO_FACTURAS_REGISTRAR:
+        if is_pdf:
+            msg_status = await update.message.reply_text("⏳ Procesando registro de factura (PDF) con IA...")
+            await ejecutar_registro_factura(
+                user_id=user_id,
+                file_path=file_path,
+                mime_type=mime_type,
+                context=context,
+                msg_status=msg_status,
+                is_xml=False,
+                original_msg_id=update.message.id
+            )
+        else:
+            await update.message.reply_text("⚠️ En el modo Facturas debes enviar un archivo PDF o XML.")
+            if os.path.exists(file_path):
+                try: os.remove(file_path)
+                except: pass
+        return
 
     # CASO A: Subida directa sin comando /start previo (modo is None)
     if modo is None:
         if user_id not in user_data_cache:
             user_data_cache[user_id] = {}
-        user_data_cache[user_id]['direct_file'] = {
-            'file_path': file_path,
-            'mime_type': mime_type,
-            'is_pdf': is_pdf,
-            'is_image': is_image,
-            'tipo_label': tipo_label,
-            'message_id': update.message.id
-        }
-        kb = [
-            [
-                InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer"),
-                InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar")
-            ],
-            [
-                InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")
+        
+        display_name = file_name if file_name else ("documento.pdf" if is_pdf else "imagen.jpg")
+
+        if is_pdf:
+            tipo_detectado = await async_detectar_tipo_documento_pdf(file_path)
+            user_data_cache[user_id]['direct_file'] = {
+                'file_path': file_path,
+                'mime_type': mime_type,
+                'is_pdf': is_pdf,
+                'is_image': is_image,
+                'is_xml': False,
+                'tipo_label': tipo_label,
+                'tipo_detectado': tipo_detectado,
+                'message_id': update.message.id
+            }
+
+            if tipo_detectado == "FACTURA":
+                kb = [
+                    [InlineKeyboardButton("🧾 Registrar Factura", callback_data="direct_action|factura_registrar")],
+                    [InlineKeyboardButton("📘 Es una Guía", callback_data="direct_action|guia_options")],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+                ]
+                await update.message.reply_text(
+                    f"🧾 **Factura Electrónica detectada** (`{display_name}`)\n\n"
+                    f"He analizado el documento y corresponde a una **Factura**.\n"
+                    f"¿Deseas registrarla en el Google Sheet?",
+                    reply_markup=InlineKeyboardMarkup(kb),
+                    parse_mode='Markdown'
+                )
+                return
+
+            elif tipo_detectado == "GUIA":
+                kb = [
+                    [
+                        InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar"),
+                        InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer")
+                    ],
+                    [InlineKeyboardButton("🧾 Es una Factura", callback_data="direct_action|factura_registrar")],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+                ]
+                await update.message.reply_text(
+                    f"📘 **Guía de Remisión detectada** (`{display_name}`)\n\n"
+                    f"¿Deseas **registrar** la guía o **leerla**?",
+                    reply_markup=InlineKeyboardMarkup(kb),
+                    parse_mode='Markdown'
+                )
+                return
+
+            else:
+                # PDF Escaneado o no clasificado directamente con texto
+                kb = [
+                    [InlineKeyboardButton("🧾 Registrar Factura", callback_data="direct_action|factura_registrar")],
+                    [
+                        InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar"),
+                        InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer")
+                    ],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+                ]
+                await update.message.reply_text(
+                    f"📄 **Documento PDF recibido** (`{display_name}`)\n\n"
+                    f"¿Qué tipo de documento deseas procesar?",
+                    reply_markup=InlineKeyboardMarkup(kb),
+                    parse_mode='Markdown'
+                )
+                return
+
+        elif is_image:
+            user_data_cache[user_id]['direct_file'] = {
+                'file_path': file_path,
+                'mime_type': mime_type,
+                'is_pdf': is_pdf,
+                'is_image': is_image,
+                'is_xml': False,
+                'tipo_label': tipo_label,
+                'message_id': update.message.id
+            }
+            kb = [
+                [
+                    InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer"),
+                    InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar")
+                ],
+                [
+                    InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")
+                ]
             ]
-        ]
-        await update.message.reply_text(
-            f"📄 **Guía recibida** ({tipo_label})\n\n¿Deseas **leer** la guía o **registrarla**?",
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode='Markdown'
-        )
-        return
+            await update.message.reply_text(
+                f"📸 **Imagen recibida**\n\n¿Deseas **leer** la guía o **registrarla**?",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='Markdown'
+            )
+            return
 
     # CASO B: Modo Lectura activo
     if modo == MODO_GUIAS_LEER:
@@ -1705,6 +1990,35 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # CASO C: Modo Registro activo
     if modo == MODO_GUIAS_REGISTRAR:
+        if is_pdf:
+            tipo_detectado = await async_detectar_tipo_documento_pdf(file_path)
+            if tipo_detectado == "FACTURA":
+                if user_id not in user_data_cache:
+                    user_data_cache[user_id] = {}
+                display_name = file_name if file_name else "documento.pdf"
+                user_data_cache[user_id]['direct_file'] = {
+                    'file_path': file_path,
+                    'mime_type': mime_type,
+                    'is_pdf': is_pdf,
+                    'is_image': is_image,
+                    'is_xml': False,
+                    'tipo_label': tipo_label,
+                    'tipo_detectado': tipo_detectado,
+                    'message_id': update.message.id
+                }
+                kb = [
+                    [InlineKeyboardButton("🧾 Sí, Registrar como Factura", callback_data="direct_action|factura_registrar")],
+                    [InlineKeyboardButton("📁 Forzar como Guía", callback_data="direct_action|registrar")],
+                    [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+                ]
+                await update.message.reply_text(
+                    f"⚠️ **Atención:** Estabas en modo Registrar Guía, pero este documento parece ser una **Factura Electrónica** (`{display_name}`).\n\n"
+                    f"¿Cómo deseas registrarlo?",
+                    reply_markup=InlineKeyboardMarkup(kb),
+                    parse_mode='Markdown'
+                )
+                return
+
         guia_origen = user_data_cache.get(user_id, {}).get('guia_origen_vinculada')
         msg_status = await update.message.reply_text("⏳ Procesando registro de guía con IA...")
         await ejecutar_registro_guia(
@@ -1718,6 +2032,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_to_message=update.message.reply_to_message
         )
         return
+
 
     # CASO D: Modo Manual activo
     if modo == MODO_GUIAS_MANUAL:
@@ -2037,6 +2352,28 @@ async def handle_callback_direct_action(update: Update, context: ContextTypes.DE
                 msg_status=msg_status,
                 original_msg_id=original_msg_id
             )
+
+    elif accion == "factura_registrar":
+        msg_status = await query.edit_message_text("⏳ Procesando registro de factura...")
+        await ejecutar_registro_factura(
+            user_id=user_id,
+            file_path=file_path,
+            mime_type=mime_type,
+            context=context,
+            msg_status=msg_status,
+            is_xml=direct_file.get('is_xml', False),
+            original_msg_id=original_msg_id
+        )
+
+    elif accion == "guia_options":
+        kb = [
+            [
+                InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar"),
+                InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer")
+            ],
+            [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+        ]
+        await query.edit_message_text("📘 **Opciones para Guía de Remisión:**\n\n¿Deseas registrarla o leerla?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 # ====================================================================
 # --- HANDLER CALLBACK VINCULACION ---
