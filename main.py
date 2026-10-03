@@ -7,7 +7,7 @@ import signal
 import requests
 import pytz
 from datetime import time
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 
 from config.settings import logger, KEY_FILE
 from utils.helpers import init_db
