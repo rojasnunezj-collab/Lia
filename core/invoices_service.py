@@ -8,7 +8,10 @@ import asyncio
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 import gspread
-import pypdf
+try:
+    import pypdf
+except ImportError:
+    pypdf = None
 from google.genai import types
 
 from config.settings import logger, SHEET_ID, DRIVE_FOLDER_FACTURAS
@@ -372,6 +375,8 @@ def detectar_tipo_documento_pdf(file_path):
     si corresponde a una 'FACTURA' o una 'GUIA'.
     Si es escaneado o ambiguo, retorna 'DESCONOCIDO'.
     """
+    if pypdf is None:
+        return "DESCONOCIDO"
     try:
         reader = pypdf.PdfReader(file_path)
         text = ""
