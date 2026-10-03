@@ -101,7 +101,7 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                             'inline_keyboard': [
                                 [{'text': '✏️ Modificar Cotización', 'web_app': {'url': url_edit}}],
                                 [{'text': '📄 Doc Editable', 'url': res['doc_link']}, {'text': '📂 Ver en Drive', 'url': res['pdf_link']}],
-                                [{'text': '📋 Menú Cotizaciones', 'callback_data': 'menu_cotizaciones'}]
+                                [{'text': '📋 Menú Cotizaciones', 'callback_data': 'menu_cotizaciones'}, {'text': '❌ Cancelar', 'callback_data': 'cancelar_start'}]
                             ]
                         })
                     }

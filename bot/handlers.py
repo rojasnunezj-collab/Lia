@@ -243,6 +243,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Pong!")
 
+async def safe_edit_or_reply(query, text, reply_markup=None, parse_mode=None):
+    """Edita el mensaje si es texto plano, o envía una nueva respuesta si el mensaje original es un documento o foto."""
+    try:
+        if query.message and query.message.text is not None:
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+            return
+    except Exception as e_edit:
+        logger.warning(f"No se pudo editar mensaje directamente ({e_edit}), enviando como nueva respuesta.")
+    try:
+        await query.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except Exception as e:
+        logger.error(f"Error en safe_edit_or_reply: {e}")
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
@@ -254,7 +267,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == 'cancelar_start':
         user_states[user_id] = None
         user_data_cache[user_id] = {}
-        await query.edit_message_text("👍 Entendido. Me quedo atenta cuando me necesites. ¡Que tengas un excelente día! 👋", reply_markup=None)
+        await safe_edit_or_reply(query, "👍 Entendido. Me quedo atenta cuando me necesites. ¡Que tengas un excelente día! 👋", reply_markup=None)
         return
         
     if query.data == 'cancelar_operacion':
@@ -268,7 +281,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
             [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
-        await query.edit_message_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_or_reply(query, "👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == 'volver_inicio':
         user_states[user_id] = None
@@ -280,7 +293,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
             [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
-        await query.edit_message_text("👋 Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_or_reply(query, "👋 Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
         
     elif query.data == 'menu_cotizaciones':
         user_states[user_id] = None
@@ -289,7 +302,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("➕ Nueva Cotización", web_app=WebAppInfo(url=url_app))],
             [InlineKeyboardButton("🔍 Buscar / Modificar Cotización", callback_data='coti_buscar')],
-            [InlineKeyboardButton("🔙 Volver al Inicio", callback_data='volver_inicio')]
+            [InlineKeyboardButton("🔙 Volver al Inicio", callback_data='volver_inicio'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
         texto = (
             f"📋 *Módulo de Cotizaciones - EPMI SAC*\n\n"
@@ -297,19 +310,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Pulsa *➕ Nueva Cotización* para abrir el formulario en tu celular.\n"
             f"• Para revisar o editar una cotización previa, pulsa *🔍 Buscar / Modificar*."
         )
-        await query.edit_message_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == 'coti_buscar':
         user_states[user_id] = MODO_COTIZACION_BUSCAR
         keyboard = [
-            [InlineKeyboardButton("🔙 Cancelar", callback_data='menu_cotizaciones')]
+            [InlineKeyboardButton("🔙 Volver a Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
-        await query.edit_message_text(
+        texto = (
             "🔍 *Buscar o Modificar Cotización:*\n\n"
-            "Escribe el número correlativo de la cotización (por ejemplo: `080` o `081`):",
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "Escribe el número correlativo de la cotización (por ejemplo: `080` o `081`):"
         )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data.startswith('coti_edit|'):
         corr = query.data.split('|')[1]
@@ -320,16 +332,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         url_edit = obtener_url_webapp(correlativo=corr, datos_edicion=coti_data, user_id=user_id)
         keyboard = [
             [InlineKeyboardButton("✏️ Abrir Formulario de Edición", web_app=WebAppInfo(url=url_edit))],
-            [InlineKeyboardButton("🔙 Volver", callback_data='menu_cotizaciones')]
+            [InlineKeyboardButton("🔙 Volver a Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
-        await query.edit_message_text(
+        texto = (
             f"✏️ *Editar Cotización N°{corr}*\n\n"
             f"• *Cliente:* `{coti_data.get('cliente', '')}`\n"
             f"• *Fecha:* `{coti_data.get('fecha', '')}`\n\n"
-            f"Pulsa el botón abajo para abrir la app con los datos cargados:",
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            f"Pulsa el botón abajo para abrir la app con los datos cargados:"
         )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         
     elif query.data == 'menu_guias':
         keyboard = [
@@ -566,7 +577,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not coti_data:
                 await msg_wait.edit_text(
                     f"❌ No se encontró ninguna cotización con el número `{corr_query}`.",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones')]])
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Volver a Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+                    ])
                 )
                 return
 
@@ -589,7 +602,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 links_row.append(InlineKeyboardButton("📂 PDF en Drive", url=pdf_link))
             if links_row:
                 kb.append(links_row)
-            kb.append([InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones')])
+            kb.append([InlineKeyboardButton("🔙 Volver a Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')])
 
             texto_coti = (
                 f"📋 *Cotización Encontrada*\n\n"
@@ -2140,7 +2153,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             kb = [
                 [InlineKeyboardButton("✏️ Modificar Cotización", web_app=WebAppInfo(url=url_edit))],
                 [InlineKeyboardButton("📄 Doc Editable", url=doc_link), InlineKeyboardButton("📂 Ver en Drive", url=pdf_link)],
-                [InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones')]
+                [InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
             ]
 
             caption = (
