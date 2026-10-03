@@ -231,8 +231,8 @@ async def daily_certificate_reminder(context: ContextTypes.DEFAULT_TYPE):
 # ====================================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
         [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
+        [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
         [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
         [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
         [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
@@ -274,8 +274,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[user_id] = None
         user_data_cache[user_id] = {}
         keyboard = [
-            [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
             [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
+            [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
             [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
             [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
             [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
@@ -286,8 +286,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'volver_inicio':
         user_states[user_id] = None
         keyboard = [
-            [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
             [InlineKeyboardButton("📘 Guías", callback_data='menu_guias')],
+            [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
             [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
             [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
             [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],

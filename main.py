@@ -114,11 +114,16 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL | filters.VOICE | filters.AUDIO | filters.VIDEO, handle_files))
     
     async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        err_str = str(context.error)
+        # Ignorar conflicto transitorio de Telegram cuando Render inicia el nuevo contenedor antes de apagar el anterior
+        if "Conflict: terminated by other getUpdates request" in err_str:
+            logger.info("ℹ️ Despliegue de Render detectado: nueva instancia activa tomando el control.")
+            return
         logger.error("❌ Excepción no manejada en Telegram handler:", exc_info=context.error)
         admin_id = os.getenv("ADMIN_CHAT_ID")
         if admin_id and context.bot:
             try:
-                err_text = f"⚠️ ALERTA LÍA: Error en bot:\n{str(context.error)[:300]}"
+                err_text = f"⚠️ ALERTA LÍA: Error en bot:\n{err_str[:300]}"
                 await context.bot.send_message(chat_id=admin_id, text=err_text)
             except Exception:
                 pass
