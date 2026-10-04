@@ -1653,9 +1653,12 @@ async def ejecutar_registro_factura(user_id, file_path, mime_type, context, msg_
         emisor_ruc = datos.get("emisor_ruc", "")
         fecha_emision = datos.get("fecha_emision", "")
         moneda = datos.get("moneda", "PEN")
+        cantidad = datos.get("cantidad", 1)
+        valor_unitario = datos.get("valor_unitario", 0.0)
+        precio_unitario = datos.get("precio_unitario", 0.0)
+        valor_total = datos.get("valor_total", 0.0)
         igv = datos.get("igv", 0.0)
         importe_total = datos.get("importe_total", 0.0)
-        items = datos.get("items", [])
 
         if msg_status:
             try: await msg_status.edit_text("⏳ Subiendo comprobante a Google Drive (Carpeta Facturas)...")
@@ -1666,7 +1669,7 @@ async def ejecutar_registro_factura(user_id, file_path, mime_type, context, msg_
         if msg_status:
             try: await msg_status.edit_text("⏳ Guardando datos en Google Sheets (Registro_Facturas)...")
             except: pass
-        accion, num_items = await async_guardar_factura_en_sheet(datos)
+        accion, _ = await async_guardar_factura_en_sheet(datos)
         await async_log_action(user_id, numero_factura, f"FACTURA_{accion.upper()}")
 
         estado_registro = "🔄 *Factura Actualizada (Sobrescrita)*" if accion == "updated" else "✅ *Nueva Factura Registrada*"
@@ -1682,24 +1685,13 @@ async def ejecutar_registro_factura(user_id, file_path, mime_type, context, msg_
         resumen += (
             f"📅 *Fecha Emisión:* `{fecha_emision}`\n"
             f"💰 *Moneda:* `{moneda}`\n"
+            f"📦 *Cantidad:* `{cantidad}`\n"
+            f"🏷 *Valor Unitario:* `{simb} {valor_unitario:,.4f}`\n"
+            f"🏷 *Precio Unitario:* `{simb} {precio_unitario:,.4f}`\n"
+            f"📊 *Valor Total:* `{simb} {valor_total:,.2f}`\n"
             f"🧾 *IGV:* `{simb} {igv:,.2f}`\n"
-            f"💵 *Importe Total:* `{simb} {importe_total:,.2f}`\n"
-            f"📦 *Ítems Registrados:* `{num_items}`\n"
-        )
-
-        if items:
-            resumen += "\n📋 *Detalle de Ítems:*\n"
-            for it in items[:4]:
-                desc = it.get('descripcion', '')
-                if len(desc) > 35: desc = desc[:32] + "..."
-                cant = it.get('cantidad', 1)
-                vt = it.get('valor_total', 0.0)
-                resumen += f" • {cant}x `{desc}` — {simb} {vt:,.2f}\n"
-            if len(items) > 4:
-                resumen += f" • _...y {len(items)-4} ítem(s) más en el Sheet._\n"
-
-        resumen += (
-            f"\n📁 [Ver Archivo en Drive]({enlace_drive})\n"
+            f"💵 *Importe Total:* `{simb} {importe_total:,.2f}`\n\n"
+            f"📁 [Ver Archivo en Drive]({enlace_drive})\n"
             f"📊 [Abrir Google Sheet]({SHEET_URL_DIRECT})"
         )
 
