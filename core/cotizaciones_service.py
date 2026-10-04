@@ -262,6 +262,22 @@ def procesar_generacion_cotizacion(datos):
                             'insertBelow': True
                         }
                     })
+                # Quitar el color verde heredado de los encabezados en las nuevas filas de ítems
+                insert_rows_requests.append({
+                    'updateTableCellStyle': {
+                        'tableRange': {
+                            'tableCellLocation': {
+                                'tableStartLocation': {'index': table_start},
+                                'rowIndex': 1,
+                                'columnIndex': 0
+                            },
+                            'rowSpan': len(items),
+                            'columnSpan': 4
+                        },
+                        'tableCellStyle': {},
+                        'fields': 'backgroundColor'
+                    }
+                })
                 docs.documents().batchUpdate(documentId=doc_id, body={'requests': insert_rows_requests}).execute()
 
                 # Re-leer documento para ubicar las posiciones exactas de las nuevas celdas
@@ -295,6 +311,31 @@ def procesar_generacion_cotizacion(datos):
                     for idx, text in cell_updates
                 ]
                 docs.documents().batchUpdate(documentId=doc_id, body={'requests': text_requests}).execute()
+
+                # Quitar formato negrita en los ítems para que solo los encabezados queden en negrita
+                try:
+                    doc_after_text = docs.documents().get(documentId=doc_id).execute()
+                    for el in doc_after_text.get('body', {}).get('content', []):
+                        if 'table' in el:
+                            t_after = el['table']
+                            break
+                    style_requests = []
+                    for r_idx in range(1, len(t_after['tableRows'])):
+                        row = t_after['tableRows'][r_idx]
+                        style_requests.append({
+                            'updateTextStyle': {
+                                'range': {
+                                    'startIndex': row['startIndex'],
+                                    'endIndex': row['endIndex']
+                                },
+                                'textStyle': {'bold': False},
+                                'fields': 'bold'
+                            }
+                        })
+                    if style_requests:
+                        docs.documents().batchUpdate(documentId=doc_id, body={'requests': style_requests}).execute()
+                except Exception as e_style:
+                    logger.warning(f"No se pudo resetear negrita en ítems: {e_style}")
 
         # 4. Exportar a PDF
         pdf_bytes = drive.files().export(fileId=doc_id, mimeType='application/pdf').execute()
