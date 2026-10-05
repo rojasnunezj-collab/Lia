@@ -19,7 +19,8 @@ from bot.handlers import (
     handle_callback_reminder, daily_certificate_reminder,
     handle_callback_direct_action, handle_callback_pregunta_registro,
     handle_callback_pregunta_ligar, handle_callback_destino_manual,
-    handle_web_app_data
+    handle_web_app_data,
+    handle_callback_pendientes, job_verificar_alertas_pendientes
 )
 
 # ====================================================================
@@ -98,12 +99,15 @@ def main():
     tz_peru = pytz.timezone('America/Lima')
     hora_aviso = time(hour=9, minute=0, tzinfo=tz_peru)
     app.job_queue.run_daily(daily_certificate_reminder, time=hora_aviso)
+    # Tarea periódica de revisión de alertas de pendientes cada 2 minutos
+    app.job_queue.run_repeating(job_verificar_alertas_pendientes, interval=120, first=15)
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CallbackQueryHandler(handle_callback_vinculacion, pattern=r"^vinc\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_observacion, pattern=r"^obs\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_reminder, pattern=r"^rem\|"))
+    app.add_handler(CallbackQueryHandler(handle_callback_pendientes, pattern=r"^pnd_"))
     app.add_handler(CallbackQueryHandler(handle_callback_direct_action, pattern=r"^direct_action\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_pregunta_registro, pattern=r"^preg_reg\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_pregunta_ligar, pattern=r"^preg_ligar\|"))

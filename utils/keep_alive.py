@@ -31,6 +31,62 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error(f"Error sirviendo /cotizaciones: {e}")
 
+        elif path in ['/panel', '/panel.html']:
+            try:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                html_path = os.path.join(base_dir, 'webapp', 'panel.html')
+                if os.path.exists(html_path):
+                    with open(html_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                    self.send_header('Pragma', 'no-cache')
+                    self.send_header('Expires', '0')
+                    self.end_headers()
+                    self.wfile.write(content.encode('utf-8'))
+                    return
+            except Exception as e:
+                logger.error(f"Error sirviendo /panel: {e}")
+
+        elif path == '/api/pendientes':
+            try:
+                from core.pendientes_service import obtener_pendientes_sync
+                data = obtener_pendientes_sync()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(data).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/pendientes: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/credenciales':
+            try:
+                from core.credenciales_service import obtener_credenciales_sync
+                data = obtener_credenciales_sync()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(data).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/credenciales: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
         elif path == '/api/clientes':
             try:
                 from core.cotizaciones_service import obtener_catalogo_clientes
@@ -118,6 +174,88 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 return
             except Exception as e:
                 logger.error(f"Error en POST /api/cotizacion: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/pendientes':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                from core.pendientes_service import crear_pendiente_sync
+                pnd_id = crear_pendiente_sync(payload)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'id': pnd_id}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/pendientes: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/pendientes/accion':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                pnd_id = payload.get('id')
+                accion = payload.get('accion')
+                from core.pendientes_service import actualizar_estado_pendiente_sync, posponer_pendiente_sync
+
+                if accion == 'completar':
+                    ok = actualizar_estado_pendiente_sync(pnd_id, 'COMPLETADO')
+                elif accion == 'posponer':
+                    minutos = int(payload.get('minutos', 60))
+                    res_posponer = posponer_pendiente_sync(pnd_id, minutos)
+                    ok = res_posponer is not None
+                else:
+                    ok = False
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': ok}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/pendientes/accion: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/credenciales':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                from core.credenciales_service import guardar_credencial_sync
+                crd_id = guardar_credencial_sync(payload)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'id': crd_id}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/credenciales: {e}")
                 self.send_response(500)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self.send_header('Access-Control-Allow-Origin', '*')

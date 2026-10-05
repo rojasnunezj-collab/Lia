@@ -22,9 +22,10 @@ from config.settings import (
     MODO_BUSCAR_CERT_FECHA, MODO_BUSCAR_CERT_FUNDO, 
     MODO_BUSCAR_CERT_CORRE, MODO_BUSCAR_CERT_EMPRESA,
     MODO_DIR_EMPRESA, MODO_DIR_FUNDO, MODO_BUSCAR_CLIENTE,
-    MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_OBS_ESCRIBIR, MODO_LIGAR_ESCRIBIR,
+    MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_BITACORA_EDIT_TEXT, MODO_OBS_ESCRIBIR, MODO_LIGAR_ESCRIBIR,
     MODO_COTIZACION_BUSCAR,
     MODO_FACTURAS_REGISTRAR, MODO_FACTURAS_BUSCAR,
+    MODO_PENDIENTE_ADD, MODO_CREDENCIAL_BUSCAR,
     DRIVE_FOLDER_LEER, DRIVE_FOLDER_FACTURAS
 )
 from utils.helpers import clean_json_response, async_log_action, load_memoria_vinculacion, save_memoria_vinculacion, match_company_flexible
@@ -40,7 +41,22 @@ from core.cotizaciones_service import (
 )
 from core.invoices_service import (
     async_parse_factura_xml, parse_factura_pdf, async_detectar_tipo_documento_pdf,
-    async_guardar_factura_en_sheet, async_buscar_facturas_en_sheet
+    async_guardar_factura_en_sheet, async_buscar_facturas_en_sheet,
+    async_obtener_o_crear_carpeta_empresa
+)
+from core.bitacora_service import (
+    CATEGORIAS_DISPONIBLES, CATEGORIAS_INFO, procesar_entrada_ia,
+    guardar_registro_bitacora, obtener_registros_bitacora,
+    buscar_conversacional_bitacora, obtener_ultimas_anotaciones_formateadas
+)
+from core.pendientes_service import (
+    async_obtener_pendientes, async_crear_pendiente,
+    async_actualizar_estado_pendiente, async_posponer_pendiente,
+    async_obtener_alertas_por_disparar, async_marcar_alerta_enviada,
+    procesar_pendiente_ia, obtener_url_panel
+)
+from core.credenciales_service import (
+    async_obtener_credenciales, async_guardar_credencial
 )
 
 def normalize_guide_number(val):
@@ -183,6 +199,86 @@ async def handle_callback_reminder(update: Update, context: ContextTypes.DEFAULT
             parse_mode='Markdown'
         )
 
+async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query.data.startswith('pnd_'):
+        return
+    try:
+        await query.answer()
+    except Exception:
+        pass
+    user_id = query.from_user.id
+    data = query.data
+
+    if data == 'pnd_confirm':
+        cache = user_data_cache.get(user_id, {})
+        draft = cache.get("pendiente_draft")
+        if not draft:
+            await query.answer("⚠️ No hay borrador de pendiente para guardar.", show_alert=True)
+            return
+
+        msg_save = await query.message.reply_text("⏳ Registrando pendiente en Google Sheets...")
+        try:
+            draft["usuario"] = query.from_user.first_name or f"User_{user_id}"
+            pnd_id = await async_crear_pendiente(draft)
+            user_data_cache[user_id] = {}
+            user_states[user_id] = None
+
+            url_panel = obtener_url_panel(tab='pendientes', user_id=user_id)
+            kb = [
+                [InlineKeyboardButton("📱 Ver en WebApp", web_app=WebAppInfo(url=url_panel))],
+                [InlineKeyboardButton("➕ Nuevo Pendiente", callback_data='pnd_add')],
+                [InlineKeyboardButton("🔙 Menú Pendientes", callback_data='menu_pendientes')]
+            ]
+            await msg_save.edit_text(
+                f"✅ *¡Pendiente `{pnd_id}` guardado exitosamente!*\n\n"
+                f"📌 *Tarea:* *{draft.get('titulo')}*\n"
+                f"⏰ *Alerta:* `{draft.get('fecha_alerta')}`\n"
+                f"🎯 *Prioridad:* `{draft.get('prioridad')}`\n\n"
+                f"🔔 Te notificaré automáticamente por este chat cuando venza el plazo.",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Error guardando pendiente: {e}")
+            await msg_save.edit_text(f"❌ Error al guardar pendiente en Google Sheets: {e}")
+
+    elif data == 'pnd_cancel':
+        user_data_cache[user_id] = {}
+        user_states[user_id] = None
+        await safe_edit_or_reply(query, "❌ Pendiente cancelado / descartado.", reply_markup=get_main_menu_keyboard(user_id))
+
+    elif data.startswith('pnd_done|'):
+        pnd_id = data.split('|')[1]
+        ok = await async_actualizar_estado_pendiente(pnd_id, 'COMPLETADO')
+        if ok:
+            await safe_edit_or_reply(
+                query,
+                f"✅ *¡Pendiente `[{pnd_id}]` completado y marcado en Google Sheets!* 🎉",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📌 Menú Pendientes", callback_data='menu_pendientes')]]),
+                parse_mode='Markdown'
+            )
+        else:
+            await query.answer("❌ No se pudo actualizar el estado del pendiente.", show_alert=True)
+
+    elif data.startswith('pnd_snooze|'):
+        parts = data.split('|')
+        pnd_id = parts[1]
+        minutos = int(parts[2]) if len(parts) > 2 else 60
+        nueva_fecha = await async_posponer_pendiente(pnd_id, minutos)
+        if nueva_fecha:
+            tiempo_str = f"{minutos} min" if minutos < 60 else f"{minutos // 60} h"
+            if minutos >= 1440:
+                tiempo_str = "mañana"
+            await safe_edit_or_reply(
+                query,
+                f"⏰ *Pendiente `[{pnd_id}]` pospuesto ({tiempo_str}).*\nNueva alerta reprogramada para: `{nueva_fecha}`",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📌 Menú Pendientes", callback_data='menu_pendientes')]]),
+                parse_mode='Markdown'
+            )
+        else:
+            await query.answer("❌ Error posponiendo alerta.", show_alert=True)
+
 async def daily_certificate_reminder(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now(PET_TZ)
     if now.year < 2026 or (now.year == 2026 and now.month < 4):
@@ -232,18 +328,83 @@ async def daily_certificate_reminder(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error en daily_certificate_reminder: {e}")
 
 # ====================================================================
-# --- HANDLERS BÁSICOS ---
+# --- TAREA PROGRAMADA: ALERTAS DE PENDIENTES ---
 # ====================================================================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def job_verificar_alertas_pendientes(context: ContextTypes.DEFAULT_TYPE):
+    """Revisa en segundo plano si hay pendientes cuya hora de alerta ya llegó."""
+    try:
+        disparables = await async_obtener_alertas_por_disparar()
+        if not disparables:
+            return
+
+        admin_chat_id = os.getenv("ADMIN_CHAT_ID")
+        if not admin_chat_id:
+            return
+
+        for pnd in disparables:
+            pnd_id = str(pnd.get("ID", "")).strip()
+            titulo = str(pnd.get("TITULO_TAREA", "Sin título")).strip()
+            detalle = str(pnd.get("DETALLE", "")).strip()
+            cliente = str(pnd.get("CLIENTE_REF", "")).strip()
+            prioridad = str(pnd.get("PRIORIDAD", "MEDIA")).strip().upper()
+            fecha_alerta = str(pnd.get("FECHA_ALERTA", "")).strip()
+
+            p_badge = "🔴 ALTA" if prioridad == "ALTA" else ("🟢 BAJA" if prioridad == "BAJA" else "🟡 MEDIA")
+
+            msg = (
+                f"🔔 *ALERTA DE PENDIENTE* `[{pnd_id}]`\n\n"
+                f"📌 *Tarea:* *{titulo}*\n"
+            )
+            if cliente:
+                msg += f"🏢 *Referencia:* `{cliente}`\n"
+            if detalle:
+                msg += f"📝 *Detalle:* _{detalle}_\n"
+            msg += (
+                f"⏰ *Programado:* `{fecha_alerta}`\n"
+                f"🎯 *Prioridad:* `{p_badge}`\n\n"
+                f"¿Qué deseas hacer con este pendiente?"
+            )
+
+            kb = [
+                [InlineKeyboardButton("✅ Marcar Listo", callback_data=f"pnd_done|{pnd_id}")],
+                [InlineKeyboardButton("⏰ +30 min", callback_data=f"pnd_snooze|{pnd_id}|30"),
+                 InlineKeyboardButton("⏰ +2 horas", callback_data=f"pnd_snooze|{pnd_id}|120")],
+                [InlineKeyboardButton("📅 Para Mañana", callback_data=f"pnd_snooze|{pnd_id}|1440")]
+            ]
+
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_chat_id,
+                    text=msg,
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(kb)
+                )
+                await async_marcar_alerta_enviada(pnd_id)
+            except Exception as e_send:
+                logger.error(f"Error enviando alerta pendiente {pnd_id}: {e_send}")
+    except Exception as e:
+        logger.error(f"Error en job_verificar_alertas_pendientes: {e}")
+
+# ====================================================================
+# --- HANDLERS BÁSICOS Y TECLADO PRINCIPAL ---
+# ====================================================================
+def get_main_menu_keyboard(user_id=None):
+    """Construye el teclado del menú principal con accesos a todos los módulos y webapps."""
+    url_panel = obtener_url_panel(tab='pendientes', user_id=user_id)
     keyboard = [
         [InlineKeyboardButton("📘 Guías", callback_data='menu_guias'), InlineKeyboardButton("🧾 Facturas", callback_data='menu_facturas')],
         [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
-        [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
-        [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
+        [InlineKeyboardButton("📌 Pendientes & Alertas", callback_data='menu_pendientes'), InlineKeyboardButton("🔐 Credenciales", callback_data='menu_credenciales')],
+        [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda'), InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
         [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
+        [InlineKeyboardButton("📱 Abrir Panel WebApp", web_app=WebAppInfo(url=url_panel))],
         [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
     ]
-    await update.message.reply_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return InlineKeyboardMarkup(keyboard)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id if update.effective_user else None
+    await update.message.reply_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Pong!")
@@ -260,6 +421,68 @@ async def safe_edit_or_reply(query, text, reply_markup=None, parse_mode=None):
         await query.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
     except Exception as e:
         logger.error(f"Error en safe_edit_or_reply: {e}")
+
+def build_bitacora_draft_card(draft):
+    """Construye la tarjeta de visualización de borrador de Bitácora con botones de confirmación y edición."""
+    cat = draft.get("categoria", "GENERAL")
+    cat_emoji, cat_label = CATEGORIAS_INFO.get(cat, ("📝", cat))
+    tags = draft.get("tags", "")
+    formato = draft.get("formato", "Texto/Anotación")
+    texto = draft.get("texto", "")
+    resumen = draft.get("resumen", "")
+    
+    msg_card = (
+        "📓 **Borrador de Bitácora Generado**\n\n"
+        f"📂 **Categoría:** `{cat}` ({cat_emoji} {cat_label})\n"
+    )
+    if tags:
+        msg_card += f"🏷️ **Etiquetas:** `{tags}`\n"
+    msg_card += f"📎 **Formato:** `{formato}`\n"
+    if resumen:
+        msg_card += f"💡 **Resumen:** _{resumen}_\n"
+    msg_card += (
+        f"\n📝 **Contenido detectado / transcrito:**\n"
+        f"_{texto}_\n\n"
+        f"❓ **¿La información está correcta o deseas editar algo antes de guardarla?**"
+    )
+    
+    kb = [
+        [InlineKeyboardButton("✅ Confirmar y Guardar", callback_data='bita_confirm')],
+        [InlineKeyboardButton("✏️ Editar Texto / Nota", callback_data='bita_edit_text'),
+         InlineKeyboardButton("🏷️ Cambiar Categoría", callback_data='bita_pick_cat')],
+        [InlineKeyboardButton("❌ Cancelar / Descartar", callback_data='bita_cancel')]
+    ]
+    return msg_card, InlineKeyboardMarkup(kb)
+
+def build_pendiente_draft_card(draft):
+    """Construye la tarjeta de visualización de borrador de Pendiente con botones de confirmación."""
+    titulo = draft.get("titulo", "Sin título")
+    detalle = draft.get("detalle", "")
+    cliente = draft.get("cliente_ref", "")
+    fecha_alerta = draft.get("fecha_alerta", "")
+    prioridad = draft.get("prioridad", "MEDIA").upper()
+
+    p_badge = "🔴 ALTA" if prioridad == "ALTA" else ("🟢 BAJA" if prioridad == "BAJA" else "🟡 MEDIA")
+
+    msg = (
+        "📌 *Borrador de Pendiente Detectado*\n\n"
+        f"📝 *Tarea:* *{titulo}*\n"
+    )
+    if cliente:
+        msg += f"🏢 *Referencia / Cliente:* `{cliente}`\n"
+    if detalle:
+        msg += f"📋 *Detalle:* _{detalle}_\n"
+    msg += (
+        f"⏰ *Alerta Programada:* `{fecha_alerta}`\n"
+        f"🎯 *Prioridad:* `{p_badge}`\n\n"
+        f"❓ ¿Deseas confirmar y guardar este pendiente en Google Sheets?"
+    )
+
+    kb = [
+        [InlineKeyboardButton("✅ Confirmar y Guardar", callback_data='pnd_confirm')],
+        [InlineKeyboardButton("❌ Cancelar / Descartar", callback_data='pnd_cancel')]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -278,27 +501,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == 'cancelar_operacion':
         user_states[user_id] = None
         user_data_cache[user_id] = {}
-        keyboard = [
-            [InlineKeyboardButton("📘 Guías", callback_data='menu_guias'), InlineKeyboardButton("🧾 Facturas", callback_data='menu_facturas')],
-            [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
-            [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
-            [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
-            [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
-            [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
-        ]
-        await safe_edit_or_reply(query, "👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_or_reply(query, "👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
 
     elif query.data == 'volver_inicio':
         user_states[user_id] = None
-        keyboard = [
-            [InlineKeyboardButton("📘 Guías", callback_data='menu_guias'), InlineKeyboardButton("🧾 Facturas", callback_data='menu_facturas')],
-            [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
-            [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda')],
-            [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
-            [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
-            [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
-        ]
-        await safe_edit_or_reply(query, "👋 Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_or_reply(query, "👋 Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
 
     elif query.data == 'menu_facturas':
         user_states[user_id] = None
@@ -382,6 +589,138 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         
+    elif query.data == 'menu_pendientes':
+        user_states[user_id] = None
+        url_panel_pnd = obtener_url_panel(tab='pendientes', user_id=user_id)
+        keyboard = [
+            [InlineKeyboardButton("➕ Nuevo Pendiente (Texto o Voz)", callback_data='pnd_add')],
+            [InlineKeyboardButton("📋 Ver Pendientes Activos", callback_data='pnd_list')],
+            [InlineKeyboardButton("📱 Abrir en WebApp", web_app=WebAppInfo(url=url_panel_pnd))],
+            [InlineKeyboardButton("🔙 Volver al Inicio", callback_data='volver_inicio')]
+        ]
+        texto = (
+            "📌 *Módulo de Pendientes & Alertas*\n\n"
+            "• Registra tareas con fecha y hora programada.\n"
+            "• Lía te notificará automáticamente cuando se cumpla el plazo.\n"
+            "• Puedes dictar notas de voz o escribir en lenguaje natural.\n\n"
+            "Selecciona una opción:"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data == 'pnd_add':
+        user_states[user_id] = MODO_PENDIENTE_ADD
+        kb = [[InlineKeyboardButton("🔙 Volver", callback_data='menu_pendientes'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]]
+        texto = (
+            "✍️ *Crear Nuevo Pendiente*\n\n"
+            "Escribe o envía una nota de voz con lo que necesitas recordar. Por ejemplo:\n"
+            "• _\"Recordar mañana a las 9am pedir certificado a Cerro Prieto\"_\n"
+            "• _\"Pedir peso de guía T001-45 en 30 minutos\"_\n"
+            "• _\"Pagar flete de transporte el viernes a las 3pm\"_\n\n"
+            "💡 _Lía calculará automáticamente la fecha/hora y te pedirá confirmar el borrador antes de guardarlo en Sheets._"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+
+    elif query.data == 'pnd_list':
+        msg_wait = await query.message.reply_text("⏳ Consultando pendientes activos en Google Sheets...")
+        try:
+            pendientes = await async_obtener_pendientes(solo_activos=True)
+            if not pendientes:
+                kb = [
+                    [InlineKeyboardButton("➕ Crear Pendiente", callback_data='pnd_add')],
+                    [InlineKeyboardButton("🔙 Volver", callback_data='menu_pendientes')]
+                ]
+                await msg_wait.edit_text("🎉 *¡Excelente! No tienes pendientes activos por el momento.*", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+            else:
+                texto_lista = f"📌 *Pendientes Activos ({len(pendientes)}):*\n\n"
+                kb_items = []
+                for p in pendientes[:8]:
+                    p_id = p.get('ID', '')
+                    tit = p.get('TITULO_TAREA', 'Sin título')
+                    fec = p.get('FECHA_ALERTA', '')
+                    prio = p.get('PRIORIDAD', 'MEDIA')
+                    p_badge = "🔴" if prio == "ALTA" else ("🟢" if prio == "BAJA" else "🟡")
+                    texto_lista += f"{p_badge} `[{p_id}]` *{tit}*\n⏰ _{fec}_\n\n"
+                    kb_items.append([
+                        InlineKeyboardButton(f"✅ Listo {p_id}", callback_data=f"pnd_done|{p_id}"),
+                        InlineKeyboardButton(f"⏰ +1h", callback_data=f"pnd_snooze|{p_id}|60")
+                    ])
+
+                url_panel_pnd = obtener_url_panel(tab='pendientes', user_id=user_id)
+                kb_items.append([InlineKeyboardButton("📱 Ver Todos en WebApp", web_app=WebAppInfo(url=url_panel_pnd))])
+                kb_items.append([InlineKeyboardButton("➕ Nuevo", callback_data='pnd_add'), InlineKeyboardButton("🔙 Volver", callback_data='menu_pendientes')])
+
+                await msg_wait.edit_text(texto_lista, reply_markup=InlineKeyboardMarkup(kb_items), parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error listando pendientes: {e}")
+            await msg_wait.edit_text(f"❌ Error al consultar pendientes: {e}")
+
+    elif query.data == 'menu_credenciales':
+        user_states[user_id] = None
+        url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+        keyboard = [
+            [InlineKeyboardButton("🔍 Buscar Credencial", callback_data='crd_buscar')],
+            [InlineKeyboardButton("📋 Ver Todas las Cuentas", callback_data='crd_list_all')],
+            [InlineKeyboardButton("📱 Abrir Bóveda WebApp", web_app=WebAppInfo(url=url_panel_crd))],
+            [InlineKeyboardButton("🔙 Volver al Inicio", callback_data='volver_inicio')]
+        ]
+        texto = (
+            "🔐 *Bóveda de Credenciales & Accesos*\n\n"
+            "• Consulta usuarios, contraseñas y accesos a portales.\n"
+            "• SUNAT, Balanzas de Plantas, Portales de Clientes, etc.\n"
+            "• Copia rápida de usuario y clave en un solo toque.\n\n"
+            "Selecciona una opción:"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data == 'crd_buscar':
+        user_states[user_id] = MODO_CREDENCIAL_BUSCAR
+        kb = [[InlineKeyboardButton("🔙 Volver", callback_data='menu_credenciales'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]]
+        texto = (
+            "🔍 *Buscar Credencial o Acceso*\n\n"
+            "Escribe el nombre del servicio o plataforma (ej: `SUNAT`, `Petramás`, `Balanza`, `Ventanilla`):"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+
+    elif query.data == 'crd_list_all':
+        msg_wait = await query.message.reply_text("⏳ Consultando credenciales registradas...")
+        try:
+            creds = await async_obtener_credenciales()
+            if not creds:
+                url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+                kb = [
+                    [InlineKeyboardButton("➕ Registrar en WebApp", web_app=WebAppInfo(url=url_panel_crd))],
+                    [InlineKeyboardButton("🔙 Volver", callback_data='menu_credenciales')]
+                ]
+                await msg_wait.edit_text("ℹ️ *No hay credenciales registradas aún en la hoja.*", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+            else:
+                texto_creds = f"🔐 *Bóveda de Credenciales ({len(creds)} registradas):*\n\n"
+                for c in creds[:10]:
+                    srv = c.get('SERVICIO', '')
+                    cat = c.get('CATEGORIA', 'General')
+                    usr = c.get('USUARIO_RUC', '')
+                    pwd = c.get('CONTRASEÑA', '')
+                    url_log = c.get('URL_LOGIN', '')
+                    pin = c.get('PIN_EXTRA', '')
+
+                    texto_creds += f"🏛️ *{srv}* `[{cat}]`\n"
+                    if url_log:
+                        texto_creds += f"🌐 Enlace: {url_log}\n"
+                    texto_creds += f"👤 Usuario: `{usr}`\n"
+                    texto_creds += f"🔑 Clave: `{pwd}`\n"
+                    if pin:
+                        texto_creds += f"📌 PIN/Token: `{pin}`\n"
+                    texto_creds += "──────────────────\n"
+
+                url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+                kb = [
+                    [InlineKeyboardButton("📱 Gestionar en WebApp", web_app=WebAppInfo(url=url_panel_crd))],
+                    [InlineKeyboardButton("🔍 Buscar", callback_data='crd_buscar'), InlineKeyboardButton("🔙 Volver", callback_data='menu_credenciales')]
+                ]
+                await msg_wait.edit_text(texto_creds, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown', disable_web_page_preview=True)
+        except Exception as e:
+            logger.error(f"Error listando credenciales: {e}")
+            await msg_wait.edit_text(f"❌ Error al consultar credenciales: {e}")
+
     elif query.data == 'menu_guias':
         keyboard = [
             [InlineKeyboardButton("📝 Leer Guía", callback_data='modo_guias_leer')],
@@ -510,20 +849,180 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
     elif query.data == 'modo_bitacora':
+        user_states[user_id] = None
         keyboard = [
-            [InlineKeyboardButton("✍️ Nueva Anotación/Archivo", callback_data='bitacora_add')],
-            [InlineKeyboardButton("🔎 Buscar en Bitácora", callback_data='bitacora_search')],
+            [InlineKeyboardButton("✍️ Nueva Anotación (Texto, Audio, Foto)", callback_data='bitacora_add')],
+            [InlineKeyboardButton("🔎 Búsqueda Inteligente (Pregúntale a Lía)", callback_data='bitacora_search')],
+            [InlineKeyboardButton("📋 Ver Últimas Anotaciones", callback_data='bita_ultimas_5')],
             [InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]
         ]
-        await query.edit_message_text("📓 Bitácora Libre\n¿Qué deseas hacer en tu Bitácora?", reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_or_reply(
+            query,
+            "📓 **Módulo de Bitácora Libre**\n\n¿Qué deseas hacer en tu Bitácora?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
     elif query.data == 'bitacora_add':
         user_states[user_id] = MODO_BITACORA_ADD
         kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_bitacora')]]
-        await query.edit_message_text("✍️ Añadiendo a Bitácora\nSube una Foto, PDF, Audio o Video para adjuntar. O envíame texto directamente para anotar.", reply_markup=InlineKeyboardMarkup(kb))
+        await safe_edit_or_reply(
+            query,
+            "✍️ **Añadiendo a Bitácora**\n\n"
+            "Envíame lo que deseas registrar:\n"
+            "• 📝 **Texto** con cualquier apunte o instrucción.\n"
+            "• 🎙️ **Nota de voz o Audio** (lo transcribiré automáticamente).\n"
+            "• 📸 **Foto o PDF** (extraeré el contenido con OCR e IA).\n\n"
+            "💡 _Antes de guardar en la hoja, te mostraré el borrador y te preguntaré si deseas confirmarlo o editarlo._",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode='Markdown'
+        )
     elif query.data == 'bitacora_search':
         user_states[user_id] = MODO_BITACORA_SEARCH
-        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_bitacora')]]
-        await query.edit_message_text("🔎 Buscando en Bitácora\nEscribe el texto, nombre de usuario o fecha que deseas encontrar en tus anotaciones guardadas:", reply_markup=InlineKeyboardMarkup(kb))
+        kb = [
+            [InlineKeyboardButton("📋 Ver Últimas 5 Anotaciones", callback_data='bita_ultimas_5')],
+            [InlineKeyboardButton("🔙 Volver a Bitácora", callback_data='modo_bitacora')]
+        ]
+        await safe_edit_or_reply(
+            query,
+            "🔎 **Búsqueda Conversacional en Bitácora**\n\n"
+            "Pregúntame directamente lo que necesitas saber, por ejemplo:\n"
+            "• _\"¿Cómo se hacen las guías de Villacurí?\"_\n"
+            "• _\"¿Qué reglas hay para los certificados de Prosembra?\"_\n"
+            "• _\"¿Cuál es el RUC del transportista de Beta?\"_\n"
+            "• _\"¿Qué notas o fotos se subieron recientemente?\"_\n\n"
+            "💡 _Escribe en lenguaje natural. No necesitas comandos especiales y Lía tolera errores ortográficos y de tipeo._",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode='Markdown'
+        )
+    elif query.data == 'bita_ultimas_5':
+        msg_wait = await query.message.reply_text("⏳ Obteniendo últimas anotaciones de la Bitácora...")
+        try:
+            texto_ultimos = await obtener_ultimas_anotaciones_formateadas(5)
+            kb = [
+                [InlineKeyboardButton("🔎 Preguntarle a Lía con IA", callback_data='bitacora_search')],
+                [InlineKeyboardButton("✍️ Nueva Anotación", callback_data='bitacora_add')],
+                [InlineKeyboardButton("🔙 Volver a Bitácora", callback_data='modo_bitacora')]
+            ]
+            await msg_wait.edit_text(texto_ultimos, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown', disable_web_page_preview=True)
+        except Exception as e:
+            logger.error(f"Error obteniendo ultimas notas: {e}")
+            await msg_wait.edit_text(f"❌ Error al obtener notas: {e}")
+    elif query.data == 'bita_confirm':
+        cache = user_data_cache.get(user_id, {})
+        draft = cache.get("bitacora_draft")
+        if not draft:
+            await query.answer("⚠️ No hay borrador pendiente para guardar.", show_alert=True)
+            return
+            
+        await query.answer("💾 Guardando en Bitácora...")
+        msg_save = await query.message.reply_text("⏳ Guardando registro en Google Sheets...")
+        
+        try:
+            from datetime import datetime, timezone, timedelta
+            PET = timezone(timedelta(hours=-5))
+            timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M")
+            username = query.from_user.username or query.from_user.first_name
+            
+            file_path = draft.get("file_path")
+            mime_type = draft.get("mime_type", "")
+            enlace_drive = ""
+            
+            if file_path and os.path.exists(file_path):
+                enlace_drive = await async_subir_a_drive(file_path, mime_type)
+                try: os.remove(file_path)
+                except: pass
+            
+            cat = draft.get("categoria", "GENERAL")
+            tags = draft.get("tags", "")
+            formato = draft.get("formato", "Texto/Anotación")
+            texto_final = draft.get("texto", "")
+            
+            await guardar_registro_bitacora(timestamp, username, cat, tags, formato, enlace_drive, texto_final)
+            
+            user_states[user_id] = None
+            user_data_cache[user_id] = {}
+            
+            cat_emoji, cat_lbl = CATEGORIAS_INFO.get(cat, ("📝", cat))
+            resp_exito = (
+                f"✅ **Anotación guardada en Bitácora con éxito**\n\n"
+                f"📅 **Fecha:** `{timestamp}`\n"
+                f"📂 **Categoría:** `{cat_emoji} {cat}`\n"
+            )
+            if tags:
+                resp_exito += f"🏷️ **Tags:** `{tags}`\n"
+            resp_exito += f"📝 **Contenido:** _{texto_final}_\n"
+            if enlace_drive:
+                resp_exito += f"📎 [Ver Archivo en Drive]({enlace_drive})\n"
+                
+            kb_post = [
+                [InlineKeyboardButton("✍️ Otra Anotación", callback_data='bitacora_add')],
+                [InlineKeyboardButton("🔎 Buscar en Bitácora", callback_data='bitacora_search')],
+                [InlineKeyboardButton("🔙 Menú Bitácora", callback_data='modo_bitacora')]
+            ]
+            await msg_save.edit_text(resp_exito, reply_markup=InlineKeyboardMarkup(kb_post), parse_mode='Markdown', disable_web_page_preview=True)
+        except Exception as e:
+            logger.error(f"Error guardando bitácora: {e}")
+            await msg_save.edit_text(f"❌ Error al guardar en Bitácora: {e}")
+    elif query.data == 'bita_edit_text':
+        user_states[user_id] = MODO_BITACORA_EDIT_TEXT
+        kb = [[InlineKeyboardButton("🔙 Volver al Borrador", callback_data='bita_back_draft')]]
+        await safe_edit_or_reply(
+            query,
+            "✏️ **Editando Contenido de la Anotación**\n\n"
+            "Por favor, escribe y envíame el nuevo texto que deseas que quede registrado:\n\n"
+            "💡 _Puedes corregir nombres, agregar detalles o redactarlo como prefieras._",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode='Markdown'
+        )
+    elif query.data == 'bita_pick_cat':
+        kb_cat = [
+            [InlineKeyboardButton("📜 Procedimiento", callback_data="bita_setcat|PROCEDIMIENTO"),
+             InlineKeyboardButton("👤 Cliente/Prov", callback_data="bita_setcat|CLIENTE")],
+            [InlineKeyboardButton("🚚 Transporte/Op", callback_data="bita_setcat|TRANSPORTE"),
+             InlineKeyboardButton("⚠️ Incidencia", callback_data="bita_setcat|INCIDENCIA")],
+            [InlineKeyboardButton("💰 Finanzas/Pagos", callback_data="bita_setcat|FINANZAS"),
+             InlineKeyboardButton("📌 Recordatorio", callback_data="bita_setcat|RECORDATORIO")],
+            [InlineKeyboardButton("📝 General/Otro", callback_data="bita_setcat|GENERAL")],
+            [InlineKeyboardButton("🔙 Volver al Borrador", callback_data="bita_back_draft")]
+        ]
+        await safe_edit_or_reply(
+            query,
+            "🏷️ **Selecciona la Categoría Adecuada:**",
+            reply_markup=InlineKeyboardMarkup(kb_cat),
+            parse_mode='Markdown'
+        )
+    elif query.data.startswith('bita_setcat|'):
+        nueva_cat = query.data.split('|')[1]
+        cache = user_data_cache.get(user_id, {})
+        draft = cache.get("bitacora_draft")
+        if draft:
+            draft["categoria"] = nueva_cat
+            card_text, kb_card = build_bitacora_draft_card(draft)
+            await safe_edit_or_reply(query, card_text, reply_markup=kb_card, parse_mode='Markdown')
+        else:
+            await query.answer("No hay borrador activo.", show_alert=True)
+    elif query.data == 'bita_back_draft':
+        cache = user_data_cache.get(user_id, {})
+        draft = cache.get("bitacora_draft")
+        if draft:
+            user_states[user_id] = MODO_BITACORA_ADD
+            card_text, kb_card = build_bitacora_draft_card(draft)
+            await safe_edit_or_reply(query, card_text, reply_markup=kb_card, parse_mode='Markdown')
+        else:
+            await query.answer("No hay borrador activo.", show_alert=True)
+    elif query.data == 'bita_cancel':
+        cache = user_data_cache.get(user_id, {})
+        draft = cache.get("bitacora_draft", {})
+        file_path = draft.get("file_path")
+        if file_path and os.path.exists(file_path):
+            try: os.remove(file_path)
+            except: pass
+            
+        user_states[user_id] = None
+        user_data_cache[user_id] = {}
+        
+        kb_back = [[InlineKeyboardButton("🔙 Volver a Bitácora", callback_data='modo_bitacora')]]
+        await safe_edit_or_reply(query, "❌ **Anotación cancelada.** No se guardó ningún registro.", reply_markup=InlineKeyboardMarkup(kb_back), parse_mode='Markdown')
     elif query.data == 'man_sg_nueva':
         cache = user_data_cache.get(user_id, {})
         await process_manual_singuia_decision(update, context, user_id, cache, force_update=False)
@@ -608,7 +1107,76 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     modo = user_states.get(user_id)
 
-    if modo == MODO_COTIZACION_BUSCAR:
+    if modo == MODO_PENDIENTE_ADD:
+        user_states[user_id] = None
+        texto_input = text.strip()
+        msg = await update.message.reply_text("🧠 Analizando tarea con IA...")
+        try:
+            info = await procesar_pendiente_ia(texto=texto_input)
+            draft = {
+                "titulo": info.get("titulo", texto_input[:50]),
+                "detalle": info.get("detalle", ""),
+                "cliente_ref": info.get("cliente_ref", ""),
+                "fecha_alerta": info.get("fecha_alerta", ""),
+                "prioridad": info.get("prioridad", "MEDIA")
+            }
+            user_data_cache[user_id] = {"pendiente_draft": draft}
+            card_text, kb_card = build_pendiente_draft_card(draft)
+            await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error procesando pendiente IA: {e}")
+            await msg.edit_text(f"❌ Error al procesar pendiente: {e}")
+        return
+
+    elif modo == MODO_CREDENCIAL_BUSCAR:
+        user_states[user_id] = None
+        q = text.strip()
+        msg = await update.message.reply_text(f"🔍 Buscando credencial `{q}` en Google Sheets...")
+        try:
+            res = await async_obtener_credenciales(query=q)
+            if not res:
+                url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+                kb = [
+                    [InlineKeyboardButton("🔍 Nueva Búsqueda", callback_data='crd_buscar')],
+                    [InlineKeyboardButton("📱 Abrir Bóveda WebApp", web_app=WebAppInfo(url=url_panel_crd))],
+                    [InlineKeyboardButton("🔙 Menú Credenciales", callback_data='menu_credenciales')]
+                ]
+                await msg.edit_text(f"❌ No se encontró ninguna credencial que coincida con `{q}`.", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                return
+
+            texto_res = f"🔐 *Resultados para:* `{q}`\n\n"
+            for c in res[:6]:
+                srv = c.get('SERVICIO', '')
+                cat = c.get('CATEGORIA', 'General')
+                usr = c.get('USUARIO_RUC', '')
+                pwd = c.get('CONTRASEÑA', '')
+                url_log = c.get('URL_LOGIN', '')
+                pin = c.get('PIN_EXTRA', '')
+                obs = c.get('OBSERVACIONES', '')
+
+                texto_res += f"🏛️ *{srv}* `[{cat}]`\n"
+                if url_log:
+                    texto_res += f"🌐 Enlace: {url_log}\n"
+                texto_res += f"👤 Usuario: `{usr}`\n"
+                texto_res += f"🔑 Clave: `{pwd}`\n"
+                if pin:
+                    texto_res += f"📌 PIN: `{pin}`\n"
+                if obs:
+                    texto_res += f"💡 _{obs}_\n"
+                texto_res += "──────────────────\n"
+
+            url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+            kb = [
+                [InlineKeyboardButton("📱 Ver en WebApp", web_app=WebAppInfo(url=url_panel_crd))],
+                [InlineKeyboardButton("🔍 Otra Búsqueda", callback_data='crd_buscar'), InlineKeyboardButton("🔙 Menú Credenciales", callback_data='menu_credenciales')]
+            ]
+            await msg.edit_text(texto_res, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown', disable_web_page_preview=True)
+        except Exception as e:
+            logger.error(f"Error buscando credencial: {e}")
+            await msg.edit_text(f"❌ Error en búsqueda de credencial: {e}")
+        return
+
+    elif modo == MODO_COTIZACION_BUSCAR:
         user_states[user_id] = None
         corr_query = text.strip()
         msg_wait = await update.message.reply_text(f"🔍 Buscando cotización `{corr_query}` en Google Sheets...")
@@ -727,7 +1295,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     creds = obtener_credenciales()
                     client = gspread.authorize(creds)
                     book2 = client.open_by_key(SHEET_ID)
-                    return book2.worksheet("Guias_recibidas").get_all_records()
+                    ws = book2.worksheet("Guias_recibidas")
+                    rows = ws.get_all_values()
+                    if not rows:
+                        return []
+                    headers = rows[0]
+                    records = []
+                    for row in rows[1:]:
+                        rec = {}
+                        for idx, h in enumerate(headers):
+                            if h:
+                                val = row[idx] if idx < len(row) else ""
+                                if h in rec:
+                                    rec[f"{h}_{idx+1}"] = val
+                                else:
+                                    rec[h] = val
+                        records.append(rec)
+                    return records
                     
                 try:
                     registros_2 = await asyncio.to_thread(fetch_recibidas)
@@ -759,12 +1343,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if origen == "Registro_Guias":
                         entidad_1 = r.get('Destinatario/Remitente', 'S/D')
                         entidad_2 = r.get('Destinario/Proveedor', 'S/D')
+                        # Columna I: 'Guia hecha' | Columna J: 'Guia recibida'
+                        enlace = str(r.get('Guia hecha', r.get('GUIA HECHA', r.get('Link Drive', '')))).strip()
+                        enlace_recibida = str(r.get('Guia recibida', r.get('GUIA RECIBIDA', ''))).strip()
                     else:
                         vals = list(r.values())
                         entidad_1 = str(vals[4]) if len(vals) >= 5 else "S/D"
                         entidad_2 = "S/D"
-                        
-                    enlace = str(r.get('Link Drive', '')).strip()
+                        enlace = str(r.get('Link Drive', r.get('LINK DRIVE', ''))).strip()
+                        enlace_recibida = ""
 
                     reporte += f"🗂️ **Base:** `{origen}`\n"
                     reporte += f"📄 **Guía:** `{num_guia}`\n"
@@ -776,16 +1363,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         reporte += f"🏡 **Fundo/Planta:** `{entidad_1}`\n"
                     
+                    label_link = "Guía Hecha" if origen == "Registro_Guias" else "Link"
                     if enlace.startswith("http"):
-                        reporte += f"🔗 [Link]({enlace})\n"
+                        reporte += f"🔗 [{label_link}]({enlace})\n"
                     elif enlace:
                         link_rescatado = await async_buscar_link_en_drive(enlace)
                         if link_rescatado:
-                            reporte += f"🔗 [Link]({link_rescatado})\n"
+                            reporte += f"🔗 [{label_link}]({link_rescatado})\n"
                         else:
                             reporte += f"🔗 _Documento no encontrado en Drive_\n"
                     else:
                         reporte += f"🔗 _Sin enlace en base de datos_\n"
+
+                    if origen == "Registro_Guias" and enlace_recibida:
+                        if enlace_recibida.startswith("http"):
+                            reporte += f"📎 [Guía Recibida]({enlace_recibida})\n"
+                        else:
+                            link_rec_resc = await async_buscar_link_en_drive(enlace_recibida)
+                            if link_rec_resc:
+                                reporte += f"📎 [Guía Recibida]({link_rec_resc})\n"
                     
                     reporte += "➖➖➖➖➖➖➖➖➖➖\n"
                 
@@ -1179,92 +1775,56 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error en guardado manual: {e}")
             await msg.edit_text(f"❌ Error al guardar el registro manual: {e}")
 
-    elif modo == MODO_BITACORA_SEARCH:
-        raw_query = str(update.message.text).strip()
-        query_upper = raw_query.upper()
-        msg = await update.message.reply_text(f"⏳ Buscando `{raw_query}` en la Bitácora...")
-        
-        try:
-            def fetch_bitacora():
-                creds = obtener_credenciales()
-                client = gspread.authorize(creds)
-                book2 = client.open_by_key(SHEET_ID)
-                try:
-                    return book2.worksheet("Bitacora").get_all_records()
-                except gspread.exceptions.WorksheetNotFound:
-                    return []
-                    
-            registros = await asyncio.to_thread(fetch_bitacora)
-            encontrados = []
-            
-            for r in registros:
-                fecha = str(r.get('Fecha', '')).strip()
-                usuario = str(r.get('Usuario', '')).strip().upper()
-                nota = str(r.get('Nota/Comentario', '')).strip().upper()
-                tipo_archivo = str(r.get('Tipo Archivo', '')).strip().upper()
-                
-                if (query_upper in fecha.upper()) or (query_upper in usuario) or (query_upper in nota) or (query_upper in tipo_archivo):
-                    encontrados.append(r)
-            
-            if encontrados:
-                reporte = f"✅ **REPORTE: {len(encontrados)} Registros Encontrados**\n\n"
-                for r in encontrados:
-                    fecha_val = str(r.get('Fecha', 'S/D'))
-                    usuario_val = str(r.get('Usuario', 'S/D'))
-                    tipo_archivo_val = str(r.get('Tipo Archivo', 'S/D'))
-                    nota_val = str(r.get('Nota/Comentario', '')).strip()
-                    enlace_drive = str(r.get('Enlace Drive', '')).strip()
-                    
-                    reporte += f"📅 **Fecha:** `{fecha_val}`\n"
-                    reporte += f"👤 **Usuario:** `{usuario_val}`\n"
-                    reporte += f"📂 **Tipo:** `{tipo_archivo_val}`\n"
-                    if nota_val:
-                        reporte += f"📝 **Nota:** _{nota_val}_\n"
-                    if enlace_drive:
-                        reporte += f"📎 [Ver Archivo]({enlace_drive})\n"
-                        
-                    reporte += "➖➖➖➖➖➖➖➖➖➖\n"
-                
-                if len(reporte) > 4000:
-                    reporte = reporte[:4000] + "\n\n⚠️ _[Reporte recortado]_"
-                    
-                await msg.edit_text(reporte, parse_mode='Markdown', disable_web_page_preview=True)
-            else:
-                await msg.edit_text("❌ No se encontraron registros con ese término en la Bitácora.")
-        except Exception as e:
-            logger.error(f"Error en búsqueda de bitácora: {e}")
-            await msg.edit_text(f"❌ Error en la búsqueda: {e}")
-            
-    elif modo == MODO_BITACORA_ADD:
-        texto = str(update.message.text).strip()
-        msg = await update.message.reply_text("⏳ Guardando anotación en la Bitácora libre...")
-        
-        try:
-            from datetime import datetime, timezone, timedelta
-            PET = timezone(timedelta(hours=-5))
-            timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M")
-            username = update.effective_user.username or update.effective_user.first_name
-            
-            def save_bitacora():
-                creds = obtener_credenciales()
-                client = gspread.authorize(creds)
-                book2 = client.open_by_key(SHEET_ID)
-                
-                try: 
-                    sheet_bitacora = book2.worksheet("Bitacora")
-                except gspread.exceptions.WorksheetNotFound:
-                    sheet_bitacora = book2.add_worksheet(title="Bitacora", rows="1000", cols="8")
-                    sheet_bitacora.append_row(["Fecha", "Usuario", "Tipo Archivo", "Enlace Drive", "Nota/Comentario"])
+    elif modo == MODO_BITACORA_EDIT_TEXT:
+        cache = user_data_cache.get(user_id, {})
+        draft = cache.get("bitacora_draft")
+        if not draft:
+            user_states[user_id] = None
+            await update.message.reply_text("⚠️ No se encontró un borrador activo. Vuelve a iniciar desde el menú de Bitácora.")
+            return
+        draft["texto"] = text.strip()
+        user_states[user_id] = MODO_BITACORA_ADD
+        card_text, kb_card = build_bitacora_draft_card(draft)
+        await update.message.reply_text(card_text, reply_markup=kb_card, parse_mode='Markdown')
+        return
 
-                row_data = [timestamp, username, "Texto/Anotación", "", texto]
-                row_data = [normalizar_valor_upper(x) for x in row_data]
-                next_row = len(sheet_bitacora.get_all_values()) + 1
-                sheet_bitacora.insert_row(row_data, index=next_row, value_input_option='USER_ENTERED')
-                
-            await asyncio.to_thread(save_bitacora)
-            await msg.edit_text(f"📓✅ Anotación registrada en Bitácora con éxito:\n\n_{texto}_", parse_mode='Markdown')
+    elif modo == MODO_BITACORA_SEARCH:
+        pregunta = text.strip()
+        msg = await update.message.reply_text(f"⏳ Consultando la Bitácora con Lía...")
+        try:
+            respuesta = await buscar_conversacional_bitacora(pregunta, msg_status=msg)
+            kb = [
+                [InlineKeyboardButton("✍️ Nueva Anotación", callback_data='bitacora_add'),
+                 InlineKeyboardButton("📋 Ver Últimas 5", callback_data='bita_ultimas_5')],
+                [InlineKeyboardButton("🔙 Salir de Búsqueda", callback_data='modo_bitacora')]
+            ]
+            await msg.edit_text(respuesta, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown', disable_web_page_preview=True)
         except Exception as e:
-            await msg.edit_text(f"❌ Error al guardar en Bitácora: {e}")
+            logger.error(f"Error en búsqueda conversacional de bitácora: {e}")
+            await msg.edit_text(f"❌ Error al consultar la Bitácora: {e}")
+        return
+
+    elif modo == MODO_BITACORA_ADD:
+        texto_input = text.strip()
+        msg = await update.message.reply_text("🧠 Analizando y clasificando tu anotación con IA...")
+        try:
+            info = await procesar_entrada_ia(texto=texto_input, msg_status=msg)
+            draft = {
+                "texto": info["texto"],
+                "categoria": info["categoria"],
+                "tags": info["tags"],
+                "formato": "Texto/Anotación",
+                "resumen": info.get("resumen", ""),
+                "file_path": None,
+                "mime_type": None
+            }
+            user_data_cache[user_id] = {"bitacora_draft": draft}
+            card_text, kb_card = build_bitacora_draft_card(draft)
+            await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error procesando texto para bitacora: {e}")
+            await msg.edit_text(f"❌ Error al procesar anotación: {e}")
+        return
 
     elif modo == MODO_OBS_ESCRIBIR:
         cache = user_data_cache.get(user_id, {})
@@ -1661,9 +2221,14 @@ async def ejecutar_registro_factura(user_id, file_path, mime_type, context, msg_
         importe_total = datos.get("importe_total", 0.0)
 
         if msg_status:
-            try: await msg_status.edit_text("⏳ Subiendo comprobante a Google Drive (Carpeta Facturas)...")
+            try: await msg_status.edit_text(f"⏳ Verificando carpeta en Drive para '{emisor_nombre}'...")
             except: pass
-        enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=DRIVE_FOLDER_FACTURAS)
+        folder_empresa_id, folder_empresa_nombre = await async_obtener_o_crear_carpeta_empresa(emisor_nombre, emisor_ruc)
+
+        if msg_status:
+            try: await msg_status.edit_text(f"⏳ Subiendo comprobante a Drive (Carpeta '{folder_empresa_nombre}')...")
+            except: pass
+        enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=folder_empresa_id)
         datos["enlace_drive"] = enlace_drive
 
         if msg_status:
@@ -1690,7 +2255,8 @@ async def ejecutar_registro_factura(user_id, file_path, mime_type, context, msg_
             f"🏷 *Precio Unitario:* `{simb} {precio_unitario:,.4f}`\n"
             f"📊 *Valor Total:* `{simb} {valor_total:,.2f}`\n"
             f"🧾 *IGV:* `{simb} {igv:,.2f}`\n"
-            f"💵 *Importe Total:* `{simb} {importe_total:,.2f}`\n\n"
+            f"💵 *Importe Total:* `{simb} {importe_total:,.2f}`\n"
+            f"📂 *Carpeta Drive:* `{folder_empresa_nombre}`\n\n"
             f"📁 [Ver Archivo en Drive]({enlace_drive})\n"
             f"📊 [Abrir Google Sheet]({SHEET_URL_DIRECT})"
         )
@@ -1729,73 +2295,119 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     modo = user_states.get(user_id)
 
+    # Modo Pendientes (Audio, Nota de voz o Imagen)
+    if modo == MODO_PENDIENTE_ADD:
+        msg = await update.message.reply_text("⏳ Descargando audio/archivo para el pendiente...")
+        file_path = f"pnd_{user_id}_{update.message.id}.ogg"
+        try:
+            mime_type = "audio/ogg"
+            if update.message.voice:
+                f = await update.message.voice.get_file()
+                mime_type = "audio/ogg"
+            elif update.message.audio:
+                f = await update.message.audio.get_file()
+                mime_type = update.message.audio.mime_type or "audio/mp3"
+                file_path = file_path.replace('.ogg', '.mp3')
+            elif update.message.photo:
+                f = await update.message.photo[-1].get_file()
+                mime_type = "image/jpeg"
+                file_path = file_path.replace('.ogg', '.jpg')
+            elif update.message.document:
+                f = await update.message.document.get_file()
+                mime_type = update.message.document.mime_type or "application/pdf"
+                file_path = file_path.replace('.ogg', '.pdf')
+            else:
+                await msg.edit_text("⚠️ Tipo de archivo no compatible para registrar pendiente.")
+                return
+
+            await f.download_to_drive(file_path)
+            await msg.edit_text("🎙️🧠 Escuchando audio y extrayendo tarea con IA...")
+            caption = update.message.caption or ""
+            info = await procesar_pendiente_ia(texto=caption, file_path=file_path, mime_type=mime_type)
+
+            try:
+                if os.path.exists(file_path): os.remove(file_path)
+            except: pass
+
+            draft = {
+                "titulo": info.get("titulo", "Nuevo pendiente"),
+                "detalle": info.get("detalle", ""),
+                "cliente_ref": info.get("cliente_ref", ""),
+                "fecha_alerta": info.get("fecha_alerta", ""),
+                "prioridad": info.get("prioridad", "MEDIA")
+            }
+            user_data_cache[user_id] = {"pendiente_draft": draft}
+            user_states[user_id] = None
+            card_text, kb_card = build_pendiente_draft_card(draft)
+            await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error procesando audio pendiente: {e}")
+            await msg.edit_text(f"❌ Error al procesar audio: {e}")
+        return
+
     # 1. Modo Bitácora
     if modo == MODO_BITACORA_ADD:
-        msg = await update.message.reply_text("⏳ Analizando y procesando archivo...")
+        msg = await update.message.reply_text("⏳ Descargando archivo...")
         file_path = f"archivo_{user_id}_{update.message.id}.jpg"
         try:
-            tipo_archivo = "Desconocido"
+            mime_type = "image/jpeg"
+            caption = update.message.caption or ""
+            
             if update.message.photo:
                 f = await update.message.photo[-1].get_file()
                 mime_type = "image/jpeg"
-                tipo_archivo = "Foto"
             elif update.message.document:
                 f = await update.message.document.get_file()
-                mime_type = update.message.document.mime_type
+                mime_type = update.message.document.mime_type or "application/pdf"
                 if 'pdf' in mime_type: file_path = file_path.replace('.jpg', '.pdf')
-                tipo_archivo = "Documento"
             elif update.message.voice:
                 f = await update.message.voice.get_file()
-                mime_type = update.message.voice.mime_type
+                mime_type = "audio/ogg"
                 file_path = file_path.replace('.jpg', '.ogg')
-                tipo_archivo = "Nota de Voz"
             elif update.message.audio:
                 f = await update.message.audio.get_file()
-                mime_type = update.message.audio.mime_type
+                mime_type = update.message.audio.mime_type or "audio/mp3"
                 file_path = file_path.replace('.jpg', '.mp3')
-                tipo_archivo = "Audio"
             elif update.message.video:
                 f = await update.message.video.get_file()
-                mime_type = update.message.video.mime_type
+                mime_type = update.message.video.mime_type or "video/mp4"
                 file_path = file_path.replace('.jpg', '.mp4')
-                tipo_archivo = "Video"
-            else: return
+            else:
+                await msg.edit_text("⚠️ Tipo de archivo no reconocido para la Bitácora.")
+                return
 
             await f.download_to_drive(file_path)
-            enlace_drive = await async_subir_a_drive(file_path, mime_type)
-            comentario = update.message.caption if update.message.caption else ""
+            await msg.edit_text("🎙️🧠 Analizando contenido con IA (transcripción / OCR)...")
             
-            PET = timezone(timedelta(hours=-5))
-            timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M")
-            username = update.effective_user.username or update.effective_user.first_name
+            info = await procesar_entrada_ia(
+                file_path=file_path,
+                mime_type=mime_type,
+                caption=caption,
+                msg_status=msg
+            )
             
-            def save_bitacora_file():
-                creds = obtener_credenciales()
-                client = gspread.authorize(creds)
-                book2 = client.open_by_key(SHEET_ID)
-                try: 
-                    sheet_bitacora = book2.worksheet("Bitacora")
-                except gspread.exceptions.WorksheetNotFound:
-                    sheet_bitacora = book2.add_worksheet(title="Bitacora", rows="1000", cols="8")
-                    sheet_bitacora.append_row(["Fecha", "Usuario", "Tipo Archivo", "Enlace Drive", "Nota/Comentario"])
-
-                row_data = [timestamp, username, tipo_archivo, enlace_drive, comentario]
-                row_data = [normalizar_valor_upper(x) for x in row_data]
-                next_row = len(sheet_bitacora.get_all_values()) + 1
-                sheet_bitacora.insert_row(row_data, index=next_row, value_input_option='USER_ENTERED')
-                
-            await asyncio.to_thread(save_bitacora_file)
-            await msg.delete()
-            await update.message.reply_text(f"📓✅ {tipo_archivo} subido a la Bitácora con éxito.\n📁 [Acceder al Archivo]({enlace_drive})", parse_mode='Markdown', disable_web_page_preview=True)
+            draft = {
+                "texto": info["texto"],
+                "categoria": info["categoria"],
+                "tags": info["tags"],
+                "formato": info["formato"],
+                "resumen": info.get("resumen", ""),
+                "file_path": file_path,
+                "mime_type": mime_type,
+                "caption": caption
+            }
+            user_data_cache[user_id] = {"bitacora_draft": draft}
+            
+            card_text, kb_card = build_bitacora_draft_card(draft)
+            await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='Markdown')
             return
         except Exception as e:
-            logger.error(f"Error en bitácora: {e}")
-            await msg.edit_text(f"❌ Error al procesar archivo en Bitácora: {e}")
-        finally:
+            logger.error(f"Error procesando archivo en bitácora: {e}")
             if os.path.exists(file_path):
                 try: os.remove(file_path)
                 except: pass
-        return
+            await msg.edit_text(f"❌ Error al procesar el archivo en Bitácora: {e}")
+            return
 
     # 2. Detección de Archivo (XML, PDF, Imagen)
     is_xml = False

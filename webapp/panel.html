@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Panel de Gestión - EPMI SAC</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --primary: #198754;
+      --primary-dark: #146c43;
+      --primary-light: #e8f5e9;
+      --bg: #f4f6f8;
+      --card-bg: #ffffff;
+      --text: #212529;
+      --text-muted: #6c757d;
+      --border: #e2e8f0;
+      --danger: #dc3545;
+      --warning: #f59e0b;
+      --info: #0d6efd;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      padding-bottom: 70px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: white;
+      border-radius: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+      border: 1px solid var(--border);
+    }
+
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header-logo {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #198754, #146c43);
+      color: white;
+      font-weight: 800;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header-info h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .header-info p {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* Tabs Bar */
+    .tab-bar {
+      display: flex;
+      background: #e9ecef;
+      border-radius: 12px;
+      padding: 4px;
+      margin-bottom: 14px;
+      gap: 4px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 9px 8px;
+      border: none;
+      background: transparent;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      border-radius: 9px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn.active {
+      background: white;
+      color: var(--primary-dark);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+    }
+
+    /* Search & Filter Bar */
+    .controls-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+
+    .search-box {
+      flex: 1;
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 9px 12px 9px 34px;
+      font-size: 13px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: white;
+      outline: none;
+    }
+
+    .search-box input:focus {
+      border-color: var(--primary);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .btn-action-primary {
+      padding: 9px 14px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .filter-pills {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .pill {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      background: white;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+
+    .pill.active {
+      background: var(--primary-light);
+      border-color: var(--primary);
+      color: var(--primary-dark);
+    }
+
+    /* Cards */
+    .card-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 14px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      border: 1px solid var(--border);
+      transition: transform 0.15s, box-shadow 0.15s;
+      position: relative;
+    }
+
+    .card.completado {
+      opacity: 0.65;
+      background: #f8fafc;
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #1e293b;
+      line-height: 1.3;
+    }
+
+    .card.completado .card-title {
+      text-decoration: line-through;
+    }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .badge-alta { background: #fee2e2; color: #dc2626; }
+    .badge-media { background: #fef3c7; color: #d97706; }
+    .badge-baja { background: #dcfce7; color: #15803d; }
+    .badge-tag { background: #e0f2fe; color: #0369a1; }
+    .badge-done { background: #e2e8f0; color: #475569; }
+
+    .card-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .card-meta-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--border);
+      flex-wrap: wrap;
+    }
+
+    .btn-sm {
+      padding: 6px 10px;
+      border-radius: 7px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      background: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s;
+    }
+
+    .btn-sm:active {
+      transform: scale(0.97);
+    }
+
+    .btn-sm-primary {
+      background: var(--primary-light);
+      border-color: var(--primary);
+      color: var(--primary-dark);
+    }
+
+    .btn-sm-danger {
+      color: var(--danger);
+      border-color: #fecaca;
+      background: #fef2f2;
+    }
+
+    /* Credenciales specific fields */
+    .field-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .field-info {
+      font-size: 12px;
+      font-family: monospace;
+      color: #334155;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .field-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .copy-btn {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--primary-dark);
+      cursor: pointer;
+      margin-left: 6px;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .eye-btn {
+      background: transparent;
+      border: none;
+      font-size: 13px;
+      cursor: pointer;
+      padding: 2px 5px;
+      color: var(--text-muted);
+    }
+
+    /* Modal Form */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      display: none;
+      align-items: flex-end;
+      z-index: 200;
+      backdrop-filter: blur(2px);
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-content {
+      background: white;
+      width: 100%;
+      border-radius: 20px 20px 0 0;
+      padding: 18px 16px;
+      max-height: 88vh;
+      overflow-y: auto;
+      box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+      animation: slideUp 0.25s ease-out;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .btn-close {
+      background: #f1f5f9;
+      border: none;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      font-size: 16px;
+      cursor: pointer;
+      color: var(--text-muted);
+    }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      outline: none;
+      background: #fafafa;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      background: white;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 13px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #1e293b;
+      color: white;
+      padding: 10px 18px;
+      border-radius: 30px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      transition: transform 0.25s ease;
+      z-index: 300;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-muted);
+    }
+
+    .empty-state-icon {
+      font-size: 38px;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-brand">
+      <div class="header-logo">E</div>
+      <div class="header-info">
+        <h1>EPMI S.A.C.</h1>
+        <p>Panel de Pendientes & Credenciales</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab Bar -->
+  <div class="tab-bar">
+    <button class="tab-btn active" id="tabBtnPendientes" onclick="switchTab('pendientes')">
+      📌 Pendientes <span id="countPendientes" style="font-size:11px; background:var(--primary); color:white; padding:1px 6px; border-radius:10px;">0</span>
+    </button>
+    <button class="tab-btn" id="tabBtnCredenciales" onclick="switchTab('credenciales')">
+      🔐 Credenciales <span id="countCredenciales" style="font-size:11px; background:#64748b; color:white; padding:1px 6px; border-radius:10px;">0</span>
+    </button>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- SECCIÓN PENDIENTES                         -->
+  <!-- ========================================== -->
+  <div id="viewPendientes">
+    <div class="controls-row">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchPendientes" placeholder="Buscar pendiente o cliente..." oninput="filtrarPendientes()">
+      </div>
+      <button class="btn-action-primary" onclick="abrirModalPendiente()">
+        ➕ Nuevo
+      </button>
+    </div>
+
+    <div class="filter-pills">
+      <div class="pill active" onclick="setFiltroPendientes('todos', this)">Todos</div>
+      <div class="pill" onclick="setFiltroPendientes('hoy', this)">🔴 Para Hoy</div>
+      <div class="pill" onclick="setFiltroPendientes('alta', this)">⚠️ Alta Prioridad</div>
+      <div class="pill" onclick="setFiltroPendientes('completados', this)">✅ Completados</div>
+    </div>
+
+    <div id="listaPendientes" class="card-list">
+      <div class="empty-state">
+        <div class="empty-state-icon">⏳</div>
+        <p>Cargando pendientes...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- SECCIÓN CREDENCIALES                       -->
+  <!-- ========================================== -->
+  <div id="viewCredenciales" style="display: none;">
+    <div class="controls-row">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchCredenciales" placeholder="Buscar servicio, usuario, portal..." oninput="filtrarCredenciales()">
+      </div>
+      <button class="btn-action-primary" onclick="abrirModalCredencial()">
+        ➕ Nueva
+      </button>
+    </div>
+
+    <div class="filter-pills" id="pillsCategoriasCred">
+      <div class="pill active" onclick="setFiltroCredenciales('todas', this)">Todas</div>
+      <div class="pill" onclick="setFiltroCredenciales('Tributario / SUNAT', this)">🏛️ SUNAT</div>
+      <div class="pill" onclick="setFiltroCredenciales('Balanza / Planta', this)">⚖️ Balanzas</div>
+      <div class="pill" onclick="setFiltroCredenciales('Clientes / Portales', this)">👥 Clientes</div>
+    </div>
+
+    <div id="listaCredenciales" class="card-list">
+      <div class="empty-state">
+        <div class="empty-state-icon">⏳</div>
+        <p>Cargando credenciales...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: NUEVO PENDIENTE                     -->
+  <!-- ========================================== -->
+  <div class="modal-overlay" id="modalPendiente">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">📌 Registrar Nuevo Pendiente</h3>
+        <button class="btn-close" onclick="cerrarModal('modalPendiente')">✕</button>
+      </div>
+      <form id="formPendiente" onsubmit="guardarPendiente(event)">
+        <div class="form-group">
+          <label>Título de la Tarea / Asunto *</label>
+          <input type="text" id="pnd_titulo" placeholder="Ej: Pedir peso a Prosembra" required>
+        </div>
+        <div class="form-group">
+          <label>Detalle / Notas Adicionales</label>
+          <textarea id="pnd_detalle" rows="2" placeholder="Ej: Guía T001-456, llamar antes de mediodía"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Cliente / Referencia</label>
+          <input type="text" id="pnd_cliente" placeholder="Ej: PROSEMBRA">
+        </div>
+        <div class="form-group">
+          <label>Fecha y Hora de la Alerta *</label>
+          <input type="datetime-local" id="pnd_fecha_alerta" required>
+        </div>
+        <div class="form-group">
+          <label>Nivel de Prioridad</label>
+          <select id="pnd_prioridad">
+            <option value="ALTA">🔴 ALTA - Urgente</option>
+            <option value="MEDIA" selected>🟡 MEDIA - Normal</option>
+            <option value="BAJA">🟢 BAJA - Opcional</option>
+          </select>
+        </div>
+        <button type="submit" class="btn-submit" id="btnGuardarPnd">💾 Guardar Pendiente</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: NUEVA CREDENCIAL                    -->
+  <!-- ========================================== -->
+  <div class="modal-overlay" id="modalCredencial">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">🔐 Registrar Credencial</h3>
+        <button class="btn-close" onclick="cerrarModal('modalCredencial')">✕</button>
+      </div>
+      <form id="formCredencial" onsubmit="guardarCredencial(event)">
+        <div class="form-group">
+          <label>Servicio o Plataforma *</label>
+          <input type="text" id="crd_servicio" placeholder="Ej: SUNAT Operaciones en Línea" required>
+        </div>
+        <div class="form-group">
+          <label>Categoría</label>
+          <select id="crd_categoria">
+            <option value="Tributario / SUNAT">🏛️ Tributario / SUNAT</option>
+            <option value="Balanza / Planta">⚖️ Balanza / Planta</option>
+            <option value="Clientes / Portales">👥 Clientes / Portales</option>
+            <option value="Transporte / Logística">🚚 Transporte / Logística</option>
+            <option value="Bancos / Finanzas">💰 Bancos / Finanzas</option>
+            <option value="General" selected>📝 General / Otros</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>URL de Acceso / Portal</label>
+          <input type="url" id="crd_url" placeholder="https://portal.sunat.gob.pe">
+        </div>
+        <div class="form-group">
+          <label>Usuario / RUC / Correo *</label>
+          <input type="text" id="crd_usuario" placeholder="Ej: 20601234567OPERADOR" required>
+        </div>
+        <div class="form-group">
+          <label>Contraseña *</label>
+          <input type="text" id="crd_clave" placeholder="Contraseña de acceso" required>
+        </div>
+        <div class="form-group">
+          <label>PIN / Token / Pregunta Secreta</label>
+          <input type="text" id="crd_pin" placeholder="Opcional: PIN o clave secundaria">
+        </div>
+        <div class="form-group">
+          <label>Titular o Responsable</label>
+          <input type="text" id="crd_titular" placeholder="Ej: EPMI S.A.C.">
+        </div>
+        <div class="form-group">
+          <label>Observaciones / Instrucciones</label>
+          <textarea id="crd_obs" rows="2" placeholder="Notas sobre expiración, uso o cambio de clave"></textarea>
+        </div>
+        <button type="submit" class="btn-submit" id="btnGuardarCrd">💾 Guardar Credencial</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast">✅ Acción realizada</div>
+
+  <script>
+    // Inicializar Telegram WebApp
+    if (window.Telegram && window.Telegram.WebApp) {
+      window.Telegram.WebApp.expand();
+      window.Telegram.WebApp.ready();
+    }
+
+    let _pendientes = [];
+    let _credenciales = [];
+    let _filtroPnd = 'todos';
+    let _filtroCrd = 'todas';
+
+    // Tabs
+    function switchTab(tab) {
+      const isPnd = tab === 'pendientes';
+      document.getElementById('viewPendientes').style.display = isPnd ? 'block' : 'none';
+      document.getElementById('viewCredenciales').style.display = isPnd ? 'none' : 'block';
+      document.getElementById('tabBtnPendientes').classList.toggle('active', isPnd);
+      document.getElementById('tabBtnCredenciales').classList.toggle('active', !isPnd);
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    function copyToClipboard(texto, label) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(texto).then(() => {
+          showToast(`📋 ${label} copiado`);
+        });
+      } else {
+        const input = document.createElement('input');
+        input.value = texto;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        showToast(`📋 ${label} copiado`);
+      }
+    }
+
+    function toggleMask(btn, id) {
+      const span = document.getElementById(id);
+      const isMasked = span.getAttribute('data-masked') === 'true';
+      if (isMasked) {
+        span.innerText = span.getAttribute('data-real');
+        span.setAttribute('data-masked', 'false');
+        btn.innerText = '🙈';
+      } else {
+        span.innerText = '••••••••••••';
+        span.setAttribute('data-masked', 'true');
+        btn.innerText = '👁️';
+      }
+    }
+
+    // ==========================================
+    // CARGA DE DATOS API
+    // ==========================================
+    async function cargarDatos() {
+      try {
+        const [resPnd, resCrd] = await Promise.all([
+          fetch('/api/pendientes').then(r => r.json()).catch(() => []),
+          fetch('/api/credenciales').then(r => r.json()).catch(() => [])
+        ]);
+        _pendientes = Array.isArray(resPnd) ? resPnd : [];
+        _credenciales = Array.isArray(resCrd) ? resCrd : [];
+        
+        document.getElementById('countPendientes').innerText = _pendientes.filter(p => p.ESTADO === 'PENDIENTE').length;
+        document.getElementById('countCredenciales').innerText = _credenciales.length;
+
+        renderPendientes();
+        renderCredenciales();
+      } catch (e) {
+        console.error("Error cargando datos:", e);
+      }
+    }
+
+    // ==========================================
+    // RENDER PENDIENTES
+    // ==========================================
+    function setFiltroPendientes(tipo, el) {
+      _filtroPnd = tipo;
+      document.querySelectorAll('#viewPendientes .pill').forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
+      renderPendientes();
+    }
+
+    function filtrarPendientes() {
+      renderPendientes();
+    }
+
+    function renderPendientes() {
+      const q = document.getElementById('searchPendientes').value.trim().toLowerCase();
+      const container = document.getElementById('listaPendientes');
+      
+      let items = _pendientes.filter(item => {
+        const matchQ = !q || (item.TITULO_TAREA + " " + item.DETALLE + " " + item.CLIENTE_REF).toLowerCase().includes(q);
+        if (!matchQ) return false;
+
+        if (_filtroPnd === 'hoy') {
+          return item.ESTADO === 'PENDIENTE';
+        } else if (_filtroPnd === 'alta') {
+          return item.PRIORIDAD === 'ALTA' && item.ESTADO === 'PENDIENTE';
+        } else if (_filtroPnd === 'completados') {
+          return item.ESTADO === 'COMPLETADO';
+        }
+        return item.ESTADO !== 'COMPLETADO'; // 'todos' muestra pendientes por defecto
+      });
+
+      if (items.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">🎉</div>
+            <p>No hay tareas en esta vista</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = items.map(p => {
+        const isDone = p.ESTADO === 'COMPLETADO';
+        const badgePrioridad = p.PRIORIDAD === 'ALTA' ? 'badge-alta' : (p.PRIORIDAD === 'BAJA' ? 'badge-baja' : 'badge-media');
+        return `
+          <div class="card ${isDone ? 'completado' : ''}">
+            <div class="card-top">
+              <div class="card-title">${p.TITULO_TAREA}</div>
+              <span class="badge ${isDone ? 'badge-done' : badgePrioridad}">
+                ${isDone ? 'COMPLETADO' : p.PRIORIDAD}
+              </span>
+            </div>
+            
+            <div class="card-meta">
+              ${p.CLIENTE_REF ? `<div class="card-meta-row">🏢 <b>${p.CLIENTE_REF}</b></div>` : ''}
+              <div class="card-meta-row">⏰ Alerta: ${p.FECHA_ALERTA || 'Sin hora'}</div>
+              ${p.DETALLE ? `<div style="font-size:12px; color:#475569; margin-top:2px;">${p.DETALLE}</div>` : ''}
+            </div>
+
+            ${!isDone ? `
+              <div class="card-actions">
+                <button class="btn-sm btn-sm-primary" onclick="accionPendiente('${p.ID}', 'completar')">
+                  ✓ Marcar Listo
+                </button>
+                <button class="btn-sm" onclick="accionPendiente('${p.ID}', 'posponer', 60)">
+                  ⏰ +1 hora
+                </button>
+                <button class="btn-sm" onclick="accionPendiente('${p.ID}', 'posponer', 1440)">
+                  📅 Mañana
+                </button>
+              </div>
+            ` : `
+              <div style="font-size:11px; color:#15803d; margin-top:6px;">
+                ✅ Resuelto el ${p.FECHA_CIERRE || ''}
+              </div>
+            `}
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function accionPendiente(id, accion, minutos = 0) {
+      try {
+        const payload = { id, accion, minutos };
+        const res = await fetch('/api/pendientes/accion', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        }).then(r => r.json());
+
+        if (res.success) {
+          showToast(accion === 'completar' ? '✅ ¡Pendiente completado!' : '⏰ Alerta reprogramada');
+          await cargarDatos();
+        }
+      } catch (e) {
+        showToast('❌ Error al actualizar');
+      }
+    }
+
+    // ==========================================
+    // RENDER CREDENCIALES
+    // ==========================================
+    function setFiltroCredenciales(cat, el) {
+      _filtroCrd = cat;
+      document.querySelectorAll('#pillsCategoriasCred .pill').forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
+      renderCredenciales();
+    }
+
+    function filtrarCredenciales() {
+      renderCredenciales();
+    }
+
+    function renderCredenciales() {
+      const q = document.getElementById('searchCredenciales').value.trim().toLowerCase();
+      const container = document.getElementById('listaCredenciales');
+
+      let items = _credenciales.filter(c => {
+        const matchQ = !q || (c.SERVICIO + " " + c.USUARIO_RUC + " " + c.CATEGORIA + " " + (c.OBSERVACIONES||'')).toLowerCase().includes(q);
+        if (!matchQ) return false;
+        if (_filtroCrd !== 'todas' && c.CATEGORIA !== _filtroCrd) return false;
+        return true;
+      });
+
+      if (items.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">🔍</div>
+            <p>No se encontraron credenciales</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = items.map((c, i) => {
+        const pwdId = `pwd_${i}`;
+        return `
+          <div class="card">
+            <div class="card-top">
+              <div class="card-title">🔐 ${c.SERVICIO}</div>
+              <span class="badge badge-tag">${c.CATEGORIA || 'General'}</span>
+            </div>
+
+            ${c.URL_LOGIN ? `
+              <div style="margin-bottom:8px;">
+                <a href="${c.URL_LOGIN}" target="_blank" style="font-size:12px; color:var(--info); text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+                  ↗️ Abrir portal web
+                </a>
+              </div>
+            ` : ''}
+
+            <!-- Usuario -->
+            <div class="field-label">Usuario / RUC</div>
+            <div class="field-box">
+              <span class="field-info">${c.USUARIO_RUC}</span>
+              <button class="copy-btn" onclick="copyToClipboard('${c.USUARIO_RUC}', 'Usuario')">
+                📋 Copiar
+              </button>
+            </div>
+
+            <!-- Contraseña -->
+            <div class="field-label" style="margin-top:6px;">Contraseña</div>
+            <div class="field-box">
+              <span class="field-info" id="${pwdId}" data-masked="true" data-real="${c.CONTRASEÑA}">••••••••••••</span>
+              <div style="display:flex; align-items:center;">
+                <button class="eye-btn" onclick="toggleMask(this, '${pwdId}')">👁️</button>
+                <button class="copy-btn" onclick="copyToClipboard('${c.CONTRASEÑA}', 'Contraseña')">
+                  📋 Copiar
+                </button>
+              </div>
+            </div>
+
+            ${c.PIN_EXTRA ? `
+              <div class="field-label" style="margin-top:6px;">PIN / Clave Extra</div>
+              <div class="field-box">
+                <span class="field-info">${c.PIN_EXTRA}</span>
+                <button class="copy-btn" onclick="copyToClipboard('${c.PIN_EXTRA}', 'PIN')">📋</button>
+              </div>
+            ` : ''}
+
+            ${c.OBSERVACIONES ? `
+              <div style="font-size:11px; color:#64748b; margin-top:8px; font-style:italic;">
+                💡 ${c.OBSERVACIONES}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    // ==========================================
+    // MODALES & SUBMITS
+    // ==========================================
+    function abrirModalPendiente() {
+      // Default: hoy + 2 horas
+      const now = new Date();
+      now.setHours(now.getHours() + 2);
+      const pad = n => String(n).padStart(2, '0');
+      const val = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      document.getElementById('pnd_fecha_alerta').value = val;
+      document.getElementById('modalPendiente').classList.add('open');
+    }
+
+    function abrirModalCredencial() {
+      document.getElementById('modalCredencial').classList.add('open');
+    }
+
+    function cerrarModal(id) {
+      document.getElementById(id).classList.remove('open');
+    }
+
+    async function guardarPendiente(e) {
+      e.preventDefault();
+      const btn = document.getElementById('btnGuardarPnd');
+      btn.disabled = true;
+      btn.innerText = "Guardando...";
+
+      // Formatear fecha a DD/MM/YYYY HH:MM
+      const rawDate = document.getElementById('pnd_fecha_alerta').value;
+      let fechaFormatted = "";
+      if (rawDate) {
+        const d = new Date(rawDate);
+        const pad = n => String(n).padStart(2, '0');
+        fechaFormatted = `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+
+      const payload = {
+        titulo: document.getElementById('pnd_titulo').value,
+        detalle: document.getElementById('pnd_detalle').value,
+        cliente_ref: document.getElementById('pnd_cliente').value,
+        fecha_alerta: fechaFormatted,
+        prioridad: document.getElementById('pnd_prioridad').value
+      };
+
+      try {
+        const res = await fetch('/api/pendientes', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        }).then(r => r.json());
+
+        if (res.success) {
+          showToast('✅ Pendiente registrado en Sheets');
+          cerrarModal('modalPendiente');
+          document.getElementById('formPendiente').reset();
+          await cargarDatos();
+        }
+      } catch (err) {
+        showToast('❌ Error al guardar');
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "💾 Guardar Pendiente";
+      }
+    }
+
+    async function guardarCredencial(e) {
+      e.preventDefault();
+      const btn = document.getElementById('btnGuardarCrd');
+      btn.disabled = true;
+      btn.innerText = "Guardando...";
+
+      const payload = {
+        servicio: document.getElementById('crd_servicio').value,
+        categoria: document.getElementById('crd_categoria').value,
+        url_login: document.getElementById('crd_url').value,
+        usuario_ruc: document.getElementById('crd_usuario').value,
+        contraseña: document.getElementById('crd_clave').value,
+        pin_extra: document.getElementById('crd_pin').value,
+        titular: document.getElementById('crd_titular').value,
+        observaciones: document.getElementById('crd_obs').value
+      };
+
+      try {
+        const res = await fetch('/api/credenciales', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        }).then(r => r.json());
+
+        if (res.success) {
+          showToast('✅ Credencial guardada en Sheets');
+          cerrarModal('modalCredencial');
+          document.getElementById('formCredencial').reset();
+          await cargarDatos();
+        }
+      } catch (err) {
+        showToast('❌ Error al guardar');
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "💾 Guardar Credencial";
+      }
+    }
+
+    // Iniciar carga al abrir
+    document.addEventListener('DOMContentLoaded', cargarDatos);
+  </script>
+</body>
+</html>

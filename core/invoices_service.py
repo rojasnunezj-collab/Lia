@@ -5,6 +5,7 @@ import os
 import re
 import json
 import asyncio
+import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 import gspread
@@ -15,7 +16,7 @@ except ImportError:
 from google.genai import types
 
 from config.settings import logger, SHEET_ID, DRIVE_FOLDER_FACTURAS
-from core.sheets_client import obtener_credenciales, normalizar_valor_upper
+from core.sheets_client import obtener_credenciales, normalizar_valor_upper, obtener_drive_service
 from core.ai_client import generar_con_reintento
 from utils.helpers import clean_json_response, normalize_search_text
 
@@ -420,6 +421,142 @@ def detectar_tipo_documento_pdf(file_path):
 
 async def async_detectar_tipo_documento_pdf(file_path):
     return await asyncio.to_thread(detectar_tipo_documento_pdf, file_path)
+
+# ====================================================================
+# --- GESTIÓN DE CARPETAS DE EMPRESAS EN GOOGLE DRIVE ---
+# ====================================================================
+STOP_WORDS_EMPRESAS = {
+    "s.a.", "s.a.c.", "s.a.a.", "s.r.l.", "e.i.r.l.", "s.c.r.l.",
+    "sa", "sac", "saa", "srl", "eirl", "scrl",
+    "de", "del", "la", "las", "el", "los", "y", "e", "en", "para", "por",
+    "servicios", "servicio", "inversiones", "inversion", "comercializadora",
+    "distribuidora", "corporacion", "empresa", "grupo", "general", "generales",
+    "cia", "cia.", "compania", "compañia"
+}
+
+def _normalizar_texto_empresa(texto):
+    if not texto:
+        return ""
+    t = unicodedata.normalize('NFKD', str(texto)).encode('ASCII', 'ignore').decode('utf-8')
+    t = t.lower()
+    t = re.sub(r'[^a-z0-9\s]', ' ', t)
+    return re.sub(r'\s+', ' ', t).strip()
+
+def _extraer_palabras_clave_empresa(texto):
+    norm = _normalizar_texto_empresa(texto)
+    palabras = [w for w in norm.split() if w and w not in STOP_WORDS_EMPRESAS and len(w) > 1]
+    return set(palabras), norm
+
+def limpiar_nombre_nueva_carpeta(emisor_nombre):
+    """Genera un nombre limpio y legible para una nueva carpeta de empresa."""
+    if not emisor_nombre or str(emisor_nombre).strip().upper() in ["EMISOR DESCONOCIDO", "S/N", ""]:
+        return "Otras Empresas"
+    nombre = str(emisor_nombre).strip()
+    patron = r'\s+(S\.?A\.?C\.?|S\.?A\.?A\.?|S\.?A\.?|S\.?R\.?L\.?|E\.?I\.?R\.?L\.?|S\.?C\.?R\.?L\.?)\.?$'
+    nombre_limpio = re.sub(patron, '', nombre, flags=re.IGNORECASE).strip()
+    if not nombre_limpio:
+        nombre_limpio = nombre
+    return nombre_limpio.title()
+
+def coincide_empresa_carpeta(folder_name, emisor_nombre, emisor_ruc=""):
+    """
+    Determina si el nombre de una carpeta en Drive corresponde a la empresa emisora.
+    Evalúa RUC, igualdad normalizada, inclusión y palabras clave distintivas.
+    """
+    f_words, f_norm = _extraer_palabras_clave_empresa(folder_name)
+    e_words, e_norm = _extraer_palabras_clave_empresa(emisor_nombre)
+
+    # 1. Coincidencia por RUC
+    if emisor_ruc and len(str(emisor_ruc).strip()) == 11 and str(emisor_ruc).strip() in folder_name:
+        return True, 100
+
+    # 2. Coincidencia exacta de texto normalizado
+    if f_norm and e_norm and f_norm == e_norm:
+        return True, 90
+
+    # 3. Substring directo (ej: 'exalmar' en 'pesquera exalmar')
+    if f_norm and e_norm:
+        if f_norm in e_norm:
+            return True, 80
+        if e_norm in f_norm:
+            return True, 75
+
+    # 4. Coincidencia por palabras clave distintivas
+    if f_words and e_words:
+        if f_words.issubset(e_words):
+            return True, 70
+        if e_words.issubset(f_words):
+            return True, 65
+        inter = f_words.intersection(e_words)
+        if inter and len(inter) >= max(1, min(len(f_words), len(e_words))):
+            return True, 60
+
+    return False, 0
+
+def obtener_o_crear_carpeta_empresa(emisor_nombre, emisor_ruc=""):
+    """
+    Busca si ya existe una subcarpeta para la empresa en DRIVE_FOLDER_FACTURAS.
+    Si ya existe (ej: 'Exalmar' para 'PESQUERA EXALMAR S.A.A.'), retorna (folder_id, folder_name).
+    Si no existe, crea una nueva carpeta dentro de DRIVE_FOLDER_FACTURAS y retorna (folder_id, folder_name).
+    Fallback: Si ocurre cualquier error, retorna (DRIVE_FOLDER_FACTURAS, 'Facturas').
+    """
+    if not DRIVE_FOLDER_FACTURAS:
+        return None, "Facturas"
+
+    try:
+        drive = obtener_drive_service()
+        if not drive:
+            return DRIVE_FOLDER_FACTURAS, "Facturas"
+
+        # Listar subcarpetas existentes
+        query = f"'{DRIVE_FOLDER_FACTURAS}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        res = drive.files().list(
+            q=query,
+            fields='files(id, name)',
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
+        subcarpetas = res.get('files', [])
+
+        mejor_carpeta = None
+        mejor_score = 0
+
+        for c in subcarpetas:
+            c_name = c.get('name', '')
+            match, score = coincide_empresa_carpeta(c_name, emisor_nombre, emisor_ruc)
+            if match and score > mejor_score:
+                mejor_score = score
+                mejor_carpeta = c
+
+        if mejor_carpeta:
+            logger.info(f"📂 Carpeta de empresa encontrada en Drive: '{mejor_carpeta['name']}' (ID: {mejor_carpeta['id']}) para '{emisor_nombre}'.")
+            return mejor_carpeta['id'], mejor_carpeta['name']
+
+        # No existe -> Crear nueva carpeta para la empresa
+        nuevo_nombre = limpiar_nombre_nueva_carpeta(emisor_nombre)
+        logger.info(f"📁 Creando nueva carpeta en Drive: '{nuevo_nombre}' para emisor '{emisor_nombre}'...")
+
+        folder_metadata = {
+            'name': nuevo_nombre,
+            'mimeType': 'application/vnd.google-apps.folder',
+            'parents': [DRIVE_FOLDER_FACTURAS]
+        }
+        nueva = drive.files().create(
+            body=folder_metadata,
+            fields='id, name',
+            supportsAllDrives=True
+        ).execute(num_retries=3)
+
+        new_id = nueva.get('id')
+        logger.info(f"✅ Carpeta creada en Drive: '{nuevo_nombre}' (ID: {new_id}).")
+        return new_id, nuevo_nombre
+
+    except Exception as e:
+        logger.error(f"❌ Error al obtener o crear carpeta de empresa en Drive: {e}")
+        return DRIVE_FOLDER_FACTURAS, "Facturas"
+
+async def async_obtener_o_crear_carpeta_empresa(emisor_nombre, emisor_ruc=""):
+    return await asyncio.to_thread(obtener_o_crear_carpeta_empresa, emisor_nombre, emisor_ruc)
 
 # ====================================================================
 # --- GOOGLE SHEETS: PESTAÑA REGISTRO_FACTURAS ---

@@ -70,19 +70,25 @@ async def generar_con_reintento(partes, prompt, msg, is_json=False):
                     idx = model_list.index(current_model)
                     if idx + 1 < len(model_list):
                         current_model = model_list[idx + 1]
-                        await msg.edit_text(f"⚠️ Modelo restringido. Cambiando a `{current_model}`...")
+                        if msg:
+                            try: await msg.edit_text(f"⚠️ Modelo restringido. Cambiando a `{current_model}`...")
+                            except: pass
                         continue
                         
             if "429" in str(e) or "quota" in str(e).lower():
                 wait = 12 * (attempt + 1)
-                await msg.edit_text(f"⏳ Saturación API o Límite de Cuota. Reintento en {wait}s...")
+                if msg:
+                    try: await msg.edit_text(f"⏳ Saturación API o Límite de Cuota. Reintento en {wait}s...")
+                    except: pass
                 await asyncio.sleep(wait)
             else:
                 raise e
         except APIError as e:
             if "429" in str(e) or "Quota" in str(e):
                 wait = 12 * (attempt + 1)
-                await msg.edit_text(f"⏳ Saturación API. Reintento en {wait}s...")
+                if msg:
+                    try: await msg.edit_text(f"⏳ Saturación API. Reintento en {wait}s...")
+                    except: pass
                 await asyncio.sleep(wait)
             else:
                 raise e

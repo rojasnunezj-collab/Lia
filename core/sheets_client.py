@@ -138,6 +138,12 @@ def conectar_servicios():
 # ====================================================================
 # --- GOOGLE DRIVE FUNCIONES ---
 # ====================================================================
+def obtener_drive_service():
+    global drive_service
+    if not drive_service:
+        conectar_servicios()
+    return drive_service
+
 def subir_a_drive(file_path, mime_type, folder_id=None):
     for attempt in range(3):
         try:
@@ -165,8 +171,15 @@ def buscar_link_en_drive(nombre_archivo):
         if not drive_service: return None
         
         nombre_limpio = str(nombre_archivo).strip()
-        query = f"name='{nombre_limpio}'"
-        results = drive_service.files().list(q=query, fields="files(id, webViewLink)").execute()
+        if not nombre_limpio or nombre_limpio.upper() in ["S/D", "NONE", "-", ""]:
+            return None
+        query = f"name='{nombre_limpio}' and trashed=false"
+        results = drive_service.files().list(
+            q=query,
+            fields="files(id, webViewLink)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True
+        ).execute()
         items = results.get('files', [])
         
         if items:
