@@ -389,16 +389,29 @@ async def job_verificar_alertas_pendientes(context: ContextTypes.DEFAULT_TYPE):
 # --- HANDLERS BÁSICOS Y TECLADO PRINCIPAL ---
 # ====================================================================
 def get_main_menu_keyboard(user_id=None):
-    """Construye el teclado del menú principal con accesos a todos los módulos y webapps."""
-    url_panel = obtener_url_panel(tab='pendientes', user_id=user_id)
+    """Construye el teclado del menú principal organizado jerárquicamente (Opción 1)."""
     keyboard = [
-        [InlineKeyboardButton("📘 Guías", callback_data='menu_guias'), InlineKeyboardButton("🧾 Facturas", callback_data='menu_facturas')],
+        [InlineKeyboardButton("📑 Gestión de Documentos", callback_data='menu_documentos')],
+        [InlineKeyboardButton("🔍 Centro de Búsqueda", callback_data='menu_busqueda')],
+        [
+            InlineKeyboardButton("📌 Pendientes & Alertas", callback_data='menu_pendientes'),
+            InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')
+        ],
+        [
+            InlineKeyboardButton("🔐 Credenciales", callback_data='menu_credenciales'),
+            InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_documentos_menu_keyboard():
+    """Construye el teclado del submenú de Documentos."""
+    keyboard = [
+        [InlineKeyboardButton("📘 Guías de Remisión", callback_data='menu_guias')],
+        [InlineKeyboardButton("🧾 Facturas SUNAT", callback_data='menu_facturas')],
         [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
-        [InlineKeyboardButton("📌 Pendientes & Alertas", callback_data='menu_pendientes'), InlineKeyboardButton("🔐 Credenciales", callback_data='menu_credenciales')],
-        [InlineKeyboardButton("🔍 Búsqueda", callback_data='menu_busqueda'), InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
-        [InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')],
-        [InlineKeyboardButton("📱 Abrir Panel WebApp", web_app=WebAppInfo(url=url_panel))],
-        [InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+        [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
+        [InlineKeyboardButton("🔙 Volver al Menú Principal", callback_data='volver_inicio')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -505,14 +518,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == 'volver_inicio':
         user_states[user_id] = None
-        await safe_edit_or_reply(query, "👋 Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
+        await safe_edit_or_reply(query, "👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
+
+    elif query.data == 'menu_documentos':
+        user_states[user_id] = None
+        texto = (
+            "📑 *Gestión de Documentos*\n\n"
+            "Selecciona el tipo de documento que deseas gestionar:\n\n"
+            "• 📘 *Guías:* Lectura inteligente, registro en Sheets y carga manual.\n"
+            "• 🧾 *Facturas:* Carga XML/PDF y búsqueda rápida.\n"
+            "• 📋 *Cotizaciones:* Emisión y búsqueda de cotizaciones.\n"
+            "• 📜 *Certificados:* Búsqueda por fecha, fundo, empresa o correlativo."
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=get_documentos_menu_keyboard())
 
     elif query.data == 'menu_facturas':
         user_states[user_id] = None
         keyboard = [
             [InlineKeyboardButton("📥 Registrar Factura (PDF / XML)", callback_data='modo_facturas_registrar')],
             [InlineKeyboardButton("🔍 Buscar Factura", callback_data='modo_facturas_buscar')],
-            [InlineKeyboardButton("🔙 Volver al Inicio", callback_data='volver_inicio')]
+            [InlineKeyboardButton("🔙 Volver a Documentos", callback_data='menu_documentos')]
         ]
         texto = (
             "🧾 *Módulo de Facturas*\n\n"
@@ -549,7 +574,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("➕ Nueva Cotización", web_app=WebAppInfo(url=url_app))],
             [InlineKeyboardButton("🔍 Buscar / Modificar Cotización", callback_data='coti_buscar')],
-            [InlineKeyboardButton("🔙 Volver al Inicio", callback_data='volver_inicio'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+            [InlineKeyboardButton("🔙 Volver a Documentos", callback_data='menu_documentos'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
         texto = (
             f"📋 *Módulo de Cotizaciones - EPMI SAC*\n\n"
@@ -722,29 +747,55 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg_wait.edit_text(f"❌ Error al consultar credenciales: {e}")
 
     elif query.data == 'menu_guias':
+        user_states[user_id] = None
         keyboard = [
-            [InlineKeyboardButton("📝 Leer Guía", callback_data='modo_guias_leer')],
+            [InlineKeyboardButton("📝 Leer Guía (OCR / IA)", callback_data='modo_guias_leer')],
             [InlineKeyboardButton("📁 Registrar Guía", callback_data='modo_guias_registrar')],
             [InlineKeyboardButton("📸 Subida Manual (Sin IA)", callback_data='modo_guias_manual')],
-            [InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]
+            [InlineKeyboardButton("🔙 Volver a Documentos", callback_data='menu_documentos')]
         ]
-        await query.edit_message_text("📘 Módulo: Guías\nSelecciona la operación:", reply_markup=InlineKeyboardMarkup(keyboard))
+        texto = (
+            "📘 *Módulo de Guías de Remisión*\n\n"
+            "• *Leer Guía:* Extrae texto y datos clave sin guardar.\n"
+            "• *Registrar Guía:* Procesa con IA y registra en Sheets + Drive.\n"
+            "• *Subida Manual:* Carga paso a paso en caso de fotos difíciles.\n\n"
+            "Selecciona una opción:"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
     elif query.data == 'menu_busqueda':
         user_states[user_id] = None
         keyboard = [
-            [InlineKeyboardButton("🔍 Buscar Reporte", callback_data='modo_buscar')],
-            [InlineKeyboardButton("💬 Añadir Observación", callback_data='modo_comentar')],
-            [InlineKeyboardButton("📍 Buscar Direcciones", callback_data='modo_direcciones')],
+            [InlineKeyboardButton("📊 Buscar Reporte (Guías)", callback_data='modo_buscar')],
             [InlineKeyboardButton("👥 Buscar Clientes", callback_data='modo_buscar_cliente')],
-            [InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]
+            [InlineKeyboardButton("📍 Buscar Direcciones", callback_data='modo_direcciones')],
+            [InlineKeyboardButton("💬 Añadir Observación a Guía", callback_data='modo_comentar')],
+            [InlineKeyboardButton("🔙 Volver al Menú Principal", callback_data='volver_inicio')]
         ]
-        await query.edit_message_text("🔍 Módulo: Búsquedas\nSelecciona la operación:", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif query.data == 'menu_certificados':
+        texto = (
+            "🔍 *Centro de Búsqueda y Consultas*\n\n"
+            "Selecciona la consulta que deseas realizar:\n\n"
+            "• 📊 *Reportes:* Consulta en 'Registro Guías' o 'Guías Recibidas'.\n"
+            "• 👥 *Clientes:* Búsqueda flexible de empresas registradas.\n"
+            "• 📍 *Direcciones:* Ubicaciones por empresa o fundo/planta.\n"
+            "• 💬 *Observaciones:* Añade comentarios a guías existentes."
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data in ('menu_certificados', 'modo_buscar_cert'):
+        user_states[user_id] = None
         keyboard = [
-            [InlineKeyboardButton("📜 Buscar Certificados", callback_data='modo_buscar_cert')],
-            [InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]
+            [InlineKeyboardButton("📅 Por Fecha", callback_data='cert_search_fecha'),
+             InlineKeyboardButton("🏡 Por Fundo", callback_data='cert_search_fundo')],
+            [InlineKeyboardButton("🏢 Por Empresa", callback_data='cert_search_empresa'),
+             InlineKeyboardButton("🔢 Por Correlativo", callback_data='cert_search_corre')],
+            [InlineKeyboardButton("🔙 Volver a Documentos", callback_data='menu_documentos')]
         ]
-        await query.edit_message_text("📜 Módulo: Certificados\nSelecciona la operación:", reply_markup=InlineKeyboardMarkup(keyboard))
+        texto = (
+            "📜 *Módulo de Certificados*\n\n"
+            "¿Por qué criterio deseas buscar el certificado?"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == 'modo_guias_leer':
         user_states[user_id] = MODO_GUIAS_LEER
@@ -781,11 +832,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🏡 Paso 5/5 — Escribe el Fundo/Planta:", reply_markup=InlineKeyboardMarkup(kb))
     elif query.data == 'modo_buscar':
         keyboard = [
-            [InlineKeyboardButton("Registro Guias", callback_data='reporte_registro')],
-            [InlineKeyboardButton("Guias Recibidas", callback_data='reporte_recibidas')],
-            [InlineKeyboardButton("❌ Cancelar", callback_data='menu_busqueda')]
+            [InlineKeyboardButton("📋 Registro Guías", callback_data='reporte_registro')],
+            [InlineKeyboardButton("📥 Guías Recibidas", callback_data='reporte_recibidas')],
+            [InlineKeyboardButton("🔙 Volver a Búsquedas", callback_data='menu_busqueda')]
         ]
-        await query.edit_message_text("🔍 Buscar Reporte\n¿En qué base de datos deseas buscar?", reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_or_reply(query, "📊 *Buscar Reporte*\n¿En qué base de datos deseas buscar?", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     elif query.data == 'reporte_registro':
         user_states[user_id] = MODO_REPORTE_REGISTRO
         kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_buscar')]]
@@ -798,38 +849,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[user_id] = MODO_COMENTAR_GUIA
         kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='menu_busqueda')]]
         await query.edit_message_text("💬 Modo Observación\nIngresa el N° de Guía (Ej: EG03-293 o TR13-0002302) al que deseas añadirle un comentario:", reply_markup=InlineKeyboardMarkup(kb))
-    elif query.data == 'modo_buscar_cert':
-        keyboard = [
-            [InlineKeyboardButton("📅 Por Fecha", callback_data='cert_search_fecha'),
-             InlineKeyboardButton("🏡 Por Fundo", callback_data='cert_search_fundo')],
-            [InlineKeyboardButton("🏢 Por Empresa", callback_data='cert_search_empresa'),
-             InlineKeyboardButton("🔢 Por Correlativo", callback_data='cert_search_corre')],
-            [InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]
-        ]
-        await query.edit_message_text("📜 Buscar Certificados\n¿Por qué criterio deseas buscar?", reply_markup=InlineKeyboardMarkup(keyboard))
     elif query.data == 'cert_search_fecha':
         user_states[user_id] = MODO_BUSCAR_CERT_FECHA
-        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_buscar_cert')]]
+        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='menu_certificados')]]
         await query.edit_message_text("📅 Modo Certificados: Fecha\nEscribe la fecha (Ej: 30/03/2026 o 30/03):", reply_markup=InlineKeyboardMarkup(kb))
     elif query.data == 'cert_search_fundo':
         user_states[user_id] = MODO_BUSCAR_CERT_FUNDO
-        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_buscar_cert')]]
+        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='menu_certificados')]]
         await query.edit_message_text("🏡 Modo Certificados: Fundo\nEscribe el nombre del Fundo:", reply_markup=InlineKeyboardMarkup(kb))
     elif query.data == 'cert_search_empresa':
         user_states[user_id] = MODO_BUSCAR_CERT_EMPRESA
-        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_buscar_cert')]]
+        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='menu_certificados')]]
         await query.edit_message_text("🏢 Modo Certificados: Empresa\nEscribe el nombre de la Empresa:", reply_markup=InlineKeyboardMarkup(kb))
     elif query.data == 'cert_search_corre':
         user_states[user_id] = MODO_BUSCAR_CERT_CORRE
-        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_buscar_cert')]]
+        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='menu_certificados')]]
         await query.edit_message_text("🔢 Modo Certificados: Correlativo\nEscribe el correlativo a buscar:", reply_markup=InlineKeyboardMarkup(kb))
     elif query.data == 'modo_direcciones':
         keyboard = [
             [InlineKeyboardButton("🏢 Por Empresa", callback_data='dir_buscar_empresa'),
              InlineKeyboardButton("🏡 Por Fundo/Planta", callback_data='dir_buscar_fundo')],
-            [InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]
+            [InlineKeyboardButton("🔙 Volver a Búsquedas", callback_data='menu_busqueda')]
         ]
-        await query.edit_message_text("📍 **Buscador de Direcciones**\n¿Por qué criterio deseas buscar?", reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_or_reply(query, "📍 *Buscador de Direcciones*\n¿Por qué criterio deseas buscar?", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
     elif query.data == 'dir_buscar_empresa':
         user_states[user_id] = MODO_DIR_EMPRESA
         kb = [[InlineKeyboardButton("❌ Cancelar", callback_data='modo_direcciones')]]
