@@ -381,14 +381,6 @@ def procesar_generacion_cotizacion(datos):
             except Exception as e_p:
                 logger.warning(f"No se pudo asignar permiso público a PDF: {e_p}")
 
-        # Si había un Doc previo y es diferente al recién creado, eliminar el anterior para evitar duplicados
-        if doc_id_previo and str(doc_id_previo) != str(doc_id):
-            try:
-                drive.files().delete(fileId=doc_id_previo, supportsAllDrives=True).execute()
-                logger.info(f"🗑️ Documento Google Docs anterior {doc_id_previo} eliminado en Drive para evitar duplicados.")
-            except Exception as e_del:
-                logger.warning(f"No se pudo eliminar Doc previo {doc_id_previo}: {e_del}")
-
         try:
             drive.permissions().create(fileId=doc_id, body={'type': 'anyone', 'role': 'writer'}, supportsAllDrives=True).execute()
         except Exception as e_d:
@@ -418,10 +410,21 @@ def procesar_generacion_cotizacion(datos):
         timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M:%S")
         ws = obtener_o_crear_sheet_cotizaciones()
         
-        # Verificar si ya existe este correlativo para actualizar o insertar
+        # Buscar si ya existe este correlativo (normalizando ceros a la izquierda)
         col_correlativos = ws.col_values(1)
+        corr_clean = str(correlativo).strip().lstrip('0') or '0'
+        
+        row_indices = []
+        for idx, val in enumerate(col_correlativos[1:], start=2):
+            v_clean = str(val).strip().lstrip('0') or '0'
+            if v_clean == corr_clean:
+                row_indices.append(idx)
+
+        es_modificacion = len(row_indices) > 0
+        corr_cell = f"'{correlativo}" if str(correlativo).isdigit() else str(correlativo)
+        
         row_data = [
-            correlativo,
+            corr_cell,
             codigo_cotizacion,
             fecha,
             ruc,
@@ -432,18 +435,34 @@ def procesar_generacion_cotizacion(datos):
             resumen_items,
             doc_link,
             pdf_link,
-            "EMITIDA" if str(correlativo) not in col_correlativos else "MODIFICADA",
+            "MODIFICADA" if es_modificacion else "EMITIDA",
             timestamp,
             json.dumps(datos_completos, ensure_ascii=False)
         ]
 
-        if str(correlativo) in col_correlativos:
-            row_idx = col_correlativos.index(str(correlativo)) + 1
-            ws.update(values=[row_data], range_name=f"A{row_idx}")
-            logger.info(f"🔄 Cotización N°{codigo_cotizacion} actualizada en fila {row_idx}.")
+        if es_modificacion:
+            target_row = row_indices[0]
+            ws.update(values=[row_data], range_name=f"A{target_row}:N{target_row}", value_input_option='USER_ENTERED')
+            logger.info(f"🔄 Cotización N°{codigo_cotizacion} actualizada en fila {target_row}.")
+            # Eliminar posibles filas duplicadas previas
+            if len(row_indices) > 1:
+                for dup_row in sorted(row_indices[1:], reverse=True):
+                    try:
+                        ws.delete_rows(dup_row)
+                        logger.info(f"🗑️ Fila duplicada {dup_row} eliminada en Sheet.")
+                    except Exception as e_dup:
+                        logger.warning(f"No se pudo eliminar fila duplicada {dup_row}: {e_dup}")
         else:
             ws.append_row(row_data, value_input_option='USER_ENTERED')
             logger.info(f"✅ Cotización N°{codigo_cotizacion} registrada en Google Sheets.")
+
+        # Si había un Doc previo y es diferente al recién creado, eliminar el anterior en Drive
+        if doc_id_previo and str(doc_id_previo) != str(doc_id):
+            try:
+                drive.files().delete(fileId=doc_id_previo, supportsAllDrives=True).execute()
+                logger.info(f"🗑️ Documento Google Docs anterior {doc_id_previo} eliminado en Drive para evitar duplicados.")
+            except Exception as e_del:
+                logger.warning(f"No se pudo eliminar Doc previo {doc_id_previo}: {e_del}")
 
         return {
             "success": True,
@@ -477,9 +496,11 @@ def buscar_cotizacion_por_correlativo(correlativo):
     try:
         ws = obtener_o_crear_sheet_cotizaciones()
         records = ws.get_all_records()
-        corr_str = str(correlativo).strip()
-        for r in records:
-            if str(r.get("Correlativo", "")).strip().zfill(3) == corr_str.zfill(3) or str(r.get("Correlativo", "")).strip() == corr_str:
+        corr_clean = str(correlativo).strip().lstrip('0') or '0'
+        # Buscar en orden inverso (de abajo hacia arriba) para obtener siempre la versión más reciente
+        for r in reversed(records):
+            r_clean = str(r.get("Correlativo", "")).strip().lstrip('0') or '0'
+            if r_clean == corr_clean:
                 raw_json = r.get("Datos_JSON", "")
                 if raw_json:
                     try:
@@ -539,7 +560,13 @@ def sincronizar_pdf_desde_doc(correlativo):
         raise ValueError("La cotización no tiene registrado el ID del documento Google Docs.")
 
     # 1. Exportar Doc actual a PDF
-    pdf_bytes = drive.files().export(fileId=doc_id, mimeType='application/pdf').execute()
+    try:
+        pdf_bytes = drive.files().export(fileId=doc_id, mimeType='application/pdf').execute()
+    except Exception as e_exp:
+        if "404" in str(e_exp) or "File not found" in str(e_exp):
+            raise ValueError(f"El documento Google Docs de esta cotización no se encuentra en Drive o fue eliminado (ID: {doc_id}).")
+        raise e_exp
+
     media = MediaInMemoryUpload(pdf_bytes, mimetype='application/pdf', resumable=False)
 
     folder_id = obtener_o_crear_carpeta_cotizaciones(drive)
@@ -576,9 +603,10 @@ def sincronizar_pdf_desde_doc(correlativo):
     try:
         ws = obtener_o_crear_sheet_cotizaciones()
         col_corr = ws.col_values(1)
-        corr_str = str(correlativo).strip()
-        for idx, val in enumerate(col_corr, start=1):
-            if str(val).strip().zfill(3) == corr_str.zfill(3) or str(val).strip() == corr_str:
+        corr_clean = str(correlativo).strip().lstrip('0') or '0'
+        for idx, val in enumerate(col_corr[1:], start=2):
+            v_clean = str(val).strip().lstrip('0') or '0'
+            if v_clean == corr_clean:
                 ws.update_cell(idx, 11, pdf_link)
                 ws.update_cell(idx, 12, "MODIFICADA (DOC SYNC)")
                 ws.update_cell(idx, 13, datetime.now(PET).strftime("%d/%m/%Y %H:%M:%S"))
