@@ -232,7 +232,7 @@ def procesar_generacion_cotizacion(datos):
     doc_id = copy_file['id']
 
     try:
-        # 2. Reemplazos de texto
+        # 2. Reemplazos de texto y configuración de márgenes para no superponer encabezado
         requests = [
             {'replaceAllText': {'containsText': {'text': '{{COTIZACION}}', 'matchCase': True}, 'replaceText': correlativo}},
             {'replaceAllText': {'containsText': {'text': '{{CLIENTE}}', 'matchCase': True}, 'replaceText': cliente}},
@@ -241,6 +241,13 @@ def procesar_generacion_cotizacion(datos):
             {'replaceAllText': {'containsText': {'text': '{{FECHA}}', 'matchCase': True}, 'replaceText': fecha}},
             {'replaceAllText': {'containsText': {'text': 'Alexander Chamochumbi Chávez', 'matchCase': True}, 'replaceText': responsable}},
             {'replaceAllText': {'containsText': {'text': 'Responsable Técnico', 'matchCase': True}, 'replaceText': cargo}},
+            {'updateDocumentStyle': {
+                'documentStyle': {
+                    'marginHeader': {'magnitude': 14.17, 'unit': 'PT'},
+                    'marginTop': {'magnitude': 105, 'unit': 'PT'}
+                },
+                'fields': 'marginHeader,marginTop'
+            }}
         ]
         docs.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute()
 
