@@ -177,6 +177,60 @@
       margin-top: 6px;
     }
 
+    .btn-quick {
+      width: 100%;
+      padding: 10px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px dashed #3b82f6;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    /* Modal de Carga Rápida */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .modal-card {
+      background: white;
+      border-radius: 14px;
+      padding: 16px;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .btn-close-modal {
+      background: none;
+      border: none;
+      font-size: 18px;
+      color: #6c757d;
+      cursor: pointer;
+      padding: 4px;
+    }
+
     /* Floating Submit Button */
     .footer-bar {
       position: fixed;
@@ -285,9 +339,37 @@
       
       <div id="itemsContainer"></div>
 
-      <button type="button" class="btn-add" onclick="agregarItem()">
-        ➕ Agregar Residuo
-      </button>
+      <div style="display: flex; gap: 8px; margin-top: 6px;">
+        <button type="button" class="btn-add" style="flex: 1;" onclick="agregarItem()">
+          ➕ 1 Residuo
+        </button>
+        <button type="button" class="btn-quick" style="flex: 1.2;" onclick="abrirModalCargaRapida()">
+          ⚡ Pegar Lista (Bloque)
+        </button>
+      </div>
+    </div>
+
+    <!-- Modal de Carga Rápida -->
+    <div id="modalCargaRapida" class="modal-overlay" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div style="font-weight: 700; font-size: 15px; color: #198754;">⚡ Carga Rápida de Residuos</div>
+          <button type="button" class="btn-close-modal" onclick="cerrarModalCargaRapida()">✕</button>
+        </div>
+        <p style="font-size: 11px; color: #6c757d; margin: 8px 0; line-height: 1.4;">
+          Pega o escribe varios residuos (uno por línea):<br>
+          <b>Ejemplos válidos:</b><br>
+          <code>CARTON 0.10</code><br>
+          <code>PLASTICO FILM 0.80 KG</code><br>
+          <code>CHATARRA 450 TN</code><br>
+          <code>PARIHUELAS 15 UNID</code>
+        </p>
+        <textarea id="txtCargaRapida" rows="7" placeholder="Pega aquí la lista de WhatsApp o notas..." style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ced4da; font-size: 13px; font-family: monospace; outline: none;"></textarea>
+        <div style="display: flex; gap: 8px; margin-top: 10px;">
+          <button type="button" style="flex: 1; padding: 10px; background: #f8f9fa; border: 1px solid #ced4da; border-radius: 8px; font-weight: 600; cursor: pointer;" onclick="cerrarModalCargaRapida()">Cancelar</button>
+          <button type="button" style="flex: 1.2; padding: 10px; background: #198754; color: white; border: none; border-radius: 8px; font-weight: 700; cursor: pointer;" onclick="procesarCargaRapida()">✅ Cargar a la Tabla</button>
+        </div>
+      </div>
     </div>
 
     <!-- 4. Firmante -->
@@ -467,6 +549,9 @@
       document.getElementById('responsable').value = data.responsable || 'Alexander Chamochumbi Chávez';
       document.getElementById('cargo').value = data.cargo || 'Responsable Técnico';
 
+      window.editingDocId = data.doc_id || null;
+      window.editingPdfId = data.pdf_id || null;
+
       const btn = document.getElementById('btnSubmit');
       btn.innerText = "💾 Guardar Cambios en Cotización";
       btn.style.background = "#0d6efd";
@@ -529,6 +614,75 @@
         const badge = card.querySelector('.item-badge');
         if (badge) badge.innerText = `Ítem #${index + 1}`;
       });
+    }
+
+    function abrirModalCargaRapida() {
+      const modal = document.getElementById('modalCargaRapida');
+      if (modal) {
+        modal.style.display = 'flex';
+        const txt = document.getElementById('txtCargaRapida');
+        if (txt) setTimeout(() => txt.focus(), 100);
+      }
+    }
+
+    function cerrarModalCargaRapida() {
+      const modal = document.getElementById('modalCargaRapida');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function procesarCargaRapida() {
+      const txt = document.getElementById('txtCargaRapida');
+      const val = txt ? txt.value : '';
+      if (!val.trim()) {
+        cerrarModalCargaRapida();
+        return;
+      }
+
+      const lineas = val.split('\n');
+      let agregados = 0;
+
+      lineas.forEach(linea => {
+        let l = linea.trim();
+        if (!l) return;
+        // Quitar viñetas iniciales como "- ", "* ", "1. ", "• ", "1) "
+        l = l.replace(/^[-*•\d+.)\s]+/, '').trim();
+        if (!l) return;
+
+        // Detectar Unidad (KG, TN, UNID, M3, GL)
+        let unidad = 'KG';
+        const mUnidad = l.match(/\b(TONELADAS?|TN|TON|KILOS?|KG|UNIDADES?|UNID|UND|PZAS?|M3|GALONES?|GL|GAL|LITROS?|LT)\b/i);
+        if (mUnidad) {
+          const uRaw = mUnidad[1].toUpperCase();
+          if (uRaw.startsWith('TON') || uRaw === 'TN') unidad = 'TN';
+          else if (uRaw.startsWith('UN') || uRaw.startsWith('PZ')) unidad = 'UNID';
+          else if (uRaw === 'M3') unidad = 'M3';
+          else if (uRaw.startsWith('GL') || uRaw.startsWith('GAL') || uRaw.startsWith('L')) unidad = 'GL';
+          else unidad = 'KG';
+          l = l.replace(mUnidad[0], ' ');
+        }
+
+        // Detectar Precio
+        let precio = '';
+        const mPrecio = l.match(/(?:S\/\.?\s*|\$\s*)?(\d+(?:[.,]\d+)?)/i);
+        if (mPrecio) {
+          let num = mPrecio[1].replace(',', '.');
+          let nVal = parseFloat(num);
+          if (!isNaN(nVal)) {
+            precio = 'S/.' + (num.includes('.') ? nVal.toFixed(2) : nVal.toString());
+          }
+          l = l.replace(mPrecio[0], ' ');
+        }
+
+        // Descripción limpia restante
+        let desc = l.replace(/[,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+        if (desc) {
+          agregarItem(desc, unidad, precio || 'S/.0.00');
+          agregados++;
+        }
+      });
+
+      if (txt) txt.value = '';
+      cerrarModalCargaRapida();
     }
 
     function onClienteManualInput() {
@@ -600,6 +754,9 @@
         cargo: cargo,
         items: items
       };
+
+      if (window.editingDocId) payload.doc_id = window.editingDocId;
+      if (window.editingPdfId) payload.pdf_id = window.editingPdfId;
 
       const btn = document.getElementById('btnSubmit');
       btn.disabled = true;

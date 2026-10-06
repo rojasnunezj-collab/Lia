@@ -24,7 +24,7 @@ from config.settings import (
     MODO_BUSCAR_CERT_CORRE, MODO_BUSCAR_CERT_EMPRESA,
     MODO_DIR_EMPRESA, MODO_DIR_FUNDO, MODO_BUSCAR_CLIENTE,
     MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_BITACORA_EDIT_TEXT, MODO_OBS_ESCRIBIR, MODO_LIGAR_ESCRIBIR,
-    MODO_COTIZACION_BUSCAR,
+    MODO_COTIZACION_BUSCAR, MODO_COTIZACION_IA,
     MODO_FACTURAS_REGISTRAR, MODO_FACTURAS_BUSCAR,
     MODO_PENDIENTE_ADD, MODO_CREDENCIAL_BUSCAR,
     DRIVE_FOLDER_LEER, DRIVE_FOLDER_FACTURAS
@@ -38,7 +38,8 @@ from core.sheets_client import (
 )
 from core.cotizaciones_service import (
     async_generar_cotizacion, async_buscar_cotizacion_por_correlativo,
-    obtener_siguiente_correlativo, obtener_url_webapp
+    obtener_siguiente_correlativo, obtener_url_webapp,
+    async_sincronizar_pdf_desde_doc, interpretar_cotizacion_ia
 )
 from core.invoices_service import (
     async_parse_factura_xml, parse_factura_pdf, async_detectar_tipo_documento_pdf,
@@ -584,6 +585,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         url_app = obtener_url_webapp(correlativo=corr_sig, user_id=user_id)
         keyboard = [
             [InlineKeyboardButton("➕ Nueva Cotización", web_app=WebAppInfo(url=url_app))],
+            [InlineKeyboardButton("🎙️ Cotizar por Voz o Texto", callback_data='coti_ia')],
             [InlineKeyboardButton("🔍 Buscar / Modificar Cotización", callback_data='coti_buscar')],
             [InlineKeyboardButton("🔙 Volver a Documentos", callback_data='menu_documentos'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
@@ -591,9 +593,118 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📋 *Módulo de Cotizaciones - EPMI SAC*\n\n"
             f"• *Siguiente Correlativo sugerido:* `{corr_sig}`\n"
             f"• Pulsa *➕ Nueva Cotización* para abrir el formulario en tu celular.\n"
+            f"• Pulsa *🎙️ Cotizar por Voz o Texto* para dictar la cotización a Lía.\n"
             f"• Para revisar o editar una cotización previa, pulsa *🔍 Buscar / Modificar*."
         )
         await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data == 'coti_ia':
+        user_states[user_id] = MODO_COTIZACION_IA
+        keyboard = [
+            [InlineKeyboardButton("🔙 Volver a Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+        ]
+        texto = (
+            "🎙️ *Cotización Asistida por IA - EPMI SAC*\n\n"
+            "Puedes dictar por *nota de voz* o escribir un *mensaje de texto* con los datos de la cotización.\n\n"
+            "📌 *Indica:*\n"
+            "1. La empresa o cliente (ej: _Agrícola Andrea, Exalmar, etc._)\n"
+            "2. Los residuos y precios a cotizar\n\n"
+            "💡 *Ejemplo de voz o texto:*\n"
+            "_\"Cotización para Agrícola Andrea: Cartón a 0.10, Plástico film a 0.80 y Parihuelas a 15 la unidad\"_\n\n"
+            "Lía estructurará los ítems automáticamente."
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data.startswith('coti_ia_gen|'):
+        corr = query.data.split('|')[1]
+        payload = context.user_data.get(f"coti_ia_{user_id}")
+        if not payload:
+            await query.answer("⚠️ No hay datos pendientes para generar. Intenta de nuevo.", show_alert=True)
+            return
+        await query.answer("⏳ Generando cotización...")
+        msg_wait = await query.message.reply_text(f"⏳ Generando Google Doc y PDF para Cotización N°{corr}...")
+        try:
+            from io import BytesIO
+            res = await async_generar_cotizacion(payload)
+            pdf_bytes = res["pdf_bytes"]
+            nombre_pdf = res["nombre_archivo"]
+            doc_link = res["doc_link"]
+            pdf_link = res["pdf_link"]
+            codigo = res["codigo"]
+            cliente = res["cliente"]
+            fecha = res["fecha"]
+
+            url_edit = obtener_url_webapp(correlativo=corr, datos_edicion=res["datos_json"], user_id=user_id)
+            kb = [
+                [InlineKeyboardButton("✏️ Modificar Cotización", web_app=WebAppInfo(url=url_edit))],
+                [InlineKeyboardButton("📄 Doc Editable", url=doc_link), InlineKeyboardButton("📂 Ver en Drive", url=pdf_link)],
+                [InlineKeyboardButton("🔄 Sincronizar PDF desde Doc", callback_data=f"coti_sync|{corr}")],
+                [InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+            ]
+            caption = (
+                f"✅ Cotización Generada Exitosamente\n\n"
+                f"📌 Código: COTIZACION N°{codigo}\n"
+                f"🏢 Cliente: {cliente}\n"
+                f"📅 Fecha: {fecha}\n"
+                f"💰 Ítems cotizados: {len(payload.get('items', []))} residuos\n\n"
+                f"💾 Guardada en Google Drive y registrada en Sheets."
+            )
+            bio = BytesIO(pdf_bytes)
+            bio.name = nombre_pdf
+            await context.bot.send_document(
+                chat_id=user_id,
+                document=bio,
+                caption=caption,
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
+            try:
+                await msg_wait.delete()
+            except Exception:
+                pass
+            context.user_data.pop(f"coti_ia_{user_id}", None)
+        except Exception as e_gen:
+            logger.error(f"Error generando cotización por IA: {e_gen}")
+            await msg_wait.edit_text(f"❌ Error al generar cotización: {e_gen}")
+
+    elif query.data.startswith('coti_sync|'):
+        corr = query.data.split('|')[1]
+        await query.answer("🔄 Sincronizando...")
+        msg_wait = await query.message.reply_text(f"⏳ Leyendo cambios en Google Docs y actualizando PDF en Google Drive para N°{corr}...")
+        try:
+            res_sync = await async_sincronizar_pdf_desde_doc(corr)
+            pdf_bytes = res_sync["pdf_bytes"]
+            nombre_pdf = res_sync["nombre_archivo"]
+            pdf_link = res_sync["pdf_link"]
+            doc_id = res_sync["doc_id"]
+            doc_link = f"https://docs.google.com/document/d/{doc_id}/edit"
+
+            coti_data = await async_buscar_cotizacion_por_correlativo(corr)
+            url_edit = obtener_url_webapp(correlativo=corr, datos_edicion=coti_data, user_id=user_id)
+
+            from io import BytesIO
+            bio = BytesIO(pdf_bytes)
+            bio.name = nombre_pdf
+
+            caption = (
+                f"✅ <b>PDF Actualizado con Éxito</b>\n\n"
+                f"📌 <b>Código:</b> <code>COTIZACION N°{res_sync['codigo']}</code>\n"
+                f"🏢 <b>Cliente:</b> <code>{res_sync['cliente']}</code>\n\n"
+                f"💾 El archivo PDF existente en Drive fue reemplazado con el contenido actual de Google Docs manteniendo el mismo enlace."
+            )
+            kb = [
+                [InlineKeyboardButton("✏️ Modificar en Mini App", web_app=WebAppInfo(url=url_edit))],
+                [InlineKeyboardButton("📄 Doc Editable", url=doc_link), InlineKeyboardButton("📂 Ver en Drive", url=pdf_link)],
+                [InlineKeyboardButton("🔄 Sincronizar PDF de nuevo", callback_data=f"coti_sync|{corr}")],
+                [InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones')]
+            ]
+            await query.message.reply_document(document=bio, caption=caption, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+            try:
+                await msg_wait.delete()
+            except Exception:
+                pass
+        except Exception as e_sync:
+            logger.error(f"Error sincronizando PDF: {e_sync}")
+            await msg_wait.edit_text(f"❌ Error al sincronizar PDF: {e_sync}")
 
     elif query.data == 'coti_buscar':
         user_states[user_id] = MODO_COTIZACION_BUSCAR
@@ -1156,9 +1267,81 @@ async def process_manual_singuia_decision(update, context, user_id, cache, force
         user_data_cache[user_id] = {}
     except Exception as e:
         logger.error(f"Error en guardado manual sg: {e}")
-        try:
-            await context.bot.edit_message_text(f"❌ Error al guardar: {e}", chat_id=user_id, message_id=msg_id)
-        except: pass
+
+async def _procesar_resultado_coti_ia(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, msg_status, coti_info: dict):
+    if not coti_info or not coti_info.get("items"):
+        kb = [
+            [InlineKeyboardButton("🎙️ Reintentar dictado", callback_data='coti_ia')],
+            [InlineKeyboardButton("🔙 Volver a Cotizaciones", callback_data='menu_cotizaciones')]
+        ]
+        obs = coti_info.get("observaciones", "") if coti_info else ""
+        aviso = f"\n\n<i>Detalle: {html.escape(obs)}</i>" if obs else ""
+        await msg_status.edit_text(
+            f"⚠️ <b>No se pudieron detectar residuos o precios</b> en tu mensaje.{aviso}\n\n"
+            f"Por favor indica la empresa y al menos un residuo con su precio.\n"
+            f"<i>Ej: 'Cotización para Pesquera Exalmar: Cartón 0.10 y Film 0.80'</i>",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return
+
+    from core.cotizaciones_service import get_fecha_formato_peru
+    corr_sig = str(obtener_siguiente_correlativo()).strip()
+    cliente = str(coti_info.get("cliente", "")).strip().upper()
+    ruc = str(coti_info.get("ruc", "")).strip()
+    direccion = str(coti_info.get("direccion", "")).strip().upper()
+    items = coti_info.get("items", [])
+
+    std_items = []
+    for idx, it in enumerate(items, start=1):
+        p_raw = str(it.get("precio", "0.00")).strip()
+        if not p_raw.startswith("S/"):
+            p_raw = "S/." + p_raw.replace("S/.", "").replace("S/", "").strip()
+        std_items.append({
+            "item": str(idx),
+            "descripcion": str(it.get("descripcion", "")).strip().upper(),
+            "unidad": str(it.get("unidad", "KG")).strip().upper(),
+            "precio": p_raw
+        })
+
+    payload = {
+        "correlativo": corr_sig,
+        "fecha": get_fecha_formato_peru(),
+        "cliente": cliente,
+        "ruc": ruc,
+        "direccion": direccion,
+        "responsable": "Alexander Chamochumbi Chávez",
+        "cargo": "Responsable Técnico",
+        "items": std_items,
+        "user_id": user_id
+    }
+
+    context.user_data[f"coti_ia_{user_id}"] = payload
+    url_edit = obtener_url_webapp(correlativo=corr_sig, datos_edicion=payload, user_id=user_id)
+
+    items_lines = []
+    for it in std_items:
+        items_lines.append(f"  • <b>{html.escape(it['descripcion'])}</b>: {html.escape(it['unidad'])} — <code>{html.escape(it['precio'])}</code>")
+    resumen_items = "\n".join(items_lines)
+
+    texto_preview = (
+        f"📋 <b>Cotización Detectada por IA</b>\n\n"
+        f"📌 <b>Correlativo asignado:</b> <code>{corr_sig}</code>\n"
+        f"🏢 <b>Cliente:</b> <code>{html.escape(cliente or 'POR DEFINIR')}</code>\n"
+        f"🆔 <b>RUC:</b> <code>{html.escape(ruc or 'No especificado')}</code>\n"
+        f"📍 <b>Dirección:</b> <code>{html.escape(direccion or 'No especificada')}</code>\n\n"
+        f"💰 <b>Residuos cotizados ({len(std_items)}):</b>\n"
+        f"{resumen_items}\n\n"
+        f"¿Deseas generar el PDF directamente o revisarlo en la Mini App?"
+    )
+
+    kb = [
+        [InlineKeyboardButton("🚀 Confirmar y Generar PDF", callback_data=f"coti_ia_gen|{corr_sig}")],
+        [InlineKeyboardButton("✏️ Revisar en Mini App", web_app=WebAppInfo(url=url_edit))],
+        [InlineKeyboardButton("🎙️ Reintentar dictado", callback_data='coti_ia'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+    ]
+
+    await msg_status.edit_text(texto_preview, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
@@ -1272,6 +1455,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 links_row.append(InlineKeyboardButton("📂 PDF en Drive", url=pdf_link))
             if links_row:
                 kb.append(links_row)
+            kb.append([InlineKeyboardButton("🔄 Sincronizar PDF desde Doc", callback_data=f"coti_sync|{corr}")])
             kb.append([InlineKeyboardButton("🔙 Volver a Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')])
 
             texto_coti = (
@@ -1286,6 +1470,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg_wait.edit_text(texto_coti, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
         except Exception as e:
             logger.error(f"Error buscando cotización: {e}")
+        return
+
+    elif modo == MODO_COTIZACION_IA:
+        user_states[user_id] = None
+        msg_wait = await update.message.reply_text("🧠 Analizando cotización con IA...")
+        try:
+            coti_info = await interpretar_cotizacion_ia(texto=text)
+            await _procesar_resultado_coti_ia(update, context, user_id, msg_wait, coti_info)
+        except Exception as e:
+            logger.error(f"Error interpretando texto para cotización: {e}")
+            await msg_wait.edit_text(f"❌ Error al analizar la cotización: {e}")
         return
 
     if modo == MODO_FACTURAS_BUSCAR:
@@ -2407,6 +2602,39 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(f"❌ Error al procesar audio: {html.escape(str(e))}")
         return
 
+    # Modo Cotización por Voz / Audio
+    if modo == MODO_COTIZACION_IA:
+        msg = await update.message.reply_text("⏳ Descargando audio para la cotización...")
+        file_path = f"coti_{user_id}_{update.message.id}.ogg"
+        try:
+            mime_type = "audio/ogg"
+            if update.message.voice:
+                f = await update.message.voice.get_file()
+                mime_type = "audio/ogg"
+            elif update.message.audio:
+                f = await update.message.audio.get_file()
+                mime_type = update.message.audio.mime_type or "audio/mp3"
+                file_path = file_path.replace('.ogg', '.mp3')
+            else:
+                await msg.edit_text("⚠️ Envía una nota de voz o audio dictando la cotización.")
+                return
+
+            await f.download_to_drive(file_path)
+            await msg.edit_text("🎙️🧠 Escuchando audio y analizando cotización con IA...")
+            caption = update.message.caption or ""
+            coti_info = await interpretar_cotizacion_ia(texto=caption, file_path=file_path, mime_type=mime_type)
+
+            try:
+                if os.path.exists(file_path): os.remove(file_path)
+            except: pass
+
+            user_states[user_id] = None
+            await _procesar_resultado_coti_ia(update, context, user_id, msg, coti_info)
+        except Exception as e:
+            logger.error(f"Error procesando audio para cotización: {e}")
+            await msg.edit_text(f"❌ Error al procesar audio: {html.escape(str(e))}")
+        return
+
     # 1. Modo Bitácora
     if modo == MODO_BITACORA_ADD:
         msg = await update.message.reply_text("⏳ Descargando archivo...")
@@ -3130,6 +3358,9 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Error al procesar los datos de la cotización.")
             return
 
+        if payload.get("tipo") == "COMPLETADO":
+            return
+
         correlativo = payload.get("correlativo", "---")
         cliente = payload.get("cliente", "---")
 
@@ -3156,6 +3387,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             kb = [
                 [InlineKeyboardButton("✏️ Modificar Cotización", web_app=WebAppInfo(url=url_edit))],
                 [InlineKeyboardButton("📄 Doc Editable", url=doc_link), InlineKeyboardButton("📂 Ver en Drive", url=pdf_link)],
+                [InlineKeyboardButton("🔄 Sincronizar PDF desde Doc", callback_data=f"coti_sync|{correlativo}")],
                 [InlineKeyboardButton("📋 Menú Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
             ]
 

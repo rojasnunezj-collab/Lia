@@ -217,6 +217,11 @@ def procesar_generacion_cotizacion(datos):
 
     folder_id = obtener_o_crear_carpeta_cotizaciones(drive)
 
+    # Detectar si es una modificación de cotización previa
+    coti_existente = buscar_cotizacion_por_correlativo(correlativo)
+    doc_id_previo = datos.get("doc_id") or (coti_existente.get("doc_id") if coti_existente else None)
+    pdf_id_previo = datos.get("pdf_id") or (coti_existente.get("pdf_id") if coti_existente else None)
+
     # 1. Crear copia del documento en Google Drive
     nombre_doc = f"Cotización N°{codigo_cotizacion} - {cliente}"
     meta = {
@@ -340,20 +345,49 @@ def procesar_generacion_cotizacion(datos):
         # 4. Exportar a PDF
         pdf_bytes = drive.files().export(fileId=doc_id, mimeType='application/pdf').execute()
 
-        # 5. Guardar el archivo PDF en Google Drive
+        # 5. Guardar o Actualizar el archivo PDF en Google Drive (sobreescribiendo si ya existe)
         nombre_pdf = f"Cotización N°{codigo_cotizacion} - {cliente}.pdf"
         media = MediaInMemoryUpload(pdf_bytes, mimetype='application/pdf', resumable=False)
-        pdf_file = drive.files().create(
-            body={'name': nombre_pdf, 'parents': [folder_id]},
-            media_body=media,
-            fields='id, webViewLink',
-            supportsAllDrives=True
-        ).execute()
-        try:
-            drive.permissions().create(fileId=pdf_file.get('id'), body={'type': 'anyone', 'role': 'reader'}, supportsAllDrives=True).execute()
-        except Exception as e_p:
-            logger.warning(f"No se pudo asignar permiso público a PDF: {e_p}")
-        pdf_link = pdf_file.get('webViewLink')
+        pdf_id = None
+        pdf_link = None
+
+        if pdf_id_previo:
+            try:
+                pdf_file = drive.files().update(
+                    fileId=pdf_id_previo,
+                    body={'name': nombre_pdf},
+                    media_body=media,
+                    fields='id, webViewLink',
+                    supportsAllDrives=True
+                ).execute()
+                pdf_id = pdf_file.get('id')
+                pdf_link = pdf_file.get('webViewLink') or f"https://drive.google.com/file/d/{pdf_id}/view"
+                logger.info(f"🔄 Archivo PDF {pdf_id} actualizado en Google Drive con título: {nombre_pdf}")
+            except Exception as e_up:
+                logger.warning(f"No se pudo actualizar PDF previo {pdf_id_previo}: {e_up}. Se creará nuevo.")
+                pdf_id = None
+
+        if not pdf_id:
+            pdf_file = drive.files().create(
+                body={'name': nombre_pdf, 'parents': [folder_id]},
+                media_body=media,
+                fields='id, webViewLink',
+                supportsAllDrives=True
+            ).execute()
+            pdf_id = pdf_file.get('id')
+            pdf_link = pdf_file.get('webViewLink')
+            try:
+                drive.permissions().create(fileId=pdf_id, body={'type': 'anyone', 'role': 'reader'}, supportsAllDrives=True).execute()
+            except Exception as e_p:
+                logger.warning(f"No se pudo asignar permiso público a PDF: {e_p}")
+
+        # Si había un Doc previo y es diferente al recién creado, eliminar el anterior para evitar duplicados
+        if doc_id_previo and str(doc_id_previo) != str(doc_id):
+            try:
+                drive.files().delete(fileId=doc_id_previo, supportsAllDrives=True).execute()
+                logger.info(f"🗑️ Documento Google Docs anterior {doc_id_previo} eliminado en Drive para evitar duplicados.")
+            except Exception as e_del:
+                logger.warning(f"No se pudo eliminar Doc previo {doc_id_previo}: {e_del}")
 
         try:
             drive.permissions().create(fileId=doc_id, body={'type': 'anyone', 'role': 'writer'}, supportsAllDrives=True).execute()
@@ -378,7 +412,7 @@ def procesar_generacion_cotizacion(datos):
             "cargo": cargo,
             "items": items,
             "doc_id": doc_id,
-            "pdf_id": pdf_file.get('id')
+            "pdf_id": pdf_id
         }
 
         timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M:%S")
@@ -421,7 +455,7 @@ def procesar_generacion_cotizacion(datos):
             "pdf_link": pdf_link,
             "doc_link": doc_link,
             "doc_id": doc_id,
-            "pdf_id": pdf_file.get('id'),
+            "pdf_id": pdf_id,
             "nombre_archivo": nombre_pdf,
             "datos_json": datos_completos
         }
@@ -439,6 +473,7 @@ async def async_generar_cotizacion(datos):
 
 def buscar_cotizacion_por_correlativo(correlativo):
     """Busca una cotización por su número correlativo para ver datos o permitir edición."""
+    import re
     try:
         ws = obtener_o_crear_sheet_cotizaciones()
         records = ws.get_all_records()
@@ -448,9 +483,15 @@ def buscar_cotizacion_por_correlativo(correlativo):
                 raw_json = r.get("Datos_JSON", "")
                 if raw_json:
                     try:
-                        return json.loads(raw_json)
+                        parsed = json.loads(raw_json)
+                        if isinstance(parsed, dict):
+                            return parsed
                     except Exception:
                         pass
+                doc_l = str(r.get("Link Doc", ""))
+                pdf_l = str(r.get("Link PDF", ""))
+                m_doc = re.search(r"/document/d/([a-zA-Z0-9_-]+)", doc_l)
+                m_pdf = re.search(r"/(?:file/d/|id=)([a-zA-Z0-9_-]+)", pdf_l)
                 return {
                     "correlativo": str(r.get("Correlativo")),
                     "codigo": str(r.get("Codigo")),
@@ -460,8 +501,10 @@ def buscar_cotizacion_por_correlativo(correlativo):
                     "direccion": str(r.get("Direccion")),
                     "responsable": str(r.get("Responsable")),
                     "cargo": str(r.get("Cargo")),
-                    "doc_link": str(r.get("Link Doc")),
-                    "pdf_link": str(r.get("Link PDF")),
+                    "doc_link": doc_l,
+                    "pdf_link": pdf_l,
+                    "doc_id": m_doc.group(1) if m_doc else None,
+                    "pdf_id": m_pdf.group(1) if m_pdf else None,
                     "items": []
                 }
     except Exception as e:
@@ -470,3 +513,172 @@ def buscar_cotizacion_por_correlativo(correlativo):
 
 async def async_buscar_cotizacion_por_correlativo(correlativo):
     return await asyncio.to_thread(buscar_cotizacion_por_correlativo, correlativo)
+
+# ====================================================================
+# --- SINCRONIZAR PDF DESDE GOOGLE DOCS ---
+# ====================================================================
+def sincronizar_pdf_desde_doc(correlativo):
+    """
+    Toma los cambios hechos directamente en Google Docs para una cotización existente,
+    re-exporta el PDF y actualiza el archivo PDF existente en Google Drive.
+    """
+    creds = obtener_credenciales()
+    drive = build('drive', 'v3', credentials=creds)
+
+    coti = buscar_cotizacion_por_correlativo(correlativo)
+    if not coti:
+        raise ValueError(f"No se encontró la cotización N°{correlativo}")
+
+    doc_id = coti.get("doc_id")
+    pdf_id = coti.get("pdf_id")
+    codigo = coti.get("codigo", f"{correlativo}-{datetime.now(PET).year}-EO-RS")
+    cliente = coti.get("cliente", "")
+    nombre_pdf = f"Cotización N°{codigo} - {cliente}.pdf"
+
+    if not doc_id:
+        raise ValueError("La cotización no tiene registrado el ID del documento Google Docs.")
+
+    # 1. Exportar Doc actual a PDF
+    pdf_bytes = drive.files().export(fileId=doc_id, mimeType='application/pdf').execute()
+    media = MediaInMemoryUpload(pdf_bytes, mimetype='application/pdf', resumable=False)
+
+    folder_id = obtener_o_crear_carpeta_cotizaciones(drive)
+    if pdf_id:
+        try:
+            pdf_file = drive.files().update(
+                fileId=pdf_id,
+                body={'name': nombre_pdf},
+                media_body=media,
+                fields='id, webViewLink',
+                supportsAllDrives=True
+            ).execute()
+            pdf_link = pdf_file.get('webViewLink') or f"https://drive.google.com/file/d/{pdf_id}/view"
+            logger.info(f"🔄 PDF existente {pdf_id} actualizado desde cambios en Doc.")
+        except Exception as e:
+            logger.warning(f"Error actualizando PDF previo {pdf_id}: {e}. Creando nuevo.")
+            pdf_id = None
+
+    if not pdf_id:
+        pdf_file = drive.files().create(
+            body={'name': nombre_pdf, 'parents': [folder_id]},
+            media_body=media,
+            fields='id, webViewLink',
+            supportsAllDrives=True
+        ).execute()
+        pdf_id = pdf_file.get('id')
+        pdf_link = pdf_file.get('webViewLink')
+        try:
+            drive.permissions().create(fileId=pdf_id, body={'type': 'anyone', 'role': 'reader'}, supportsAllDrives=True).execute()
+        except Exception:
+            pass
+
+    # Actualizar estado y fecha en Google Sheets
+    try:
+        ws = obtener_o_crear_sheet_cotizaciones()
+        col_corr = ws.col_values(1)
+        corr_str = str(correlativo).strip()
+        for idx, val in enumerate(col_corr, start=1):
+            if str(val).strip().zfill(3) == corr_str.zfill(3) or str(val).strip() == corr_str:
+                ws.update_cell(idx, 11, pdf_link)
+                ws.update_cell(idx, 12, "MODIFICADA (DOC SYNC)")
+                ws.update_cell(idx, 13, datetime.now(PET).strftime("%d/%m/%Y %H:%M:%S"))
+                break
+    except Exception as e_sh:
+        logger.warning(f"Error actualizando Sheets al sincronizar PDF: {e_sh}")
+
+    return {
+        "success": True,
+        "correlativo": correlativo,
+        "codigo": codigo,
+        "cliente": cliente,
+        "pdf_bytes": pdf_bytes,
+        "pdf_link": pdf_link,
+        "doc_id": doc_id,
+        "pdf_id": pdf_id,
+        "nombre_archivo": nombre_pdf
+    }
+
+async def async_sincronizar_pdf_desde_doc(correlativo):
+    return await asyncio.to_thread(sincronizar_pdf_desde_doc, correlativo)
+
+# ====================================================================
+# --- ASISTENTE IA PARA COTIZACIONES (TEXTO O VOZ) ---
+# ====================================================================
+async def interpretar_cotizacion_ia(texto=None, file_path=None, mime_type=None):
+    """
+    Interpreta una solicitud de cotización en lenguaje natural (texto o audio)
+    usando Gemini y el catálogo de clientes de EPMI.
+    """
+    import re
+    from google.genai import types
+    from core.ai_client import generar_con_reintento
+
+    catalogo = obtener_catalogo_clientes()
+    catalogo_resumen = "\n".join([f"- {c.get('empresa')} | RUC: {c.get('ruc', '')} | Dir: {c.get('direccion', '')}" for c in catalogo[:40]])
+
+    prompt = f"""Eres Lía, la asistente de operaciones y cotizaciones de la empresa EPMI S.A.C.
+Tu tarea es interpretar la solicitud del usuario (dictada por nota de voz o escrita en un mensaje) y extraer los datos requeridos para emitir una COTIZACIÓN TÉCNICO-ECONÓMICA.
+
+CATÁLOGO DE CLIENTES FRECUENTES DE EPMI:
+{catalogo_resumen}
+
+INSTRUCCIONES DE EXTRACCIÓN:
+1. "cliente": Razón Social de la empresa. Si el usuario menciona un nombre abreviado o informal (ej. "Andrea", "Exalmar", "Beta", "Villacurí", "Larán"), asócialo con la razón social oficial del catálogo. Si es una empresa nueva no registrada en el catálogo, usa el nombre que dijo el usuario en MAYÚSCULAS.
+2. "ruc": RUC del cliente (11 dígitos). Si coincide con el catálogo, úsalo. Si el usuario lo dio, úsalo. Si no se conoce, déjalo vacío "".
+3. "direccion": Dirección o fundo del cliente. Si coincide con el catálogo, úsala. Si no se conoce, déjala vacía "".
+4. "items": Lista de residuos/ítems cotizados. Para cada residuo:
+   - "descripcion": Nombre formal del residuo en MAYÚSCULAS (ej: CARTÓN, PLÁSTICO FILM, CHATARRA METÁLICA, PARIHUELAS DE MADERA, GALONERAS, ACEITE USADO, etc.).
+   - "unidad": Una de las siguientes unidades válidas: "KG", "TN", "UNID", "M3", "GL". Si no especificó unidad o mencionó kilos, usa "KG". Si mencionó toneladas, "TN". Si mencionó unidades, parihuelas, cilindros o sacos, "UNID". Si metros cúbicos, "M3". Si galones, "GL".
+   - "precio": Formato estándar con moneda "S/. 0.00" o "S/.0.00" (ej. "S/.0.10", "S/.450.00", "S/.15.00").
+5. "observaciones": Notas relevantes o aclaraciones breves si faltó algún dato.
+
+RESPONDE ÚNICAMENTE CON UN OBJETO JSON VÁLIDO CON ESTA ESTRUCTURA EXACTA:
+{{
+  "cliente": "...",
+  "ruc": "...",
+  "direccion": "...",
+  "items": [
+    {{
+      "descripcion": "...",
+      "unidad": "KG",
+      "precio": "S/.0.00"
+    }}
+  ],
+  "observaciones": "..."
+}}
+"""
+    partes = []
+    if file_path and os.path.exists(file_path):
+        with open(file_path, "rb") as f:
+            audio_bytes = f.read()
+        part = types.Part.from_bytes(data=audio_bytes, mime_type=mime_type or "audio/ogg")
+        partes.append(part)
+
+    texto_final = prompt
+    if texto:
+        texto_final += f"\n\nMENSAJE DEL USUARIO:\n\"{texto}\""
+
+    try:
+        response = await generar_con_reintento(partes, texto_final, None, is_json=True)
+        raw_text = response.text.strip()
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
+            raw_text = re.sub(r"\n?```$", "", raw_text)
+        data = json.loads(raw_text.strip())
+
+        # Completar RUC y dirección desde catálogo si coincide el cliente
+        cli_nombre = str(data.get("cliente", "")).upper().strip()
+        if cli_nombre:
+            for c in catalogo:
+                emp = c.get("empresa", "").upper()
+                if emp == cli_nombre or cli_nombre in emp or emp in cli_nombre:
+                    if not data.get("ruc"):
+                        data["ruc"] = c.get("ruc", "")
+                    if not data.get("direccion"):
+                        data["direccion"] = c.get("direccion", "")
+                    data["cliente"] = c.get("empresa", "")
+                    break
+        return data
+    except Exception as e:
+        logger.error(f"Error interpretando cotización con IA: {e}")
+        return None
