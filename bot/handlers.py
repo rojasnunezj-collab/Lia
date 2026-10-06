@@ -6,6 +6,7 @@ import json
 import asyncio
 import re
 import calendar
+import html
 from datetime import datetime, timezone, timedelta
 
 from google.genai import types
@@ -230,18 +231,22 @@ async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAU
                 [InlineKeyboardButton("➕ Nuevo Pendiente", callback_data='pnd_add')],
                 [InlineKeyboardButton("🔙 Menú Pendientes", callback_data='menu_pendientes')]
             ]
+            t_pnd = html.escape(str(pnd_id))
+            t_tit = html.escape(str(draft.get('titulo', '')))
+            t_fec = html.escape(str(draft.get('fecha_alerta', '')))
+            t_prio = html.escape(str(draft.get('prioridad', '')))
             await msg_save.edit_text(
-                f"✅ *¡Pendiente `{pnd_id}` guardado exitosamente!*\n\n"
-                f"📌 *Tarea:* *{draft.get('titulo')}*\n"
-                f"⏰ *Alerta:* `{draft.get('fecha_alerta')}`\n"
-                f"🎯 *Prioridad:* `{draft.get('prioridad')}`\n\n"
+                f"✅ <b>¡Pendiente <code>{t_pnd}</code> guardado exitosamente!</b>\n\n"
+                f"📌 <b>Tarea:</b> {t_tit}\n"
+                f"⏰ <b>Alerta:</b> <code>{t_fec}</code>\n"
+                f"🎯 <b>Prioridad:</b> <code>{t_prio}</code>\n\n"
                 f"🔔 Te notificaré automáticamente por este chat cuando venza el plazo.",
                 reply_markup=InlineKeyboardMarkup(kb),
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
         except Exception as e:
             logger.error(f"Error guardando pendiente: {e}")
-            await msg_save.edit_text(f"❌ Error al guardar pendiente en Google Sheets: {e}")
+            await msg_save.edit_text(f"❌ Error al guardar pendiente en Google Sheets: {html.escape(str(e))}")
 
     elif data == 'pnd_cancel':
         user_data_cache[user_id] = {}
@@ -254,9 +259,9 @@ async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAU
         if ok:
             await safe_edit_or_reply(
                 query,
-                f"✅ *¡Pendiente `[{pnd_id}]` completado y marcado en Google Sheets!* 🎉",
+                f"✅ <b>¡Pendiente <code>[{html.escape(pnd_id)}]</code> completado y marcado en Google Sheets!</b> 🎉",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📌 Menú Pendientes", callback_data='menu_pendientes')]]),
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
         else:
             await query.answer("❌ No se pudo actualizar el estado del pendiente.", show_alert=True)
@@ -272,9 +277,9 @@ async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAU
                 tiempo_str = "mañana"
             await safe_edit_or_reply(
                 query,
-                f"⏰ *Pendiente `[{pnd_id}]` pospuesto ({tiempo_str}).*\nNueva alerta reprogramada para: `{nueva_fecha}`",
+                f"⏰ <b>Pendiente <code>[{html.escape(pnd_id)}]</code> pospuesto ({tiempo_str}).</b>\nNueva alerta reprogramada para: <code>{html.escape(str(nueva_fecha))}</code>",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📌 Menú Pendientes", callback_data='menu_pendientes')]]),
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
         else:
             await query.answer("❌ Error posponiendo alerta.", show_alert=True)
@@ -351,17 +356,23 @@ async def job_verificar_alertas_pendientes(context: ContextTypes.DEFAULT_TYPE):
 
             p_badge = "🔴 ALTA" if prioridad == "ALTA" else ("🟢 BAJA" if prioridad == "BAJA" else "🟡 MEDIA")
 
+            t_id = html.escape(pnd_id)
+            t_titulo = html.escape(titulo)
+            t_cliente = html.escape(cliente)
+            t_detalle = html.escape(detalle)
+            t_fecha = html.escape(fecha_alerta)
+
             msg = (
-                f"🔔 *ALERTA DE PENDIENTE* `[{pnd_id}]`\n\n"
-                f"📌 *Tarea:* *{titulo}*\n"
+                f"🔔 <b>ALERTA DE PENDIENTE</b> <code>[{t_id}]</code>\n\n"
+                f"📌 <b>Tarea:</b> <b>{t_titulo}</b>\n"
             )
             if cliente:
-                msg += f"🏢 *Referencia:* `{cliente}`\n"
+                msg += f"🏢 <b>Referencia:</b> <code>{t_cliente}</code>\n"
             if detalle:
-                msg += f"📝 *Detalle:* _{detalle}_\n"
+                msg += f"📝 <b>Detalle:</b> <i>{t_detalle}</i>\n"
             msg += (
-                f"⏰ *Programado:* `{fecha_alerta}`\n"
-                f"🎯 *Prioridad:* `{p_badge}`\n\n"
+                f"⏰ <b>Programado:</b> <code>{t_fecha}</code>\n"
+                f"🎯 <b>Prioridad:</b> <code>{p_badge}</code>\n\n"
                 f"¿Qué deseas hacer con este pendiente?"
             )
 
@@ -376,7 +387,7 @@ async def job_verificar_alertas_pendientes(context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     chat_id=admin_chat_id,
                     text=msg,
-                    parse_mode='Markdown',
+                    parse_mode='HTML',
                     reply_markup=InlineKeyboardMarkup(kb)
                 )
                 await async_marcar_alerta_enviada(pnd_id)
@@ -469,25 +480,25 @@ def build_bitacora_draft_card(draft):
 
 def build_pendiente_draft_card(draft):
     """Construye la tarjeta de visualización de borrador de Pendiente con botones de confirmación."""
-    titulo = draft.get("titulo", "Sin título")
-    detalle = draft.get("detalle", "")
-    cliente = draft.get("cliente_ref", "")
-    fecha_alerta = draft.get("fecha_alerta", "")
-    prioridad = draft.get("prioridad", "MEDIA").upper()
+    titulo = html.escape(str(draft.get("titulo", "Sin título")).strip())
+    detalle = html.escape(str(draft.get("detalle", "")).strip())
+    cliente = html.escape(str(draft.get("cliente_ref", "")).strip())
+    fecha_alerta = html.escape(str(draft.get("fecha_alerta", "")).strip())
+    prioridad = str(draft.get("prioridad", "MEDIA")).strip().upper()
 
     p_badge = "🔴 ALTA" if prioridad == "ALTA" else ("🟢 BAJA" if prioridad == "BAJA" else "🟡 MEDIA")
 
     msg = (
-        "📌 *Borrador de Pendiente Detectado*\n\n"
-        f"📝 *Tarea:* *{titulo}*\n"
+        "📌 <b>Borrador de Pendiente Detectado</b>\n\n"
+        f"📝 <b>Tarea:</b> <b>{titulo}</b>\n"
     )
     if cliente:
-        msg += f"🏢 *Referencia / Cliente:* `{cliente}`\n"
+        msg += f"🏢 <b>Referencia / Cliente:</b> <code>{cliente}</code>\n"
     if detalle:
-        msg += f"📋 *Detalle:* _{detalle}_\n"
+        msg += f"📋 <b>Detalle:</b> <i>{detalle}</i>\n"
     msg += (
-        f"⏰ *Alerta Programada:* `{fecha_alerta}`\n"
-        f"🎯 *Prioridad:* `{p_badge}`\n\n"
+        f"⏰ <b>Alerta Programada:</b> <code>{fecha_alerta}</code>\n"
+        f"🎯 <b>Prioridad:</b> <code>{p_badge}</code>\n\n"
         f"❓ ¿Deseas confirmar y guardar este pendiente en Google Sheets?"
     )
 
@@ -654,17 +665,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("➕ Crear Pendiente", callback_data='pnd_add')],
                     [InlineKeyboardButton("🔙 Volver", callback_data='menu_pendientes')]
                 ]
-                await msg_wait.edit_text("🎉 *¡Excelente! No tienes pendientes activos por el momento.*", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                await msg_wait.edit_text("🎉 <b>¡Excelente! No tienes pendientes activos por el momento.</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
             else:
-                texto_lista = f"📌 *Pendientes Activos ({len(pendientes)}):*\n\n"
+                texto_lista = f"📌 <b>Pendientes Activos ({len(pendientes)}):</b>\n\n"
                 kb_items = []
                 for p in pendientes[:8]:
-                    p_id = p.get('ID', '')
-                    tit = p.get('TITULO_TAREA', 'Sin título')
-                    fec = p.get('FECHA_ALERTA', '')
-                    prio = p.get('PRIORIDAD', 'MEDIA')
+                    p_id = html.escape(str(p.get('ID', '')))
+                    tit = html.escape(str(p.get('TITULO_TAREA', 'Sin título')))
+                    fec = html.escape(str(p.get('FECHA_ALERTA', '')))
+                    prio = str(p.get('PRIORIDAD', 'MEDIA')).upper()
                     p_badge = "🔴" if prio == "ALTA" else ("🟢" if prio == "BAJA" else "🟡")
-                    texto_lista += f"{p_badge} `[{p_id}]` *{tit}*\n⏰ _{fec}_\n\n"
+                    texto_lista += f"{p_badge} <code>[{p_id}]</code> <b>{tit}</b>\n⏰ <i>{fec}</i>\n\n"
                     kb_items.append([
                         InlineKeyboardButton(f"✅ Listo {p_id}", callback_data=f"pnd_done|{p_id}"),
                         InlineKeyboardButton(f"⏰ +1h", callback_data=f"pnd_snooze|{p_id}|60")
@@ -674,10 +685,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 kb_items.append([InlineKeyboardButton("📱 Ver Todos en WebApp", web_app=WebAppInfo(url=url_panel_pnd))])
                 kb_items.append([InlineKeyboardButton("➕ Nuevo", callback_data='pnd_add'), InlineKeyboardButton("🔙 Volver", callback_data='menu_pendientes')])
 
-                await msg_wait.edit_text(texto_lista, reply_markup=InlineKeyboardMarkup(kb_items), parse_mode='Markdown')
+                await msg_wait.edit_text(texto_lista, reply_markup=InlineKeyboardMarkup(kb_items), parse_mode='HTML')
         except Exception as e:
             logger.error(f"Error listando pendientes: {e}")
-            await msg_wait.edit_text(f"❌ Error al consultar pendientes: {e}")
+            await msg_wait.edit_text(f"❌ Error al consultar pendientes: {html.escape(str(e))}")
 
     elif query.data == 'menu_credenciales':
         user_states[user_id] = None
@@ -716,24 +727,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("➕ Registrar en WebApp", web_app=WebAppInfo(url=url_panel_crd))],
                     [InlineKeyboardButton("🔙 Volver", callback_data='menu_credenciales')]
                 ]
-                await msg_wait.edit_text("ℹ️ *No hay credenciales registradas aún en la hoja.*", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                await msg_wait.edit_text("ℹ️ <b>No hay credenciales registradas aún en la hoja.</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
             else:
-                texto_creds = f"🔐 *Bóveda de Credenciales ({len(creds)} registradas):*\n\n"
+                texto_creds = f"🔐 <b>Bóveda de Credenciales ({len(creds)} registradas):</b>\n\n"
                 for c in creds[:10]:
-                    srv = c.get('SERVICIO', '')
-                    cat = c.get('CATEGORIA', 'General')
-                    usr = c.get('USUARIO_RUC', '')
-                    pwd = c.get('CONTRASEÑA', '')
-                    url_log = c.get('URL_LOGIN', '')
-                    pin = c.get('PIN_EXTRA', '')
+                    srv = html.escape(str(c.get('SERVICIO', '')).strip())
+                    cat = html.escape(str(c.get('CATEGORIA', 'General')).strip())
+                    usr = html.escape(str(c.get('USUARIO_RUC', '')).strip())
+                    pwd = html.escape(str(c.get('CONTRASEÑA', '')).strip())
+                    url_log = str(c.get('URL_LOGIN', '')).strip()
+                    pin = html.escape(str(c.get('PIN_EXTRA', '')).strip())
+                    obs = html.escape(str(c.get('OBSERVACIONES', '')).strip())
 
-                    texto_creds += f"🏛️ *{srv}* `[{cat}]`\n"
+                    texto_creds += f"🏛️ <b>{srv}</b> <code>[{cat}]</code>\n"
                     if url_log:
-                        texto_creds += f"🌐 Enlace: {url_log}\n"
-                    texto_creds += f"👤 Usuario: `{usr}`\n"
-                    texto_creds += f"🔑 Clave: `{pwd}`\n"
+                        url_esc = html.escape(url_log)
+                        texto_creds += f"🌐 Enlace: {url_esc}\n"
+                    if usr:
+                        texto_creds += f"👤 Usuario: <code>{usr}</code>\n"
+                    if pwd:
+                        texto_creds += f"🔑 Clave: <code>{pwd}</code>\n"
                     if pin:
-                        texto_creds += f"📌 PIN/Token: `{pin}`\n"
+                        texto_creds += f"📌 PIN/Token: <code>{pin}</code>\n"
+                    if obs:
+                        texto_creds += f"💡 <i>{obs}</i>\n"
                     texto_creds += "──────────────────\n"
 
                 url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
@@ -741,10 +758,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("📱 Gestionar en WebApp", web_app=WebAppInfo(url=url_panel_crd))],
                     [InlineKeyboardButton("🔍 Buscar", callback_data='crd_buscar'), InlineKeyboardButton("🔙 Volver", callback_data='menu_credenciales')]
                 ]
-                await msg_wait.edit_text(texto_creds, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown', disable_web_page_preview=True)
+                await msg_wait.edit_text(texto_creds, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML', disable_web_page_preview=True)
         except Exception as e:
             logger.error(f"Error listando credenciales: {e}")
-            await msg_wait.edit_text(f"❌ Error al consultar credenciales: {e}")
+            await msg_wait.edit_text(f"❌ Error al consultar credenciales: {html.escape(str(e))}")
 
     elif query.data == 'menu_guias':
         user_states[user_id] = None
@@ -1164,16 +1181,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             user_data_cache[user_id] = {"pendiente_draft": draft}
             card_text, kb_card = build_pendiente_draft_card(draft)
-            await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='Markdown')
+            await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='HTML')
         except Exception as e:
             logger.error(f"Error procesando pendiente IA: {e}")
-            await msg.edit_text(f"❌ Error al procesar pendiente: {e}")
+            await msg.edit_text(f"❌ Error al procesar pendiente: {html.escape(str(e))}")
         return
 
     elif modo == MODO_CREDENCIAL_BUSCAR:
         user_states[user_id] = None
         q = text.strip()
-        msg = await update.message.reply_text(f"🔍 Buscando credencial `{q}` en Google Sheets...")
+        msg = await update.message.reply_text(f"🔍 Buscando credencial <code>{html.escape(q)}</code> en Google Sheets...", parse_mode='HTML')
         try:
             res = await async_obtener_credenciales(query=q)
             if not res:
@@ -1183,28 +1200,31 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("📱 Abrir Bóveda WebApp", web_app=WebAppInfo(url=url_panel_crd))],
                     [InlineKeyboardButton("🔙 Menú Credenciales", callback_data='menu_credenciales')]
                 ]
-                await msg.edit_text(f"❌ No se encontró ninguna credencial que coincida con `{q}`.", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                await msg.edit_text(f"❌ No se encontró ninguna credencial que coincida con <code>{html.escape(q)}</code>.", reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
                 return
 
-            texto_res = f"🔐 *Resultados para:* `{q}`\n\n"
+            texto_res = f"🔐 <b>Resultados para:</b> <code>{html.escape(q)}</code>\n\n"
             for c in res[:6]:
-                srv = c.get('SERVICIO', '')
-                cat = c.get('CATEGORIA', 'General')
-                usr = c.get('USUARIO_RUC', '')
-                pwd = c.get('CONTRASEÑA', '')
-                url_log = c.get('URL_LOGIN', '')
-                pin = c.get('PIN_EXTRA', '')
-                obs = c.get('OBSERVACIONES', '')
+                srv = html.escape(str(c.get('SERVICIO', '')).strip())
+                cat = html.escape(str(c.get('CATEGORIA', 'General')).strip())
+                usr = html.escape(str(c.get('USUARIO_RUC', '')).strip())
+                pwd = html.escape(str(c.get('CONTRASEÑA', '')).strip())
+                url_log = str(c.get('URL_LOGIN', '')).strip()
+                pin = html.escape(str(c.get('PIN_EXTRA', '')).strip())
+                obs = html.escape(str(c.get('OBSERVACIONES', '')).strip())
 
-                texto_res += f"🏛️ *{srv}* `[{cat}]`\n"
+                texto_res += f"🏛️ <b>{srv}</b> <code>[{cat}]</code>\n"
                 if url_log:
-                    texto_res += f"🌐 Enlace: {url_log}\n"
-                texto_res += f"👤 Usuario: `{usr}`\n"
-                texto_res += f"🔑 Clave: `{pwd}`\n"
+                    url_esc = html.escape(url_log)
+                    texto_res += f"🌐 Enlace: {url_esc}\n"
+                if usr:
+                    texto_res += f"👤 Usuario: <code>{usr}</code>\n"
+                if pwd:
+                    texto_res += f"🔑 Clave: <code>{pwd}</code>\n"
                 if pin:
-                    texto_res += f"📌 PIN: `{pin}`\n"
+                    texto_res += f"📌 PIN: <code>{pin}</code>\n"
                 if obs:
-                    texto_res += f"💡 _{obs}_\n"
+                    texto_res += f"💡 <i>{obs}</i>\n"
                 texto_res += "──────────────────\n"
 
             url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
@@ -1212,10 +1232,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("📱 Ver en WebApp", web_app=WebAppInfo(url=url_panel_crd))],
                 [InlineKeyboardButton("🔍 Otra Búsqueda", callback_data='crd_buscar'), InlineKeyboardButton("🔙 Menú Credenciales", callback_data='menu_credenciales')]
             ]
-            await msg.edit_text(texto_res, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown', disable_web_page_preview=True)
+            await msg.edit_text(texto_res, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML', disable_web_page_preview=True)
         except Exception as e:
             logger.error(f"Error buscando credencial: {e}")
-            await msg.edit_text(f"❌ Error en búsqueda de credencial: {e}")
+            await msg.edit_text(f"❌ Error en búsqueda de credencial: {html.escape(str(e))}")
         return
 
     elif modo == MODO_COTIZACION_BUSCAR:
@@ -2381,10 +2401,10 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data_cache[user_id] = {"pendiente_draft": draft}
             user_states[user_id] = None
             card_text, kb_card = build_pendiente_draft_card(draft)
-            await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='Markdown')
+            await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='HTML')
         except Exception as e:
             logger.error(f"Error procesando audio pendiente: {e}")
-            await msg.edit_text(f"❌ Error al procesar audio: {e}")
+            await msg.edit_text(f"❌ Error al procesar audio: {html.escape(str(e))}")
         return
 
     # 1. Modo Bitácora
