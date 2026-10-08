@@ -314,7 +314,7 @@ def obtener_url_webapp_pendientes(user_id=None):
     if not base_url and WEBAPP_PANEL_URL:
         base_url = WEBAPP_PANEL_URL
     if not base_url:
-        base_url = "https://rojasnunezj-collab.github.io/Lia/webapp/pendientes.html"
+        base_url = "https://lia-w2yb.onrender.com/pendientes"
 
     params = {'v': str(int(time.time()))}
     if user_id:
@@ -336,7 +336,7 @@ def obtener_url_panel(tab='pendientes', user_id=None):
     if not base_url and RENDER_EXTERNAL_URL:
         base_url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/panel"
     if not base_url:
-        base_url = "https://rojasnunezj-collab.github.io/Lia/webapp/panel.html"
+        base_url = "https://lia-w2yb.onrender.com/panel"
 
     params = {'v': str(int(time.time())), 'tab': tab}
     if user_id:

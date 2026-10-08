@@ -1080,7 +1080,7 @@ def obtener_url_webapp_certificados(correlativo: Optional[str] = None, datos_edi
     if not base_url and RENDER_EXTERNAL_URL:
         base_url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/certificados"
     if not base_url:
-        base_url = "https://rojasnunezj-collab.github.io/Lia/webapp/certificados.html"
+        base_url = "https://lia-w2yb.onrender.com/certificados"
 
     params = {'v': str(int(time.time()))}
     if correlativo:

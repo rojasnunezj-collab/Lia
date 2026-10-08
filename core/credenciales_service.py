@@ -179,7 +179,7 @@ def obtener_url_webapp_credenciales(user_id=None):
     if not base_url and WEBAPP_PANEL_URL:
         base_url = WEBAPP_PANEL_URL
     if not base_url:
-        base_url = "https://rojasnunezj-collab.github.io/Lia/webapp/credenciales.html"
+        base_url = "https://lia-w2yb.onrender.com/credenciales"
 
     params = {'v': str(int(time.time()))}
     if user_id:

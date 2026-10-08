@@ -33,8 +33,7 @@ def obtener_url_webapp(correlativo=None, datos_edicion=None, user_id=None):
     if not base_url and RENDER_EXTERNAL_URL:
         base_url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/cotizaciones"
     if not base_url:
-        # Fallback para GitHub Pages oficial del repo Lia
-        base_url = "https://rojasnunezj-collab.github.io/Lia/webapp/cotizaciones.html"
+        base_url = "https://lia-w2yb.onrender.com/cotizaciones"
 
     params = {'v': str(int(time.time()))}
     if correlativo:

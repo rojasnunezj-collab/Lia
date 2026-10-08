@@ -521,7 +521,10 @@ def get_main_menu_keyboard(user_id=None):
     """Construye el teclado del menú principal organizado jerárquicamente (Opción 1)."""
     keyboard = [
         [InlineKeyboardButton("📑 Gestión de Documentos", callback_data='menu_documentos')],
-        [InlineKeyboardButton("🔍 Centro de Búsqueda", callback_data='menu_busqueda')],
+        [
+            InlineKeyboardButton("📜 Certificados IA", callback_data='menu_certificados'),
+            InlineKeyboardButton("🔍 Centro de Búsqueda", callback_data='menu_busqueda')
+        ],
         [
             InlineKeyboardButton("📌 Pendientes & Alertas", callback_data='menu_pendientes'),
             InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')
