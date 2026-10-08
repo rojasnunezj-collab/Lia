@@ -302,8 +302,32 @@ RESPONDE ÚNICAMENTE CON UN OBJETO JSON VÁLIDO CON ESTA ESTRUCTURA:
             "prioridad": "MEDIA"
         }
 
+def obtener_url_webapp_pendientes(user_id=None):
+    """Construye la URL segura HTTPS para la Mini App exclusiva de Pendientes & Alertas."""
+    import urllib.parse
+    import time
+    from config.settings import WEBAPP_PENDIENTES_URL, WEBAPP_PANEL_URL, RENDER_EXTERNAL_URL
+
+    base_url = WEBAPP_PENDIENTES_URL
+    if not base_url and RENDER_EXTERNAL_URL:
+        base_url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/pendientes"
+    if not base_url and WEBAPP_PANEL_URL:
+        base_url = WEBAPP_PANEL_URL
+    if not base_url:
+        base_url = "https://rojasnunezj-collab.github.io/Lia/webapp/pendientes.html"
+
+    params = {'v': str(int(time.time()))}
+    if user_id:
+        params['uid'] = str(user_id)
+
+    sep = '&' if '?' in base_url else '?'
+    return f"{base_url}{sep}{urllib.parse.urlencode(params)}"
+
 def obtener_url_panel(tab='pendientes', user_id=None):
     """Construye la URL segura HTTPS para abrir la Telegram Mini App del Panel de Gestión."""
+    if tab == 'pendientes':
+        return obtener_url_webapp_pendientes(user_id=user_id)
+
     import urllib.parse
     import time
     from config.settings import WEBAPP_PANEL_URL, RENDER_EXTERNAL_URL

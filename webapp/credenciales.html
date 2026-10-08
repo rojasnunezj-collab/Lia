@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Bóveda de Credenciales - EPMI SAC</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --primary: #0284c7;
+      --primary-dark: #0369a1;
+      --primary-light: #e0f2fe;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --success: #16a34a;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      padding-bottom: 70px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: white;
+      border-radius: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+      border: 1px solid var(--border);
+    }
+
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header-logo {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #0284c7, #0369a1);
+      color: white;
+      font-weight: 800;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header-info h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .header-info p {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .header-counter {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid rgba(2, 132, 199, 0.2);
+    }
+
+    /* Controls */
+    .controls-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+
+    .search-box {
+      flex: 1;
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 9px 12px 9px 34px;
+      font-size: 13px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: white;
+      outline: none;
+    }
+
+    .search-box input:focus {
+      border-color: var(--primary);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .btn-action-primary {
+      padding: 9px 14px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .btn-action-primary:active {
+      background: var(--primary-dark);
+    }
+
+    .filter-pills {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .pill {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      background: white;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+
+    .pill.active {
+      background: var(--primary-light);
+      border-color: var(--primary);
+      color: var(--primary-dark);
+    }
+
+    /* Cards */
+    .card-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .badge-tag {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: #f1f5f9;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .portal-link {
+      font-size: 12px;
+      color: var(--primary);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 500;
+    }
+
+    .field-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .field-box {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 10px;
+      margin-top: 2px;
+    }
+
+    .field-info {
+      font-family: monospace;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      user-select: all;
+    }
+
+    .copy-btn {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin-left: 6px;
+    }
+
+    .copy-btn:active {
+      background: #f1f5f9;
+    }
+
+    .eye-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 4px 6px;
+      color: var(--text-muted);
+    }
+
+    /* Modal Form */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.45);
+      backdrop-filter: blur(2px);
+      z-index: 200;
+      display: none;
+      align-items: flex-end;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-content {
+      background: white;
+      width: 100%;
+      border-radius: 20px 20px 0 0;
+      padding: 18px;
+      max-height: 90vh;
+      overflow-y: auto;
+      animation: slideUp 0.25s ease-out;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .btn-close {
+      background: #f1f5f9;
+      border: none;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      font-size: 16px;
+      cursor: pointer;
+      color: var(--text-muted);
+    }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      outline: none;
+      background: #fafafa;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      background: white;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 13px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #1e293b;
+      color: white;
+      padding: 10px 18px;
+      border-radius: 30px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      transition: transform 0.25s ease;
+      z-index: 300;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-muted);
+    }
+
+    .empty-state-icon {
+      font-size: 38px;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-brand">
+      <div class="header-logo">🔐</div>
+      <div class="header-info">
+        <h1>EPMI S.A.C.</h1>
+        <p>Bóveda Segura de Credenciales</p>
+      </div>
+    </div>
+    <div class="header-counter" id="badgeCuentas">0 Cuentas</div>
+  </div>
+
+  <!-- Controles y Filtros -->
+  <div class="controls-row">
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="searchCredenciales" placeholder="Buscar servicio, usuario, portal..." oninput="renderCredenciales()">
+    </div>
+    <button class="btn-action-primary" onclick="abrirModalCredencial()">
+      ➕ Nueva Clave
+    </button>
+  </div>
+
+  <div class="filter-pills" id="pillsCategorias">
+    <div class="pill active" onclick="setFiltro('todas', this)">Todas</div>
+    <div class="pill" onclick="setFiltro('Tributario / SUNAT', this)">🏛️ SUNAT</div>
+    <div class="pill" onclick="setFiltro('Balanza / Planta', this)">⚖️ Balanzas</div>
+    <div class="pill" onclick="setFiltro('Clientes / Portales', this)">👥 Clientes</div>
+    <div class="pill" onclick="setFiltro('Transporte / Logística', this)">🚚 Logística</div>
+    <div class="pill" onclick="setFiltro('Bancos / Finanzas', this)">💰 Bancos</div>
+  </div>
+
+  <!-- Lista de Credenciales -->
+  <div id="listaCredenciales" class="card-list">
+    <div class="empty-state">
+      <div class="empty-state-icon">⏳</div>
+      <p>Consultando bóveda de credenciales...</p>
+    </div>
+  </div>
+
+  <!-- Modal Nueva Credencial -->
+  <div class="modal-overlay" id="modalCredencial">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">🔐 Registrar Nueva Credencial</h3>
+        <button class="btn-close" onclick="cerrarModal()">✕</button>
+      </div>
+      <form id="formCredencial" onsubmit="guardarCredencial(event)">
+        <div class="form-group">
+          <label>Servicio o Plataforma *</label>
+          <input type="text" id="crd_servicio" placeholder="Ej: SUNAT Operaciones en Línea" required>
+        </div>
+        <div class="form-group">
+          <label>Categoría</label>
+          <select id="crd_categoria">
+            <option value="Tributario / SUNAT">🏛️ Tributario / SUNAT</option>
+            <option value="Balanza / Planta">⚖️ Balanza / Planta</option>
+            <option value="Clientes / Portales">👥 Clientes / Portales</option>
+            <option value="Transporte / Logística">🚚 Transporte / Logística</option>
+            <option value="Bancos / Finanzas">💰 Bancos / Finanzas</option>
+            <option value="General" selected>📝 General / Otros</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>URL de Acceso / Portal</label>
+          <input type="url" id="crd_url" placeholder="https://portal.sunat.gob.pe">
+        </div>
+        <div class="form-group">
+          <label>Usuario / RUC / Correo *</label>
+          <input type="text" id="crd_usuario" placeholder="Ej: 20601234567OPERADOR" required>
+        </div>
+        <div class="form-group">
+          <label>Contraseña *</label>
+          <input type="text" id="crd_clave" placeholder="Contraseña de acceso" required>
+        </div>
+        <div class="form-group">
+          <label>PIN / Token / Clave Extra</label>
+          <input type="text" id="crd_pin" placeholder="Opcional: PIN o clave secundaria">
+        </div>
+        <div class="form-group">
+          <label>Titular o Responsable</label>
+          <input type="text" id="crd_titular" placeholder="Ej: EPMI S.A.C.">
+        </div>
+        <div class="form-group">
+          <label>Observaciones / Instrucciones</label>
+          <textarea id="crd_obs" rows="2" placeholder="Notas sobre uso, preguntas de seguridad o vencimiento"></textarea>
+        </div>
+        <button type="submit" class="btn-submit" id="btnGuardarCrd">💾 Guardar Credencial</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast">✅ Copiado al portapapeles</div>
+
+  <script>
+    if (window.Telegram && window.Telegram.WebApp) {
+      window.Telegram.WebApp.expand();
+      window.Telegram.WebApp.ready();
+    }
+
+    let _credenciales = [];
+    let _filtro = 'todas';
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    function copyToClipboard(texto, label) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(texto).then(() => {
+          showToast(`📋 ${label} copiado`);
+        });
+      } else {
+        const input = document.createElement('input');
+        input.value = texto;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        showToast(`📋 ${label} copiado`);
+      }
+    }
+
+    function toggleMask(btn, id) {
+      const span = document.getElementById(id);
+      const isMasked = span.getAttribute('data-masked') === 'true';
+      if (isMasked) {
+        span.innerText = span.getAttribute('data-real');
+        span.setAttribute('data-masked', 'false');
+        btn.innerText = '🙈';
+      } else {
+        span.innerText = '••••••••••••';
+        span.setAttribute('data-masked', 'true');
+        btn.innerText = '👁️';
+      }
+    }
+
+    async function cargarDatos() {
+      try {
+        const res = await fetch('/api/credenciales').then(r => r.json()).catch(() => []);
+        _credenciales = Array.isArray(res) ? res : [];
+        document.getElementById('badgeCuentas').innerText = `${_credenciales.length} Cuentas`;
+        renderCredenciales();
+      } catch (e) {
+        console.error("Error cargando credenciales:", e);
+      }
+    }
+
+    function setFiltro(cat, el) {
+      _filtro = cat;
+      document.querySelectorAll('#pillsCategorias .pill').forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
+      renderCredenciales();
+    }
+
+    function renderCredenciales() {
+      const q = document.getElementById('searchCredenciales').value.trim().toLowerCase();
+      const container = document.getElementById('listaCredenciales');
+
+      let items = _credenciales.filter(c => {
+        const matchQ = !q || (c.SERVICIO + " " + c.USUARIO_RUC + " " + c.CATEGORIA + " " + (c.OBSERVACIONES||'') + " " + (c.TITULAR||'')).toLowerCase().includes(q);
+        if (!matchQ) return false;
+        if (_filtro !== 'todas' && c.CATEGORIA !== _filtro) return false;
+        return true;
+      });
+
+      if (items.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">🔍</div>
+            <p>No se encontraron credenciales en esta categoría</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = items.map((c, i) => {
+        const pwdId = `pwd_${i}`;
+        return `
+          <div class="card">
+            <div class="card-top">
+              <div class="card-title">🏛️ ${c.SERVICIO}</div>
+              <span class="badge-tag">${c.CATEGORIA || 'General'}</span>
+            </div>
+
+            ${c.URL_LOGIN ? `
+              <div style="margin-bottom:6px;">
+                <a href="${c.URL_LOGIN}" target="_blank" class="portal-link">
+                  ↗️ Abrir portal web
+                </a>
+              </div>
+            ` : ''}
+
+            <!-- Usuario -->
+            <div class="field-label">Usuario / RUC</div>
+            <div class="field-box">
+              <span class="field-info">${c.USUARIO_RUC}</span>
+              <button class="copy-btn" onclick="copyToClipboard('${c.USUARIO_RUC}', 'Usuario')">
+                📋 Copiar
+              </button>
+            </div>
+
+            <!-- Contraseña -->
+            <div class="field-label" style="margin-top:6px;">Contraseña</div>
+            <div class="field-box">
+              <span class="field-info" id="${pwdId}" data-masked="true" data-real="${c.CONTRASEÑA}">••••••••••••</span>
+              <div style="display:flex; align-items:center;">
+                <button class="eye-btn" onclick="toggleMask(this, '${pwdId}')">👁️</button>
+                <button class="copy-btn" onclick="copyToClipboard('${c.CONTRASEÑA}', 'Contraseña')">
+                  📋 Copiar
+                </button>
+              </div>
+            </div>
+
+            ${c.PIN_EXTRA ? `
+              <div class="field-label" style="margin-top:6px;">PIN / Clave Extra</div>
+              <div class="field-box">
+                <span class="field-info">${c.PIN_EXTRA}</span>
+                <button class="copy-btn" onclick="copyToClipboard('${c.PIN_EXTRA}', 'PIN')">📋 Copiar</button>
+              </div>
+            ` : ''}
+
+            ${c.TITULAR ? `
+              <div style="font-size:11px; color:#64748b; margin-top:4px;">
+                👤 Titular: <b>${c.TITULAR}</b>
+              </div>
+            ` : ''}
+
+            ${c.OBSERVACIONES ? `
+              <div style="font-size:11px; color:#64748b; margin-top:4px; font-style:italic;">
+                💡 ${c.OBSERVACIONES}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function abrirModalCredencial() {
+      document.getElementById('modalCredencial').classList.add('open');
+    }
+
+    function cerrarModal() {
+      document.getElementById('modalCredencial').classList.remove('open');
+    }
+
+    async function guardarCredencial(e) {
+      e.preventDefault();
+      const btn = document.getElementById('btnGuardarCrd');
+      btn.disabled = true;
+      btn.innerText = "Guardando...";
+
+      const payload = {
+        servicio: document.getElementById('crd_servicio').value,
+        categoria: document.getElementById('crd_categoria').value,
+        url_login: document.getElementById('crd_url').value,
+        usuario_ruc: document.getElementById('crd_usuario').value,
+        contraseña: document.getElementById('crd_clave').value,
+        pin_extra: document.getElementById('crd_pin').value,
+        titular: document.getElementById('crd_titular').value,
+        observaciones: document.getElementById('crd_obs').value
+      };
+
+      try {
+        const res = await fetch('/api/credenciales', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        }).then(r => r.json());
+
+        if (res.success) {
+          showToast('✅ Credencial guardada en Sheets');
+          cerrarModal();
+          document.getElementById('formCredencial').reset();
+          await cargarDatos();
+        }
+      } catch (err) {
+        showToast('❌ Error al guardar');
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "💾 Guardar Credencial";
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', cargarDatos);
+  </script>
+</body>
+</html>

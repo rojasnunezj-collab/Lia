@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Pendientes & Alertas - EPMI SAC</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --primary: #198754;
+      --primary-dark: #146c43;
+      --primary-light: #e8f5e9;
+      --bg: #f4f6f8;
+      --card-bg: #ffffff;
+      --text: #212529;
+      --text-muted: #6c757d;
+      --border: #e2e8f0;
+      --danger: #dc3545;
+      --warning: #f59e0b;
+      --info: #0d6efd;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      padding-bottom: 70px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: white;
+      border-radius: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+      border: 1px solid var(--border);
+    }
+
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header-logo {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #198754, #146c43);
+      color: white;
+      font-weight: 800;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header-info h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .header-info p {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .header-counter {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid rgba(25, 135, 84, 0.2);
+    }
+
+    /* Search & Action Bar */
+    .controls-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+
+    .search-box {
+      flex: 1;
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 9px 12px 9px 34px;
+      font-size: 13px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: white;
+      outline: none;
+    }
+
+    .search-box input:focus {
+      border-color: var(--primary);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .btn-action-primary {
+      padding: 9px 14px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .btn-action-primary:active {
+      background: var(--primary-dark);
+    }
+
+    .filter-pills {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .pill {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      background: white;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+
+    .pill.active {
+      background: var(--primary-light);
+      border-color: var(--primary);
+      color: var(--primary-dark);
+    }
+
+    /* Cards */
+    .card-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .card.completado {
+      opacity: 0.65;
+      background: #f8fafc;
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1.3;
+    }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .badge-alta { background: #fee2e2; color: #b91c1c; }
+    .badge-media { background: #fef3c7; color: #b45309; }
+    .badge-baja { background: #e0f2fe; color: #0369a1; }
+    .badge-done { background: #dcfce7; color: #15803d; }
+
+    .card-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .card-meta-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--border);
+    }
+
+    .btn-sm {
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: white;
+      cursor: pointer;
+      color: var(--text);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-sm-primary {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    /* Modal Form */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.45);
+      backdrop-filter: blur(2px);
+      z-index: 200;
+      display: none;
+      align-items: flex-end;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-content {
+      background: white;
+      width: 100%;
+      border-radius: 20px 20px 0 0;
+      padding: 18px;
+      max-height: 90vh;
+      overflow-y: auto;
+      animation: slideUp 0.25s ease-out;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .btn-close {
+      background: #f1f5f9;
+      border: none;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      font-size: 16px;
+      cursor: pointer;
+      color: var(--text-muted);
+    }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      outline: none;
+      background: #fafafa;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      background: white;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 13px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #1e293b;
+      color: white;
+      padding: 10px 18px;
+      border-radius: 30px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      transition: transform 0.25s ease;
+      z-index: 300;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-muted);
+    }
+
+    .empty-state-icon {
+      font-size: 38px;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-brand">
+      <div class="header-logo">📌</div>
+      <div class="header-info">
+        <h1>EPMI S.A.C.</h1>
+        <p>Gestión de Pendientes & Alertas</p>
+      </div>
+    </div>
+    <div class="header-counter" id="badgeActivos">0 Activos</div>
+  </div>
+
+  <!-- Controles y Filtros -->
+  <div class="controls-row">
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="searchPendientes" placeholder="Buscar pendiente, cliente o detalle..." oninput="renderPendientes()">
+    </div>
+    <button class="btn-action-primary" onclick="abrirModalPendiente()">
+      ➕ Nueva Tarea
+    </button>
+  </div>
+
+  <div class="filter-pills">
+    <div class="pill active" onclick="setFiltro('todos', this)">Todos Activos</div>
+    <div class="pill" onclick="setFiltro('hoy', this)">🔴 Para Hoy</div>
+    <div class="pill" onclick="setFiltro('alta', this)">⚠️ Alta Prioridad</div>
+    <div class="pill" onclick="setFiltro('completados', this)">✅ Completados</div>
+  </div>
+
+  <!-- Lista de Tarjetas -->
+  <div id="listaPendientes" class="card-list">
+    <div class="empty-state">
+      <div class="empty-state-icon">⏳</div>
+      <p>Cargando pendientes desde Sheets...</p>
+    </div>
+  </div>
+
+  <!-- Modal Nuevo Pendiente -->
+  <div class="modal-overlay" id="modalPendiente">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">📌 Registrar Nueva Tarea</h3>
+        <button class="btn-close" onclick="cerrarModal()">✕</button>
+      </div>
+      <form id="formPendiente" onsubmit="guardarPendiente(event)">
+        <div class="form-group">
+          <label>Título de la Tarea / Asunto *</label>
+          <input type="text" id="pnd_titulo" placeholder="Ej: Pedir peso de guía a Prosembra" required>
+        </div>
+        <div class="form-group">
+          <label>Detalle Adicional</label>
+          <textarea id="pnd_detalle" rows="2" placeholder="Detalles, números de teléfono o contexto"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Empresa / Cliente de Referencia</label>
+          <input type="text" id="pnd_cliente" placeholder="Ej: Agrícola Andrea, Prosembra, etc.">
+        </div>
+        <div class="form-group">
+          <label>Fecha y Hora Programada (Alerta) *</label>
+          <input type="datetime-local" id="pnd_fecha_alerta" required>
+        </div>
+        <div class="form-group">
+          <label>Prioridad</label>
+          <select id="pnd_prioridad">
+            <option value="ALTA">🔴 Alta (Urgente)</option>
+            <option value="MEDIA" selected>🟡 Media (Normal)</option>
+            <option value="BAJA">🟢 Baja (Flexible)</option>
+          </select>
+        </div>
+        <button type="submit" class="btn-submit" id="btnGuardarPnd">💾 Guardar Pendiente</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast">✅ Tarea actualizada</div>
+
+  <script>
+    if (window.Telegram && window.Telegram.WebApp) {
+      window.Telegram.WebApp.expand();
+      window.Telegram.WebApp.ready();
+    }
+
+    let _pendientes = [];
+    let _filtro = 'todos';
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    async function cargarDatos() {
+      try {
+        const res = await fetch('/api/pendientes').then(r => r.json()).catch(() => []);
+        _pendientes = Array.isArray(res) ? res : [];
+        const activos = _pendientes.filter(p => p.ESTADO === 'PENDIENTE').length;
+        document.getElementById('badgeActivos').innerText = `${activos} Activos`;
+        renderPendientes();
+      } catch (e) {
+        console.error("Error cargando pendientes:", e);
+      }
+    }
+
+    function setFiltro(tipo, el) {
+      _filtro = tipo;
+      document.querySelectorAll('.filter-pills .pill').forEach(p => p.classList.remove('active'));
+      el.classList.add('active');
+      renderPendientes();
+    }
+
+    function renderPendientes() {
+      const q = document.getElementById('searchPendientes').value.trim().toLowerCase();
+      const container = document.getElementById('listaPendientes');
+
+      let items = _pendientes.filter(item => {
+        const matchQ = !q || (item.TITULO_TAREA + " " + item.DETALLE + " " + item.CLIENTE_REF).toLowerCase().includes(q);
+        if (!matchQ) return false;
+
+        if (_filtro === 'hoy') {
+          return item.ESTADO === 'PENDIENTE';
+        } else if (_filtro === 'alta') {
+          return item.PRIORIDAD === 'ALTA' && item.ESTADO === 'PENDIENTE';
+        } else if (_filtro === 'completados') {
+          return item.ESTADO === 'COMPLETADO';
+        }
+        return item.ESTADO !== 'COMPLETADO';
+      });
+
+      if (items.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">🎉</div>
+            <p>No hay tareas pendientes en esta vista</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = items.map(p => {
+        const isDone = p.ESTADO === 'COMPLETADO';
+        const badgePrioridad = p.PRIORIDAD === 'ALTA' ? 'badge-alta' : (p.PRIORIDAD === 'BAJA' ? 'badge-baja' : 'badge-media');
+        return `
+          <div class="card ${isDone ? 'completado' : ''}">
+            <div class="card-top">
+              <div class="card-title">${p.TITULO_TAREA}</div>
+              <span class="badge ${isDone ? 'badge-done' : badgePrioridad}">
+                ${isDone ? 'COMPLETADO' : p.PRIORIDAD}
+              </span>
+            </div>
+            
+            <div class="card-meta">
+              ${p.CLIENTE_REF ? `<div class="card-meta-row">🏢 <b>${p.CLIENTE_REF}</b></div>` : ''}
+              <div class="card-meta-row">⏰ Alerta: <code>${p.FECHA_ALERTA || 'Sin fecha'}</code></div>
+              ${p.DETALLE ? `<div style="font-size:12px; color:#475569; margin-top:3px;">${p.DETALLE}</div>` : ''}
+            </div>
+
+            ${!isDone ? `
+              <div class="card-actions">
+                <button class="btn-sm btn-sm-primary" onclick="accionPendiente('${p.ID}', 'completar')">
+                  ✓ Marcar Listo
+                </button>
+                <button class="btn-sm" onclick="accionPendiente('${p.ID}', 'posponer', 60)">
+                  ⏰ +1 hora
+                </button>
+                <button class="btn-sm" onclick="accionPendiente('${p.ID}', 'posponer', 1440)">
+                  📅 Mañana
+                </button>
+              </div>
+            ` : `
+              <div style="font-size:11px; color:#15803d; margin-top:6px;">
+                ✅ Completado el ${p.FECHA_CIERRE || ''}
+              </div>
+            `}
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function accionPendiente(id, accion, minutos = 0) {
+      try {
+        const payload = { id, accion, minutos };
+        const res = await fetch('/api/pendientes/accion', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        }).then(r => r.json());
+
+        if (res.success) {
+          showToast(accion === 'completar' ? '✅ ¡Tarea completada!' : '⏰ Alerta reprogramada');
+          await cargarDatos();
+        }
+      } catch (e) {
+        showToast('❌ Error al actualizar');
+      }
+    }
+
+    function abrirModalPendiente() {
+      const now = new Date();
+      now.setHours(now.getHours() + 2);
+      const pad = n => String(n).padStart(2, '0');
+      const val = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      document.getElementById('pnd_fecha_alerta').value = val;
+      document.getElementById('modalPendiente').classList.add('open');
+    }
+
+    function cerrarModal() {
+      document.getElementById('modalPendiente').classList.remove('open');
+    }
+
+    async function guardarPendiente(e) {
+      e.preventDefault();
+      const btn = document.getElementById('btnGuardarPnd');
+      btn.disabled = true;
+      btn.innerText = "Guardando...";
+
+      const rawDate = document.getElementById('pnd_fecha_alerta').value;
+      let fechaFormatted = "";
+      if (rawDate) {
+        const d = new Date(rawDate);
+        const pad = n => String(n).padStart(2, '0');
+        fechaFormatted = `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+
+      const payload = {
+        titulo: document.getElementById('pnd_titulo').value,
+        detalle: document.getElementById('pnd_detalle').value,
+        cliente_ref: document.getElementById('pnd_cliente').value,
+        fecha_alerta: fechaFormatted,
+        prioridad: document.getElementById('pnd_prioridad').value
+      };
+
+      try {
+        const res = await fetch('/api/pendientes', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        }).then(r => r.json());
+
+        if (res.success) {
+          showToast('✅ Pendiente registrado con éxito');
+          cerrarModal();
+          document.getElementById('formPendiente').reset();
+          await cargarDatos();
+        }
+      } catch (err) {
+        showToast('❌ Error al guardar');
+      } finally {
+        btn.disabled = false;
+        btn.innerText = "💾 Guardar Pendiente";
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', cargarDatos);
+  </script>
+</body>
+</html>

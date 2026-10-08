@@ -39,7 +39,8 @@ from core.sheets_client import (
 from core.cotizaciones_service import (
     async_generar_cotizacion, async_buscar_cotizacion_por_correlativo,
     obtener_siguiente_correlativo, obtener_url_webapp,
-    async_sincronizar_pdf_desde_doc, interpretar_cotizacion_ia
+    async_sincronizar_pdf_desde_doc, interpretar_cotizacion_ia,
+    buscar_ruc_por_empresa, async_buscar_ruc_por_empresa
 )
 from core.invoices_service import (
     async_parse_factura_xml, parse_factura_pdf, async_detectar_tipo_documento_pdf,
@@ -55,10 +56,11 @@ from core.pendientes_service import (
     async_obtener_pendientes, async_crear_pendiente,
     async_actualizar_estado_pendiente, async_posponer_pendiente,
     async_obtener_alertas_por_disparar, async_marcar_alerta_enviada,
-    procesar_pendiente_ia, obtener_url_panel
+    procesar_pendiente_ia, obtener_url_panel, obtener_url_webapp_pendientes
 )
 from core.credenciales_service import (
-    async_obtener_credenciales, async_guardar_credencial
+    async_obtener_credenciales, async_guardar_credencial,
+    obtener_url_webapp_credenciales
 )
 
 def normalize_guide_number(val):
@@ -81,6 +83,72 @@ def check_is_petramas(val):
     if not val:
         return False
     return bool(re.search(r'PETRAM[AÁ]S', str(val), re.IGNORECASE))
+
+def match_guia_en_texto(guia_target, texto_referencia):
+    """
+    Determina si un número de guía (guia_target) coincide o está presente
+    en el campo de texto de referencia (texto_referencia), tolerando diferencias
+    de ceros a la izquierda, guiones, prefijos 'N°', 'Nº', etc.
+    """
+    if not guia_target or not texto_referencia:
+        return False
+    g_raw = str(guia_target).strip().upper()
+    t_raw = str(texto_referencia).strip().upper()
+    if not g_raw or not t_raw:
+        return False
+
+    # 1. Coincidencia directa por subcadena
+    if g_raw in t_raw:
+        return True
+
+    # 2. Normalización estándar (remover ceros no significativos)
+    norm_target = normalize_guide_number(g_raw)
+    norm_ref = normalize_guide_number(t_raw)
+    if norm_target and (norm_target == norm_ref or norm_target in norm_ref):
+        return True
+
+    # 3. Limpieza flexible (elimina prefijos comunes como 'N°', 'Nº', espacios y ceros)
+    def _limpiar_flexible(s):
+        s_clean = re.sub(r'N[°ºO\s]*', '', s)
+        s_clean = re.sub(r'\s+', '', s_clean)
+        if '-' in s_clean:
+            partes = s_clean.split('-')
+            return f"{partes[0]}-{partes[1].lstrip('0')}"
+        return s_clean.lstrip('0')
+
+    g_flex = _limpiar_flexible(g_raw)
+    t_flex = _limpiar_flexible(t_raw)
+    if g_flex and (g_flex in t_flex or t_flex in g_flex):
+        return True
+
+    # 4. Tokenización (para cuando en la columna Guía de Historial hay varias guías separadas por comas, etc.)
+    tokens = re.split(r'[,;/|\s]+', t_raw)
+    for tok in tokens:
+        tok_clean = tok.strip()
+        if not tok_clean:
+            continue
+        if norm_target and normalize_guide_number(tok_clean) == norm_target:
+            return True
+        if g_flex and _limpiar_flexible(tok_clean) == g_flex:
+            return True
+
+    return False
+
+async def async_obtener_historial_certificados():
+    """Descarga de forma segura y en hilo secundario los registros de la hoja Historial."""
+    def _fetch():
+        try:
+            creds = obtener_credenciales()
+            if not creds:
+                return []
+            client = gspread.authorize(creds)
+            book2 = client.open_by_key(SHEET_ID)
+            ws_hist = book2.worksheet("Historial")
+            return ws_hist.get_all_records()
+        except Exception as e:
+            logger.warning(f"No se pudo cargar la hoja Historial para certificados: {e}")
+            return []
+    return await asyncio.to_thread(_fetch)
 
 import core.sheets_client as rc 
 
@@ -212,7 +280,56 @@ async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAU
     user_id = query.from_user.id
     data = query.data
 
-    if data == 'pnd_confirm':
+    if data == 'pnd_add':
+        user_states[user_id] = MODO_PENDIENTE_ADD
+        kb = [[InlineKeyboardButton("🔙 Volver", callback_data='menu_pendientes'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]]
+        texto = (
+            "✍️ *Crear Nuevo Pendiente*\n\n"
+            "Escribe o envía una nota de voz con lo que necesitas recordar. Por ejemplo:\n"
+            "• _\"Recordar mañana a las 9am pedir certificado a Cerro Prieto\"_\n"
+            "• _\"Pedir peso de guía T001-45 en 30 minutos\"_\n"
+            "• _\"Pagar flete de transporte el viernes a las 3pm\"_\n\n"
+            "💡 _Lía calculará automáticamente la fecha/hora y te pedirá confirmar el borrador antes de guardarlo en Sheets._"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    elif data == 'pnd_list':
+        msg_wait = await query.message.reply_text("⏳ Consultando pendientes activos en Google Sheets...")
+        try:
+            pendientes = await async_obtener_pendientes(solo_activos=True)
+            if not pendientes:
+                kb = [
+                    [InlineKeyboardButton("➕ Crear Pendiente", callback_data='pnd_add')],
+                    [InlineKeyboardButton("🔙 Volver", callback_data='menu_pendientes')]
+                ]
+                await msg_wait.edit_text("🎉 <b>¡Excelente! No tienes pendientes activos por el momento.</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+            else:
+                texto_lista = f"📌 <b>Pendientes Activos ({len(pendientes)}):</b>\n\n"
+                kb_items = []
+                for p in pendientes[:8]:
+                    p_id = html.escape(str(p.get('ID', '')))
+                    tit = html.escape(str(p.get('TITULO_TAREA', 'Sin título')))
+                    fec = html.escape(str(p.get('FECHA_ALERTA', '')))
+                    prio = str(p.get('PRIORIDAD', 'MEDIA')).upper()
+                    p_badge = "🔴" if prio == "ALTA" else ("🟢" if prio == "BAJA" else "🟡")
+                    texto_lista += f"{p_badge} <code>[{p_id}]</code> <b>{tit}</b>\n⏰ <i>{fec}</i>\n\n"
+                    kb_items.append([
+                        InlineKeyboardButton(f"✅ Listo {p_id}", callback_data=f"pnd_done|{p_id}"),
+                        InlineKeyboardButton(f"⏰ +1h", callback_data=f"pnd_snooze|{p_id}|60")
+                    ])
+
+                url_app_pnd = obtener_url_webapp_pendientes(user_id=user_id)
+                kb_items.append([InlineKeyboardButton("📱 Ver Todos en WebApp", web_app=WebAppInfo(url=url_app_pnd))])
+                kb_items.append([InlineKeyboardButton("➕ Nuevo", callback_data='pnd_add'), InlineKeyboardButton("🔙 Volver", callback_data='menu_pendientes')])
+
+                await msg_wait.edit_text(texto_lista, reply_markup=InlineKeyboardMarkup(kb_items), parse_mode='HTML')
+        except Exception as e:
+            logger.error(f"Error listando pendientes: {e}")
+            await msg_wait.edit_text(f"❌ Error al consultar pendientes: {html.escape(str(e))}")
+        return
+
+    elif data == 'pnd_confirm':
         cache = user_data_cache.get(user_id, {})
         draft = cache.get("pendiente_draft")
         if not draft:
@@ -226,7 +343,7 @@ async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAU
             user_data_cache[user_id] = {}
             user_states[user_id] = None
 
-            url_panel = obtener_url_panel(tab='pendientes', user_id=user_id)
+            url_panel = obtener_url_webapp_pendientes(user_id=user_id)
             kb = [
                 [InlineKeyboardButton("📱 Ver en WebApp", web_app=WebAppInfo(url=url_panel))],
                 [InlineKeyboardButton("➕ Nuevo Pendiente", callback_data='pnd_add')],
@@ -738,7 +855,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     elif query.data == 'menu_pendientes':
         user_states[user_id] = None
-        url_panel_pnd = obtener_url_panel(tab='pendientes', user_id=user_id)
+        url_panel_pnd = obtener_url_webapp_pendientes(user_id=user_id)
         keyboard = [
             [InlineKeyboardButton("➕ Nuevo Pendiente (Texto o Voz)", callback_data='pnd_add')],
             [InlineKeyboardButton("📋 Ver Pendientes Activos", callback_data='pnd_list')],
@@ -792,7 +909,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         InlineKeyboardButton(f"⏰ +1h", callback_data=f"pnd_snooze|{p_id}|60")
                     ])
 
-                url_panel_pnd = obtener_url_panel(tab='pendientes', user_id=user_id)
+                url_panel_pnd = obtener_url_webapp_pendientes(user_id=user_id)
                 kb_items.append([InlineKeyboardButton("📱 Ver Todos en WebApp", web_app=WebAppInfo(url=url_panel_pnd))])
                 kb_items.append([InlineKeyboardButton("➕ Nuevo", callback_data='pnd_add'), InlineKeyboardButton("🔙 Volver", callback_data='menu_pendientes')])
 
@@ -803,7 +920,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == 'menu_credenciales':
         user_states[user_id] = None
-        url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+        url_panel_crd = obtener_url_webapp_credenciales(user_id=user_id)
         keyboard = [
             [InlineKeyboardButton("🔍 Buscar Credencial", callback_data='crd_buscar')],
             [InlineKeyboardButton("📋 Ver Todas las Cuentas", callback_data='crd_list_all')],
@@ -833,7 +950,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             creds = await async_obtener_credenciales()
             if not creds:
-                url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+                url_panel_crd = obtener_url_webapp_credenciales(user_id=user_id)
                 kb = [
                     [InlineKeyboardButton("➕ Registrar en WebApp", web_app=WebAppInfo(url=url_panel_crd))],
                     [InlineKeyboardButton("🔙 Volver", callback_data='menu_credenciales')]
@@ -864,7 +981,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         texto_creds += f"💡 <i>{obs}</i>\n"
                     texto_creds += "──────────────────\n"
 
-                url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+                url_panel_crd = obtener_url_webapp_credenciales(user_id=user_id)
                 kb = [
                     [InlineKeyboardButton("📱 Gestionar en WebApp", web_app=WebAppInfo(url=url_panel_crd))],
                     [InlineKeyboardButton("🔍 Buscar", callback_data='crd_buscar'), InlineKeyboardButton("🔙 Volver", callback_data='menu_credenciales')]
@@ -1377,7 +1494,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             res = await async_obtener_credenciales(query=q)
             if not res:
-                url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+                url_panel_crd = obtener_url_webapp_credenciales(user_id=user_id)
                 kb = [
                     [InlineKeyboardButton("🔍 Nueva Búsqueda", callback_data='crd_buscar')],
                     [InlineKeyboardButton("📱 Abrir Bóveda WebApp", web_app=WebAppInfo(url=url_panel_crd))],
@@ -1410,7 +1527,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     texto_res += f"💡 <i>{obs}</i>\n"
                 texto_res += "──────────────────\n"
 
-            url_panel_crd = obtener_url_panel(tab='credenciales', user_id=user_id)
+            url_panel_crd = obtener_url_webapp_credenciales(user_id=user_id)
             kb = [
                 [InlineKeyboardButton("📱 Ver en WebApp", web_app=WebAppInfo(url=url_panel_crd))],
                 [InlineKeyboardButton("🔍 Otra Búsqueda", callback_data='crd_buscar'), InlineKeyboardButton("🔙 Menú Credenciales", callback_data='menu_credenciales')]
@@ -1590,12 +1707,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     encontrados.append(r)
             
             if encontrados:
+                # Descargar registros de Historial una sola vez para cruzar certificados
+                registros_historial = await async_obtener_historial_certificados()
+
                 reporte = f"✅ **REPORTE: {len(encontrados)} Coincidencias Encontradas**\n\n"
                 for r in encontrados:
                     origen = r.get('_origen')
                     num_guia = str(r.get('N° Guía', r.get('Numero Guia', r.get('Nro Guia', 'S/D'))))
                     tipo_guia = r.get('Tipo Guía', r.get('Tipo', 'S/D'))
                     empresa = r.get('Empresa Principal', r.get('Empresa', 'S/D'))
+                    guia_ligada = str(r.get('Guía ligada', r.get('Guia ligada', ''))).strip()
                     
                     if origen == "Registro_Guias":
                         entidad_1 = r.get('Destinatario/Remitente', 'S/D')
@@ -1612,6 +1733,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                     reporte += f"🗂️ **Base:** `{origen}`\n"
                     reporte += f"📄 **Guía:** `{num_guia}`\n"
+                    if guia_ligada and guia_ligada != "S/D":
+                        reporte += f"🔗 **Guía Ligada:** `{guia_ligada}`\n"
                     reporte += f"🏷️ **Tipo:** `{tipo_guia}`\n"
                     reporte += f"🏢 **Empresa:** `{empresa}`\n"
                     if origen == "Registro_Guias":
@@ -1639,13 +1762,65 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             link_rec_resc = await async_buscar_link_en_drive(enlace_recibida)
                             if link_rec_resc:
                                 reporte += f"📎 [Guía Recibida]({link_rec_resc})\n"
+
+                    # --- VERIFICACIÓN DE CERTIFICADO ---
+                    certs_asociados = []
+                    if registros_historial:
+                        for h in registros_historial:
+                            guia_hist = str(h.get('Guia', h.get('GUIA', ''))).strip()
+                            if not guia_hist:
+                                continue
+                            if match_guia_en_texto(num_guia, guia_hist) or (guia_ligada and match_guia_en_texto(guia_ligada, guia_hist)):
+                                certs_asociados.append(h)
+
+                    # Respaldo: verificar columna Certificados de la fila (si no es marca de tiempo del bot)
+                    cert_col_raw = str(r.get('Certificados', r.get('CERTIFICADOS', ''))).strip()
+                    cert_en_fila = ""
+                    if cert_col_raw and not any(term in cert_col_raw.upper() for term in ["NUEVO", "ACTUALIZADO", "S/D", "NONE"]):
+                        cert_en_fila = cert_col_raw
+
+                    if certs_asociados:
+                        reporte += "📜 **Certificado:** ✅ HECHO / EMITIDO\n"
+                        for c in certs_asociados[:2]:
+                            c_num = str(c.get('Certificado', '')).strip()
+                            c_corr = str(c.get('Correlativo', '')).strip()
+                            c_fec = str(c.get('Fecha de emision', '')).strip()
+                            c_link = str(c.get('Link Documento', '')).strip()
+
+                            detalles_cert = []
+                            if c_num and c_num != "S/D":
+                                detalles_cert.append(f"`{c_num}`")
+                            if c_corr and c_corr != "S/D" and c_corr not in c_num:
+                                detalles_cert.append(f"Correlativo: `{c_corr}`")
+                            if c_fec and c_fec != "S/D":
+                                detalles_cert.append(f"Fecha: `{c_fec}`")
+
+                            if detalles_cert:
+                                reporte += f"   • {' | '.join(detalles_cert)}\n"
+                            
+                            if c_link:
+                                if c_link.startswith("http"):
+                                    reporte += f"   📂 [Abrir Certificado]({c_link})\n"
+                                else:
+                                    url_cert = await async_buscar_link_en_drive(c_link)
+                                    if url_cert:
+                                        reporte += f"   📂 [Abrir Certificado]({url_cert})\n"
+                                    else:
+                                        reporte += f"   📂 _Certificado en Drive: `{c_link}`_\n"
+                    elif cert_en_fila:
+                        reporte += f"📜 **Certificado:** ✅ HECHO (`{cert_en_fila}`)\n"
+                    else:
+                        reporte += "📜 **Certificado:** ⚠️ PENDIENTE / NO REALIZADO\n"
                     
                     reporte += "➖➖➖➖➖➖➖➖➖➖\n"
                 
                 if len(reporte) > 4000:
                     reporte = reporte[:4000] + "\n\n⚠️ _[Reporte recortado por límite de caracteres de Telegram]_"
                     
-                await msg.edit_text(reporte, parse_mode='Markdown', disable_web_page_preview=True)
+                try:
+                    await msg.edit_text(reporte, parse_mode='Markdown', disable_web_page_preview=True)
+                except Exception:
+                    await msg.edit_text(reporte, disable_web_page_preview=True)
             else: 
                 await msg.edit_text("❌ No se encontraron resultados para esa búsqueda.")
         except Exception as e: 
@@ -1708,13 +1883,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text(f"⏳ Buscando `{raw_query}` estrictamente en la categoría seleccionada...")
         
         try:
-            def fetch_historial():
-                creds = obtener_credenciales()
-                client = gspread.authorize(creds)
-                book2 = client.open_by_key(SHEET_ID)
-                return book2.worksheet("Historial").get_all_records()
-                
-            registros = await asyncio.to_thread(fetch_historial)
+            registros = await async_obtener_historial_certificados()
             encontrados = []
             
             for r in registros:
@@ -2238,6 +2407,35 @@ async def ejecutar_lectura_ocr(user_id, file_path, mime_type, context, msg_statu
         full_report = re.sub(r'👤 \*\*Entidad 2 \(Dest/Prov\)\*\*: `S/D`\n?', '', full_report)
         full_report = full_report.replace("Motivo: `None`", "Motivo: `Servicio de Transporte`")
 
+        # --- BÚSQUEDA DE RUC EN CATÁLOGO SI NO SE LEYÓ CON OCR (PDF) ---
+        ruc_actual = str(datos_sheet.get("ruc_emisor", "")).strip()
+        ruc_digits = re.sub(r'\D', '', ruc_actual)
+        es_ruc_valido = len(ruc_digits) == 11 and ruc_digits.startswith(('10', '15', '17', '20'))
+
+        if not es_ruc_valido:
+            empresa_nombre = datos_sheet.get("empresa", "")
+            ruc_cat, empresa_cat = await async_buscar_ruc_por_empresa(empresa_nombre)
+
+            # Si no encontró por empresa emisora y es transportista, intentar con entidad_1
+            if not ruc_cat and datos_sheet.get("tipo", "").upper() == "TRANSPORTISTA":
+                entidad_1 = datos_sheet.get("entidad_1", "")
+                if entidad_1 and entidad_1.upper() != "S/D":
+                    ruc_cat, empresa_cat = await async_buscar_ruc_por_empresa(entidad_1)
+
+            if ruc_cat:
+                datos_sheet["ruc_emisor"] = ruc_cat
+                logger.info(f"✅ RUC recuperado de catálogo para '{empresa_nombre}': {ruc_cat} ({empresa_cat})")
+                patron_ruc = r'🆔 \*\*RUC Emisor\*\*:\s*(`[^`\n]*`|[^\n]+)'
+                nuevo_ruc_line = f"🆔 **RUC Emisor**: `{ruc_cat}` *(Catálogo)*"
+                if re.search(patron_ruc, full_report):
+                    full_report = re.sub(patron_ruc, nuevo_ruc_line, full_report)
+                elif "🏢 **Empresa Emisora**:" in full_report:
+                    full_report = re.sub(
+                        r'(🏢 \*\*Empresa Emisora\*\*:[^\n]+)',
+                        rf'\1\n{nuevo_ruc_line}',
+                        full_report
+                    )
+
         folder_solo_leer = DRIVE_FOLDER_LEER
         enlace_drive = await async_subir_a_drive(file_path, mime_type, folder_id=folder_solo_leer)
         
@@ -2340,6 +2538,19 @@ async def ejecutar_registro_guia(user_id, file_path, mime_type, context, msg_sta
             datos_sheet["motivo"] = "Servicio de Transporte"
             
         numero_completo = f"{datos_sheet.get('serie', '')}-{datos_sheet.get('correlativo', '')}"
+
+        # --- BÚSQUEDA DE RUC EN CATÁLOGO SI NO SE LEYÓ CON OCR (PDF) ---
+        ruc_actual = str(datos_sheet.get("ruc_emisor", "")).strip()
+        ruc_digits = re.sub(r'\D', '', ruc_actual)
+        if not (len(ruc_digits) == 11 and ruc_digits.startswith(('10', '15', '17', '20'))):
+            empresa_nombre = datos_sheet.get("empresa", "")
+            ruc_cat, _ = await async_buscar_ruc_por_empresa(empresa_nombre)
+            if not ruc_cat and datos_sheet.get("tipo", "").upper() == "TRANSPORTISTA":
+                entidad_1 = datos_sheet.get("entidad_1", "")
+                if entidad_1 and entidad_1.upper() != "S/D":
+                    ruc_cat, _ = await async_buscar_ruc_por_empresa(entidad_1)
+            if ruc_cat:
+                datos_sheet["ruc_emisor"] = ruc_cat
         
         enlace_drive = await async_subir_a_drive(file_path, mime_type)
         if not rc.sheet_control: await asyncio.to_thread(conectar_servicios)

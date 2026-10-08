@@ -144,16 +144,27 @@ def obtener_siguiente_correlativo():
         logger.error(f"Error obteniendo siguiente correlativo: {e}")
         return "080"
 
-def obtener_catalogo_clientes():
-    """Obtiene la lista de clientes registrados en la pestaña CLIENTES para el autocompletado."""
+_CATALOGO_CACHE = None
+_CATALOGO_CACHE_TIME = 0
+CATALOGO_CACHE_TTL = 900  # 15 minutos de caché
+
+def obtener_catalogo_clientes(force_refresh=False):
+    """Obtiene la lista de clientes registrados en la pestaña CLIENTES y EMPRESAS con caché."""
+    global _CATALOGO_CACHE, _CATALOGO_CACHE_TIME
+    now = time.time()
+    if not force_refresh and _CATALOGO_CACHE is not None and (now - _CATALOGO_CACHE_TIME < CATALOGO_CACHE_TTL):
+        return _CATALOGO_CACHE
+
     try:
         creds = obtener_credenciales()
         gc = gspread.authorize(creds)
         book = gc.open_by_key(SHEET_ID)
+        clientes = []
+
+        # 1. Leer pestaña CLIENTES
         try:
             ws = book.worksheet("CLIENTES")
             records = ws.get_all_records()
-            clientes = []
             for r in records:
                 empresa = str(r.get("EMPRESA", "")).strip()
                 if not empresa:
@@ -170,13 +181,69 @@ def obtener_catalogo_clientes():
                     "ruc": ruc,
                     "direccion": direccion
                 })
-            return clientes
         except Exception as e:
             logger.warning(f"No se pudo leer pestaña CLIENTES: {e}")
-            return []
+
+        # 2. Leer pestaña EMPRESAS (EPMI, INECOVE, etc.)
+        try:
+            ws_emp = book.worksheet("EMPRESAS")
+            for r in ws_emp.get_all_records():
+                emp = str(r.get("EMPRESA", "")).strip()
+                ruc_emp = str(r.get("RUC", "")).strip()
+                if emp and ruc_emp:
+                    if not any(c["empresa"].upper() == emp.upper() for c in clientes):
+                        clientes.append({
+                            "empresa": emp,
+                            "ruc": ruc_emp,
+                            "direccion": ""
+                        })
+        except Exception as e:
+            logger.debug(f"No se pudo leer pestaña EMPRESAS: {e}")
+
+        if clientes:
+            _CATALOGO_CACHE = clientes
+            _CATALOGO_CACHE_TIME = now
+            return clientes
+        return _CATALOGO_CACHE if _CATALOGO_CACHE is not None else []
     except Exception as e:
         logger.error(f"Error cargando catálogo de clientes: {e}")
-        return []
+        return _CATALOGO_CACHE if _CATALOGO_CACHE is not None else []
+
+def buscar_ruc_por_empresa(nombre_empresa: str):
+    """
+    Busca el RUC de una empresa en el catálogo de CLIENTES y EMPRESAS
+    usando coincidencia flexible (match_company_flexible).
+    Retorna (ruc, nombre_oficial) o (None, None).
+    """
+    if not nombre_empresa:
+        return None, None
+    nombre_clean = str(nombre_empresa).strip()
+    if not nombre_clean or nombre_clean.upper() in ["S/D", "NONE", "-", "", "NULL", "DESCONOCIDO"]:
+        return None, None
+
+    from utils.helpers import match_company_flexible
+
+    catalogo = obtener_catalogo_clientes()
+    best_item = None
+    best_score = 0.0
+
+    for c in catalogo:
+        empresa_cat = str(c.get("empresa", "")).strip()
+        ruc_cat = str(c.get("ruc", "")).strip()
+        if not ruc_cat:
+            continue
+        is_match, score = match_company_flexible(nombre_clean, empresa_cat)
+        if is_match and score > best_score:
+            best_score = score
+            best_item = c
+
+    if best_item and best_score >= 0.70:
+        return str(best_item.get("ruc", "")).strip(), str(best_item.get("empresa", "")).strip()
+
+    return None, None
+
+async def async_buscar_ruc_por_empresa(nombre_empresa: str):
+    return await asyncio.to_thread(buscar_ruc_por_empresa, nombre_empresa)
 
 # ====================================================================
 # --- GENERACIÓN DE DOCUMENTO Y PDF ---

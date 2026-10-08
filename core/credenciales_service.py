@@ -166,3 +166,25 @@ async def async_eliminar_credencial(crd_id: str):
     except Exception as e:
         logger.error(f"Error en async_eliminar_credencial: {e}")
         return False
+
+def obtener_url_webapp_credenciales(user_id=None):
+    """Construye la URL segura HTTPS para la Mini App exclusiva de Bóveda de Credenciales."""
+    import urllib.parse
+    import time
+    from config.settings import WEBAPP_CREDENCIALES_URL, WEBAPP_PANEL_URL, RENDER_EXTERNAL_URL
+
+    base_url = WEBAPP_CREDENCIALES_URL
+    if not base_url and RENDER_EXTERNAL_URL:
+        base_url = f"{RENDER_EXTERNAL_URL.rstrip('/')}/credenciales"
+    if not base_url and WEBAPP_PANEL_URL:
+        base_url = WEBAPP_PANEL_URL
+    if not base_url:
+        base_url = "https://rojasnunezj-collab.github.io/Lia/webapp/credenciales.html"
+
+    params = {'v': str(int(time.time()))}
+    if user_id:
+        params['uid'] = str(user_id)
+
+    sep = '&' if '?' in base_url else '?'
+    return f"{base_url}{sep}{urllib.parse.urlencode(params)}"
+
