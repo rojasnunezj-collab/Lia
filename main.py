@@ -20,7 +20,8 @@ from bot.handlers import (
     handle_callback_direct_action, handle_callback_pregunta_registro,
     handle_callback_pregunta_ligar, handle_callback_destino_manual,
     handle_web_app_data,
-    handle_callback_pendientes, job_verificar_alertas_pendientes
+    handle_callback_pendientes, job_verificar_alertas_pendientes,
+    certificados_command
 )
 
 # ====================================================================
@@ -104,6 +105,7 @@ def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(CommandHandler(["certificados", "certificado", "cert"], certificados_command))
     app.add_handler(CallbackQueryHandler(handle_callback_vinculacion, pattern=r"^vinc\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_observacion, pattern=r"^obs\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_reminder, pattern=r"^rem\|"))

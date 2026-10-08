@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sistema de Certificados IA - Lía</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --primary: #198754;
+      --primary-dark: #146c43;
+      --primary-light: #e8f5e9;
+      --bg: #f8f9fa;
+      --card-bg: #ffffff;
+      --text: #212529;
+      --text-muted: #6c757d;
+      --border: #dee2e6;
+      --danger: #dc3545;
+      --info: #0d6efd;
+      --warning: #ffc107;
+      --accent: #0f5132;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      padding-bottom: 95px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      background: white;
+      border-radius: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      border: 1px solid var(--border);
+    }
+
+    .header-logo {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, #198754, #0f5132);
+      color: white;
+      font-weight: 800;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+
+    .header-info {
+      flex: 1;
+    }
+
+    .header-info h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--primary-dark);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .header-info p {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .user-pill {
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      padding: 3px 8px;
+      border-radius: 12px;
+      white-space: nowrap;
+    }
+
+    /* Navigation Tabs */
+    .nav-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      background: #e9ecef;
+      padding: 4px;
+      border-radius: 10px;
+      overflow-x: auto;
+    }
+
+    .nav-tab {
+      flex: 1;
+      text-align: center;
+      padding: 8px 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      border-radius: 8px;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+
+    .nav-tab.active {
+      background: white;
+      color: var(--primary-dark);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      border: 1px solid var(--border);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary-dark);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .card-title span {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Forms */
+    .form-group {
+      margin-bottom: 10px;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 10px;
+    }
+
+    .form-row .form-group {
+      flex: 1;
+    }
+
+    label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 9px 12px;
+      font-size: 13px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      outline: none;
+      background: #fafafa;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      background: #fff;
+    }
+
+    /* File Drop Zone */
+    .drop-zone {
+      border: 2px dashed #bbf7d0;
+      background: #f0fdf4;
+      border-radius: 12px;
+      padding: 18px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+    }
+
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--primary);
+      background: var(--primary-light);
+    }
+
+    .drop-zone-icon {
+      font-size: 32px;
+      color: var(--primary);
+      margin-bottom: 4px;
+    }
+
+    .drop-zone-text {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .drop-zone-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .file-input {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .file-loaded-badge {
+      display: none;
+      background: #d1e7dd;
+      color: #0f5132;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-top: 8px;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    /* Ítems / Residuos */
+    .item-card {
+      background: #fafafa;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 8px;
+      position: relative;
+    }
+
+    .item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .item-badge {
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+
+    .btn-delete {
+      background: transparent;
+      border: none;
+      color: var(--danger);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 2px 6px;
+    }
+
+    .btn-add {
+      width: 100%;
+      padding: 10px;
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      border: 1px dashed var(--primary);
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    /* Botones de Acción */
+    .btn-action {
+      width: 100%;
+      padding: 11px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: opacity 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-info {
+      background: var(--info);
+      color: white;
+    }
+
+    .btn-warning {
+      background: #f59e0b;
+      color: white;
+    }
+
+    .btn-action:active {
+      opacity: 0.85;
+    }
+
+    /* Fixed Footer Bar */
+    .footer-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: white;
+      padding: 12px 16px;
+      box-shadow: 0 -3px 12px rgba(0,0,0,0.08);
+      border-top: 1px solid var(--border);
+      z-index: 100;
+    }
+
+    /* Toggles */
+    .toggle-group {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+    }
+
+    .toggle-group span {
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 24px;
+    }
+
+    .switch input { opacity: 0; width: 0; height: 0; }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #ccc;
+      transition: .3s;
+      border-radius: 24px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px; width: 18px;
+      left: 3px; bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider { background-color: var(--primary); }
+    input:checked + .slider:before { transform: translateX(18px); }
+
+    /* Modal de Estado / Spinner */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.65);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    .modal-card {
+      background: white;
+      border-radius: 14px;
+      padding: 20px;
+      width: 100%;
+      max-width: 380px;
+      text-align: center;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+    }
+
+    .spinner {
+      width: 44px;
+      height: 44px;
+      border: 4px solid #e9ecef;
+      border-top: 4px solid var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 12px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    /* Tabla de Repositorio */
+    .repo-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px;
+      border-bottom: 1px solid #edf2f7;
+      cursor: pointer;
+    }
+
+    .repo-item:last-child {
+      border-bottom: none;
+    }
+
+    .repo-item:hover {
+      background: #f8fafc;
+    }
+
+    .repo-check {
+      margin-top: 4px;
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .repo-info {
+      flex: 1;
+    }
+
+    .repo-guia {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .repo-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .badge-dest {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      background: #e2e8f0;
+      color: #334155;
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-logo">📄</div>
+    <div class="header-info">
+      <h1>Certificados IA <span style="font-size:11px; font-weight:normal; color:#198754;">v2.0</span></h1>
+      <p>EPMI S.A.C. & INECOVE S.A.C.</p>
+    </div>
+    <div class="user-pill" id="userPill">Conectado</div>
+  </div>
+
+  <!-- NAVEGACIÓN POR PESTAÑAS -->
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="switchTab('tab-ocr')">📷 OCR Guía</button>
+    <button class="nav-tab" onclick="switchTab('tab-manual')">✍️ Manual</button>
+    <button class="nav-tab" onclick="switchTab('tab-repo')">🗂️ Repositorio</button>
+    <button class="nav-tab" onclick="switchTab('tab-modificar')">🔄 Modificar</button>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- TAB 1: OCR DE GUÍAS DE REMISIÓN -->
+  <!-- ======================================================== -->
+  <div id="tab-ocr" class="tab-content">
+    <div class="card">
+      <div class="card-title">
+        <span>📷 Cargar Guía de Remisión (PDF)</span>
+        <span style="font-size: 11px; font-weight: normal; color: var(--text-muted);">Vertex AI Gemini</span>
+      </div>
+
+      <div class="drop-zone" id="dropZoneOcr">
+        <div class="drop-zone-icon">📥</div>
+        <div class="drop-zone-text">Toca para seleccionar el PDF de la Guía</div>
+        <div class="drop-zone-sub">Formatos soportados: PDF electrónico</div>
+        <input type="file" id="ocrFile" class="file-input" accept="application/pdf">
+      </div>
+      <div id="ocrFileBadge" class="file-loaded-badge">
+        <span>✅ Archivo cargado:</span> <span id="ocrFileName" style="font-weight:700;"></span>
+      </div>
+
+      <div style="margin-top: 10px;">
+        <button type="button" class="btn-action btn-info" id="btnProcesarOcr" onclick="ejecutarOcr()">
+          ⚡ Extraer Datos con IA Gemini
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- FORMULARIO DE EMISIÓN (COMPARTIDO POR OCR Y MANUAL) -->
+  <!-- ======================================================== -->
+  <div id="section-formulario" class="tab-content">
+    <div class="card">
+      <div class="card-title">
+        <span>🏢 Configuración del Certificado</span>
+        <span id="badgeCorrelativo" style="font-size:11px; background:#dcfce7; color:#15803d; padding:2px 8px; border-radius:6px; font-weight:700;">N° ...</span>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Empresa Firmante</label>
+          <select id="empresaFirma" onchange="actualizarCorrelativoSugerido()">
+            <option value="EPMI S.A.C.">EPMI S.A.C.</option>
+            <option value="INECOVE S.A.C.">INECOVE S.A.C.</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Tipo de Certificado</label>
+          <select id="tipoFlujo" onchange="actualizarCorrelativoSugerido()">
+            <option value="Comercialización">Comercialización</option>
+            <option value="Disposición Final 1">Disposición Final 1</option>
+            <option value="Disposición Final 2">Disposición Final 2</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>N° Correlativo</label>
+          <input type="text" id="correlativo" placeholder="Ej: 215">
+        </div>
+        <div class="form-group">
+          <label>Fecha de Emisión</label>
+          <input type="text" id="fechaEmision" placeholder="dd/mm/yyyy">
+        </div>
+      </div>
+
+      <div class="toggle-group">
+        <span>📝 Generar como Certificado Modelo (Pruebas)</span>
+        <label class="switch">
+          <input type="checkbox" id="esModelo">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>👤 Datos del Cliente y Traslado</span>
+      </div>
+
+      <div class="form-group">
+        <label>Cliente / Remitente</label>
+        <input type="text" id="cliente" placeholder="Razón Social del Cliente">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>RUC Cliente</label>
+          <input type="text" id="rucCliente" placeholder="20XXXXXXXXX">
+        </div>
+        <div class="form-group">
+          <label>Placa Vehículo</label>
+          <input type="text" id="placa" placeholder="ABC-123">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Punto de Partida (Origen / Fundo)</label>
+        <input type="text" id="puntoPartida" placeholder="Dirección Base - Fundo / Predio">
+      </div>
+
+      <div class="form-group">
+        <label>Punto de Llegada (Destino / Planta)</label>
+        <input type="text" id="puntoLlegada" placeholder="Planta de Disposición / Destino">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Servicio</label>
+          <input type="text" id="servicio" value="COMERCIALIZACIÓN">
+        </div>
+        <div class="form-group">
+          <label>Tipo de Residuo</label>
+          <input type="text" id="tipoResiduo" value="RESIDUOS NO PELIGROSOS">
+        </div>
+      </div>
+    </div>
+
+    <!-- TABLA DE RESIDUOS / ÍTEMS -->
+    <div class="card">
+      <div class="card-title">
+        <span>📦 Matriz de Residuos / Ítems</span>
+        <span id="badgeTotalItems" style="font-size:11px; color:var(--text-muted);">0 ítems</span>
+      </div>
+
+      <div id="itemsContainer">
+        <!-- Ítems dinámicos -->
+      </div>
+
+      <button type="button" class="btn-add" onclick="agregarFilaItem()">
+        ➕ Agregar Residuo
+      </button>
+    </div>
+
+    <!-- ANEXOS OPCIONALES DE GUÍA (PARA CONSOLIDAR EN PDF) -->
+    <div class="card">
+      <div class="card-title">
+        <span>📎 Anexos de Guías (Consolidar en PDF)</span>
+      </div>
+      <div class="form-group">
+        <label>Guía de Remisión (PDF adjunto para unir al final)</label>
+        <input type="file" id="adjuntoRemision" accept="application/pdf">
+      </div>
+      <div class="form-group">
+        <label>Guía de Transporte (Opcional - PDF)</label>
+        <input type="file" id="adjuntoTransporte" accept="application/pdf">
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- TAB 3: REPOSITORIO DE GUÍAS PENDIENTES -->
+  <!-- ======================================================== -->
+  <div id="tab-repo" class="tab-content" style="display:none;">
+    <div class="card">
+      <div class="card-title">
+        <span>🗂️ Guías Pendientes en Google Sheets</span>
+        <button type="button" onclick="cargarRepositorioGuias()" style="background:none; border:none; color:var(--info); font-size:12px; font-weight:700; cursor:pointer;">🔄 Recargar</button>
+      </div>
+      <input type="text" id="repoFiltro" placeholder="Filtrar por empresa, fundo o guía..." onkeyup="filtrarRepositorio()" style="margin-bottom:10px;">
+      
+      <div id="repoContainer" style="max-height: 400px; overflow-y: auto;">
+        <p style="text-align:center; color:var(--text-muted); padding:20px 0;">Cargando guías...</p>
+      </div>
+
+      <div style="margin-top: 12px;">
+        <button type="button" class="btn-action btn-primary" onclick="consolidarGuiasSeleccionadas()">
+          📥 Consolidar Seleccionadas en Formulario
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- TAB 4: MODIFICAR / ACTUALIZAR EXPEDIENTE -->
+  <!-- ======================================================== -->
+  <div id="tab-modificar" class="tab-content" style="display:none;">
+    <div class="card">
+      <div class="card-title">
+        <span>🔍 Buscar Certificado Emitido</span>
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:2;">
+          <input type="text" id="buscarCorr" placeholder="N° Correlativo (ej. 215, 045)">
+        </div>
+        <div class="form-group" style="flex:1;">
+          <button type="button" class="btn-action btn-info" onclick="buscarCertificado()">Buscar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TARJETA DE RESULTADO DE BÚSQUEDA -->
+    <div id="cardResultadoCert" class="card" style="display:none;">
+      <div class="card-title">
+        <span>📋 Expediente Encontrado</span>
+        <span id="modBadgeCorr" style="background:#dbeafe; color:#1e40af; font-size:11px; padding:2px 8px; border-radius:6px; font-weight:700;"></span>
+      </div>
+
+      <div style="font-size:12px; line-height:1.6; margin-bottom:12px; background:#f8fafc; padding:10px; border-radius:8px;">
+        <div>🏢 <b>Empresa:</b> <span id="modEmpresa"></span></div>
+        <div>🌱 <b>Destino / Fundo:</b> <span id="modFundo"></span></div>
+        <div>📅 <b>Fecha:</b> <span id="modFecha"></span></div>
+        <div>🚛 <b>Guías:</b> <span id="modGuias"></span></div>
+        <div id="modObsBox" style="display:none; color:#b45309; margin-top:4px;">📝 <b>Obs previa:</b> <span id="modObs"></span></div>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <a id="btnLinkWord" href="#" target="_blank" class="btn-action btn-info" style="text-decoration:none; font-size:12px; padding:8px;">
+          📄 Editar Word en Docs ↗
+        </a>
+        <a id="btnLinkPdf" href="#" target="_blank" class="btn-action btn-primary" style="text-decoration:none; font-size:12px; padding:8px;">
+          📑 Ver PDF en Drive ↗
+        </a>
+      </div>
+
+      <hr style="border:none; border-top:1px solid #e2e8f0; margin:12px 0;">
+
+      <div class="card-title">
+        <span>🔄 Sustitución Quirúrgica de Carátula</span>
+      </div>
+      <p style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">
+        Modifica el Word en Google Docs o sube un documento corregido. El sistema reemplazará la carátula conservando intactas todas las guías anexas.
+      </p>
+
+      <div class="form-group">
+        <label>(Opcional) Cargar Word (.docx) o PDF corregido</label>
+        <input type="file" id="modArchivoCorregido" accept=".docx,.pdf">
+      </div>
+
+      <div class="form-group">
+        <label>Nombre del Archivo PDF</label>
+        <input type="text" id="modNombrePdf" placeholder="CERT-COM-XXX-DESTINO.pdf">
+      </div>
+
+      <div class="form-group">
+        <label>Motivo de la corrección</label>
+        <input type="text" id="modMotivo" placeholder="Ej: Corrección de placa o kilos">
+      </div>
+
+      <button type="button" class="btn-action btn-warning" onclick="ejecutarRegeneracionQuirurgica()">
+        🚀 Regenerar Expediente Quirúrgico
+      </button>
+    </div>
+  </div>
+
+  <!-- FIXED FOOTER ACTIONS (PARA EMISIÓN) -->
+  <div class="footer-bar" id="footerBar">
+    <button type="button" class="btn-action btn-primary" id="btnEmitirCert" onclick="ejecutarEmisionCertificado()">
+      🚀 Emitir Certificado y Enviar a Telegram
+    </button>
+  </div>
+
+  <!-- MODAL DE PROCESO / SPINNER -->
+  <div id="modalLoading" class="modal-overlay" style="display:none;">
+    <div class="modal-card">
+      <div class="spinner"></div>
+      <h3 id="modalLoadingTitle" style="font-size:15px; font-weight:700; color:var(--primary-dark); margin-bottom:6px;">Procesando...</h3>
+      <p id="modalLoadingMsg" style="font-size:12px; color:var(--text-muted);">Por favor, espera unos segundos.</p>
+    </div>
+  </div>
+
+  <!-- JAVASCRIPT LOGIC -->
+  <script>
+    // Inicialización Telegram WebApp
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      try {
+        tg.ready();
+        tg.expand();
+      } catch (e) {}
+    }
+
+    let catalogosData = null;
+    let guiasRepositorioList = [];
+    let correlativoActual = "";
+    let base64OcrPdf = null;
+
+    function getApiUrl(path) {
+      if (window.location.origin.includes('github.io') || window.location.origin === 'null' || window.location.protocol === 'file:') {
+        return 'https://lia-w2yb.onrender.com' + path;
+      }
+      return path;
+    }
+
+    function showLoading(title, msg) {
+      document.getElementById('modalLoadingTitle').innerText = title;
+      document.getElementById('modalLoadingMsg').innerText = msg;
+      document.getElementById('modalLoading').style.display = 'flex';
+    }
+
+    function hideLoading() {
+      document.getElementById('modalLoading').style.display = 'none';
+    }
+
+    function haptic(type = 'medium') {
+      try {
+        if (tg?.HapticFeedback) {
+          if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+          else if (type === 'error') tg.HapticFeedback.notificationOccurred('error');
+          else tg.HapticFeedback.impactOccurred(type);
+        }
+      } catch (e) {}
+    }
+
+    // Navegación por pestañas
+    function switchTab(tabId) {
+      haptic('light');
+      document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+
+      const footer = document.getElementById('footerBar');
+
+      if (tabId === 'tab-ocr') {
+        document.querySelector("[onclick=\"switchTab('tab-ocr')\"]").classList.add('active');
+        document.getElementById('tab-ocr').style.display = 'block';
+        document.getElementById('section-formulario').style.display = 'block';
+        footer.style.display = 'block';
+      } else if (tabId === 'tab-manual') {
+        document.querySelector("[onclick=\"switchTab('tab-manual')\"]").classList.add('active');
+        document.getElementById('section-formulario').style.display = 'block';
+        footer.style.display = 'block';
+      } else if (tabId === 'tab-repo') {
+        document.querySelector("[onclick=\"switchTab('tab-repo')\"]").classList.add('active');
+        document.getElementById('tab-repo').style.display = 'block';
+        footer.style.display = 'none';
+        if (guiasRepositorioList.length === 0) cargarRepositorioGuias();
+      } else if (tabId === 'tab-modificar') {
+        document.querySelector("[onclick=\"switchTab('tab-modificar')\"]").classList.add('active');
+        document.getElementById('tab-modificar').style.display = 'block';
+        footer.style.display = 'none';
+      }
+    }
+
+    // Inicialización al cargar la página
+    window.addEventListener('DOMContentLoaded', () => {
+      // Usuario Telegram
+      const user = tg?.initDataUnsafe?.user;
+      if (user) {
+        document.getElementById('userPill').innerText = user.first_name || user.username || "Operador";
+      }
+
+      // Fecha de hoy por defecto
+      const hoy = new Date();
+      const dd = String(hoy.getDate()).padStart(2, '0');
+      const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+      const yyyy = hoy.getFullYear();
+      document.getElementById('fechaEmision').value = `${dd}/${mm}/${yyyy}`;
+
+      // Configurar Drag & Drop de OCR
+      setupDropZone();
+
+      // Cargar Catálogos desde Backend
+      cargarCatalogos();
+
+      // Leer parámetros URL (Deep Linking)
+      const params = new URLSearchParams(window.location.search);
+      const modo = params.get('modo');
+      const corr = params.get('corr');
+      const dataParam = params.get('data');
+
+      if (modo === 'modificar') {
+        switchTab('tab-modificar');
+        if (corr) {
+          document.getElementById('buscarCorr').value = corr;
+          buscarCertificado();
+        }
+      } else if (corr) {
+        document.getElementById('correlativo').value = corr;
+      }
+
+      if (dataParam) {
+        try {
+          const parsed = JSON.parse(atob(dataParam));
+          cargarDatosEnFormulario(parsed);
+        } catch (e) {}
+      }
+    });
+
+    // Cargar Catálogos
+    async function cargarCatalogos() {
+      try {
+        const r = await fetch(getApiUrl('/api/certificados/catalogos'));
+        catalogosData = await r.json();
+        actualizarCorrelativoSugerido();
+      } catch (e) {
+        console.warn("Falla cargando catálogos remotos:", e);
+      }
+    }
+
+    async function actualizarCorrelativoSugerido() {
+      const tipo = document.getElementById('tipoFlujo').value;
+      try {
+        const r = await fetch(getApiUrl(`/api/certificados/correlativo?tipo=${encodeURIComponent(tipo)}`));
+        const d = await r.json();
+        if (d.correlativo) {
+          correlativoActual = d.correlativo;
+          document.getElementById('correlativo').value = d.correlativo;
+          document.getElementById('badgeCorrelativo').innerText = `N° ${d.correlativo}`;
+        }
+      } catch (e) {}
+    }
+
+    // Drag and Drop para OCR
+    function setupDropZone() {
+      const dropZone = document.getElementById('dropZoneOcr');
+      const fileInput = document.getElementById('ocrFile');
+
+      dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+      });
+
+      dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+      });
+
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length > 0) {
+          fileInput.files = e.dataTransfer.files;
+          handleFileSelect(fileInput.files[0]);
+        }
+      });
+
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+          handleFileSelect(e.target.files[0]);
+        }
+      });
+    }
+
+    function handleFileSelect(file) {
+      if (!file) return;
+      document.getElementById('ocrFileName').innerText = file.name;
+      document.getElementById('ocrFileBadge').style.display = 'flex';
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        base64OcrPdf = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Ejecutar OCR con Vertex AI Gemini
+    async function ejecutarOcr() {
+      if (!base64OcrPdf) {
+        alert("Por favor selecciona primero un archivo PDF de guía.");
+        return;
+      }
+
+      showLoading("Analizando Documento con IA", "Vertex AI Gemini 2.5 Flash está procesando la guía...");
+      haptic('medium');
+
+      try {
+        const res = await fetch(getApiUrl('/api/certificados/ocr'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pdf_base64: base64OcrPdf })
+        });
+        const data = await res.json();
+        hideLoading();
+
+        if (data.success && data.datos) {
+          haptic('success');
+          cargarDatosEnFormulario(data.datos);
+          alert("✅ Datos extraídos con éxito. Revisa el formulario a continuación.");
+        } else {
+          haptic('error');
+          alert("❌ No se pudo extraer la información: " + (data.error || "Formato no compatible."));
+        }
+      } catch (e) {
+        hideLoading();
+        haptic('error');
+        alert("Error de conexión al procesar OCR: " + e.message);
+      }
+    }
+
+    function cargarDatosEnFormulario(d) {
+      if (d.cliente) document.getElementById('cliente').value = d.cliente;
+      if (d.ruc_cliente) document.getElementById('rucCliente').value = d.ruc_cliente;
+      if (d.vehiculo) document.getElementById('placa').value = d.vehiculo;
+      if (d.punto_partida) document.getElementById('puntoPartida').value = d.punto_partida;
+      if (d.punto_llegada) document.getElementById('puntoLlegada').value = d.punto_llegada;
+      if (d.fecha) document.getElementById('fechaEmision').value = d.fecha;
+
+      // Cargar ítems
+      const container = document.getElementById('itemsContainer');
+      container.innerHTML = '';
+      if (Array.isArray(d.items) && d.items.length > 0) {
+        d.items.forEach(it => {
+          agregarFilaItem({
+            fecha: d.fecha || document.getElementById('fechaEmision').value,
+            placa: d.vehiculo || '',
+            guia: d.serie || '',
+            desc: it.desc || '',
+            cant: it.cant || '1',
+            um: (it.um || 'KG').toUpperCase(),
+            peso: it.peso || '0.00'
+          });
+        });
+      } else {
+        agregarFilaItem();
+      }
+    }
+
+    // Manejo dinámico de Filas de Residuos
+    function agregarFilaItem(data = null) {
+      const container = document.getElementById('itemsContainer');
+      const idx = container.children.length + 1;
+
+      const card = document.createElement('div');
+      card.className = 'item-card';
+      card.id = `item-row-${idx}`;
+
+      const defFecha = data?.fecha || document.getElementById('fechaEmision').value;
+      const defPlaca = data?.placa || document.getElementById('placa').value;
+      const defGuia = data?.guia || '';
+      const defDesc = data?.desc || '';
+      const defCant = data?.cant || '1';
+      const defUm = data?.um || 'KG';
+      const defPeso = data?.peso || '0.00';
+
+      card.innerHTML = `
+        <div class="item-header">
+          <span class="item-badge">Ítem #${idx}</span>
+          <button type="button" class="btn-delete" onclick="eliminarFilaItem('${card.id}')">🗑️</button>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1;">
+            <label>Guía N°</label>
+            <input type="text" class="it-guia" value="${defGuia}" placeholder="T001-0001">
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label>Placa</label>
+            <input type="text" class="it-placa" value="${defPlaca}" placeholder="ABC-123">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Descripción del Residuo</label>
+          <input type="text" class="it-desc" value="${defDesc}" placeholder="Ej: CARTÓN EN DESUSO">
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1;">
+            <label>Cant.</label>
+            <input type="text" class="it-cant" value="${defCant}">
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label>Unidad</label>
+            <input type="text" class="it-um" value="${defUm}">
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label>Peso (Kg/TM)</label>
+            <input type="text" class="it-peso" value="${defPeso}">
+          </div>
+        </div>
+      `;
+
+      container.appendChild(card);
+      actualizarContadorItems();
+    }
+
+    function eliminarFilaItem(rowId) {
+      const el = document.getElementById(rowId);
+      if (el) el.remove();
+      actualizarContadorItems();
+    }
+
+    function actualizarContadorItems() {
+      const count = document.getElementById('itemsContainer').children.length;
+      document.getElementById('badgeTotalItems').innerText = `${count} ítem(s)`;
+    }
+
+    // Emisión Completa del Certificado
+    async function ejecutarEmisionCertificado() {
+      const correlativo = document.getElementById('correlativo').value.trim();
+      const cliente = document.getElementById('cliente').value.trim();
+
+      if (!correlativo || !cliente) {
+        alert("Por favor completa al menos el Correlativo y la Razón Social del Cliente.");
+        return;
+      }
+
+      // Extraer ítems
+      const itemCards = document.querySelectorAll('#itemsContainer .item-card');
+      const items = [];
+      itemCards.forEach(c => {
+        items.push({
+          fecha_origen: document.getElementById('fechaEmision').value,
+          placa_origen: c.querySelector('.it-placa')?.value || '',
+          guia_origen: c.querySelector('.it-guia')?.value || '',
+          desc: c.querySelector('.it-desc')?.value || '',
+          cant: c.querySelector('.it-cant')?.value || '1',
+          um: c.querySelector('.it-um')?.value || 'KG',
+          peso: c.querySelector('.it-peso')?.value || '0.00'
+        });
+      });
+
+      const payload = {
+        empresa_firma: document.getElementById('empresaFirma').value,
+        tipo_flujo: document.getElementById('tipoFlujo').value,
+        es_modelo: document.getElementById('esModelo').checked,
+        correlativo: correlativo,
+        fecha_emision: document.getElementById('fechaEmision').value,
+        cliente: cliente,
+        ruc_cliente: document.getElementById('rucCliente').value.trim(),
+        punto_partida: document.getElementById('puntoPartida').value.trim(),
+        punto_llegada: document.getElementById('puntoLlegada').value.trim(),
+        servicio: document.getElementById('servicio').value.trim(),
+        tipo_residuo: document.getElementById('tipoResiduo').value.trim(),
+        items: items,
+        user_id: tg?.initDataUnsafe?.user?.id || null,
+        usuario_email: tg?.initDataUnsafe?.user?.username || "MiniApp"
+      };
+
+      // Si hay archivo cargado en OCR o en anexos, convertir a Base64
+      if (base64OcrPdf) {
+        payload.remision_base64 = base64OcrPdf;
+      }
+
+      showLoading("Emitiendo Certificado", "Generando Word, convirtiendo a PDF y registrando en Google Drive...");
+      haptic('medium');
+
+      try {
+        const res = await fetch(getApiUrl('/api/certificados/emitir'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await res.json();
+        hideLoading();
+
+        if (d.success) {
+          haptic('success');
+          alert(`🎉 Certificado N° ${correlativo} emitido con éxito!\n\nSe ha guardado en Drive y enviado a tu chat de Telegram.`);
+          if (tg) {
+            try {
+              tg.sendData(JSON.stringify({ tipo: "CERTIFICADO_EMITIDO", correlativo: correlativo }));
+              setTimeout(() => tg.close(), 1500);
+            } catch (e) {}
+          }
+        } else {
+          haptic('error');
+          alert("❌ Error emitiendo certificado: " + (d.error || "Falla desconocida."));
+        }
+      } catch (e) {
+        hideLoading();
+        haptic('error');
+        alert("Error de red: " + e.message);
+      }
+    }
+
+    // Repositorio de Guías Pendientes
+    async function cargarRepositorioGuias() {
+      const container = document.getElementById('repoContainer');
+      container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:20px 0;">Consultando Google Sheets...</p>';
+
+      try {
+        const r = await fetch(getApiUrl('/api/certificados/repositorio'));
+        const d = await r.json();
+        guiasRepositorioList = d.guias || [];
+
+        if (guiasRepositorioList.length === 0) {
+          container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:20px 0;">No hay guías pendientes por emitir.</p>';
+          return;
+        }
+
+        renderRepositorio(guiasRepositorioList);
+      } catch (e) {
+        container.innerHTML = `<p style="text-align:center; color:var(--danger); padding:20px 0;">Error cargando guías: ${e.message}</p>`;
+      }
+    }
+
+    function renderRepositorio(lista) {
+      const container = document.getElementById('repoContainer');
+      container.innerHTML = '';
+
+      lista.forEach((g, idx) => {
+        const item = document.createElement('div');
+        item.className = 'repo-item';
+        item.innerHTML = `
+          <input type="checkbox" class="repo-check" data-idx="${idx}">
+          <div class="repo-info">
+            <div class="repo-guia">🚛 Guía: ${g.guia}</div>
+            <div class="repo-meta">🏢 ${g.empresa} | 📅 ${g.fecha}</div>
+            <span class="badge-dest">🌱 ${g.fundo || 'General'}</span>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function filtrarRepositorio() {
+      const q = document.getElementById('repoFiltro').value.toLowerCase();
+      const filtradas = guiasRepositorioList.filter(g => 
+        (g.empresa || '').toLowerCase().includes(q) ||
+        (g.fundo || '').toLowerCase().includes(q) ||
+        (g.guia || '').toLowerCase().includes(q)
+      );
+      renderRepositorio(filtradas);
+    }
+
+    function consolidarGuiasSeleccionadas() {
+      const checks = document.querySelectorAll('.repo-check:checked');
+      if (checks.length === 0) {
+        alert("Selecciona al menos una guía de la lista.");
+        return;
+      }
+
+      const seleccionadas = [];
+      checks.forEach(c => {
+        const idx = parseInt(c.getAttribute('data-idx'));
+        seleccionadas.push(guiasRepositorioList[idx]);
+      });
+
+      const primera = seleccionadas[0];
+      document.getElementById('cliente').value = primera.empresa || '';
+      document.getElementById('puntoPartida').value = primera.fundo ? `Fundo - ${primera.fundo}` : '';
+      if (primera.tipo_sugerido) {
+        document.getElementById('tipoFlujo').value = primera.tipo_sugerido;
+      }
+
+      const container = document.getElementById('itemsContainer');
+      container.innerHTML = '';
+      seleccionadas.forEach(g => {
+        agregarFilaItem({
+          fecha: g.fecha,
+          placa: '',
+          guia: g.guia,
+          desc: 'RESIDUOS VARIOS',
+          cant: '1',
+          um: 'KG',
+          peso: '0.00'
+        });
+      });
+
+      switchTab('tab-manual');
+      alert(`✅ Se consolidaron ${seleccionadas.length} guías en el formulario.`);
+    }
+
+    // Búsqueda para Modificación / Actualización
+    let certificadoEncontrado = null;
+
+    async function buscarCertificado() {
+      const corr = document.getElementById('buscarCorr').value.trim();
+      if (!corr) {
+        alert("Ingresa un número correlativo.");
+        return;
+      }
+
+      showLoading("Buscando en Historial", `Localizando certificado #${corr}...`);
+      try {
+        const r = await fetch(getApiUrl(`/api/certificados/buscar?corr=${encodeURIComponent(corr)}`));
+        const d = await r.json();
+        hideLoading();
+
+        if (d.resultados && d.resultados.length > 0) {
+          certificadoEncontrado = d.resultados[0];
+          mostrarFichaModificacion(certificadoEncontrado);
+        } else {
+          alert(`No se encontró ningún certificado con correlativo '${corr}'.`);
+          document.getElementById('cardResultadoCert').style.display = 'none';
+        }
+      } catch (e) {
+        hideLoading();
+        alert("Error en la búsqueda: " + e.message);
+      }
+    }
+
+    function mostrarFichaModificacion(c) {
+      document.getElementById('modBadgeCorr').innerText = `N° ${c.correlativo}`;
+      document.getElementById('modEmpresa').innerText = c.empresa || '-';
+      document.getElementById('modFundo').innerText = c.fundo || '-';
+      document.getElementById('modFecha').innerText = c.fecha || '-';
+      document.getElementById('modGuias').innerText = c.guias || '-';
+      document.getElementById('modNombrePdf').value = c.raw_pdf || `CERT-${c.correlativo}.pdf`;
+
+      if (c.observacion) {
+        document.getElementById('modObsBox').style.display = 'block';
+        document.getElementById('modObs').innerText = c.observacion;
+      } else {
+        document.getElementById('modObsBox').style.display = 'none';
+      }
+
+      const btnDoc = document.getElementById('btnLinkWord');
+      if (c.link_doc) {
+        btnDoc.href = c.link_doc;
+        btnDoc.style.display = 'inline-flex';
+      } else {
+        btnDoc.style.display = 'none';
+      }
+
+      const btnPdf = document.getElementById('btnLinkPdf');
+      if (c.link_pdf) {
+        btnPdf.href = c.link_pdf;
+        btnPdf.style.display = 'inline-flex';
+      } else {
+        btnPdf.style.display = 'none';
+      }
+
+      document.getElementById('cardResultadoCert').style.display = 'block';
+    }
+
+    async function ejecutarRegeneracionQuirurgica() {
+      if (!certificadoEncontrado) return;
+
+      const payload = {
+        correlativo: certificadoEncontrado.correlativo,
+        nombre_pdf: document.getElementById('modNombrePdf').value.trim(),
+        obs: document.getElementById('modMotivo').value.trim(),
+        user_id: tg?.initDataUnsafe?.user?.id || null,
+        usuario_email: tg?.initDataUnsafe?.user?.username || "Usuario MiniApp"
+      };
+
+      const fileInput = document.getElementById('modArchivoCorregido');
+      if (fileInput.files.length > 0) {
+        showLoading("Codificando archivo", "Leyendo documento...");
+        const file = fileInput.files[0];
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          if (file.name.endsWith('.docx')) {
+            payload.nuevo_doc_base64 = e.target.result;
+          } else {
+            payload.nuevo_pdf_base64 = e.target.result;
+          }
+          await enviarRegeneracion(payload);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        await enviarRegeneracion(payload);
+      }
+    }
+
+    async function enviarRegeneracion(payload) {
+      showLoading("Regenerando Expediente Quirúrgico", "Sustituyendo carátula en Google Drive y preservando guías...");
+      haptic('medium');
+
+      try {
+        const res = await fetch(getApiUrl('/api/certificados/regenerar'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await res.json();
+        hideLoading();
+
+        if (d.success) {
+          haptic('success');
+          alert(`🎉 Expediente N° ${payload.correlativo} regenerado con éxito!\n\nSe conservó el mismo enlace en Drive y se envió la nueva versión a tu chat.`);
+        } else {
+          haptic('error');
+          alert("❌ Error en la regeneración: " + (d.error || "Falla desconocida"));
+        }
+      } catch (e) {
+        hideLoading();
+        haptic('error');
+        alert("Error de red: " + e.message);
+      }
+    }
+  </script>
+</body>
+</html>

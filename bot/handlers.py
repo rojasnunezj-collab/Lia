@@ -551,6 +551,50 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Pong!")
 
+async def certificados_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando directo /certificados o /cert [correlativo]."""
+    user_id = update.effective_user.id if update.effective_user else None
+    args = context.args if context.args else []
+    corr_arg = args[0].strip() if args else None
+    
+    from core.certificados_service import obtener_siguiente_correlativo_cert, obtener_url_webapp_certificados
+
+    if corr_arg:
+        url_mod = obtener_url_webapp_certificados(correlativo=corr_arg, user_id=user_id, modo="modificar")
+        kb = [
+            [InlineKeyboardButton(f"✏️ Abrir Certificado #{corr_arg} en Mini App", web_app=WebAppInfo(url=url_mod))],
+            [InlineKeyboardButton("📋 Menú Certificados", callback_data='menu_certificados'),
+             InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+        ]
+        await update.message.reply_text(
+            f"📄 **Gestión de Certificado #{corr_arg}**\n\n"
+            f"Pulsa el botón a continuación para abrir la ficha del certificado, editar datos o regenerar el expediente:",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return
+
+    corr_sig = obtener_siguiente_correlativo_cert("Comercialización")
+    url_app = obtener_url_webapp_certificados(correlativo=corr_sig, user_id=user_id)
+    url_mod = obtener_url_webapp_certificados(user_id=user_id, modo="modificar")
+
+    keyboard = [
+        [InlineKeyboardButton("🚀 Abrir Certificados IA (Mini App)", web_app=WebAppInfo(url=url_app))],
+        [InlineKeyboardButton("🔄 Modificar Expediente (Docs/PDF)", web_app=WebAppInfo(url=url_mod))],
+        [InlineKeyboardButton("🔍 Buscar en Chat por Criterios", callback_data='modo_buscar_cert')],
+        [InlineKeyboardButton("🔙 Menú Principal", callback_data='volver_inicio'),
+         InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+    ]
+    texto = (
+        f"📄 *Sistema de Certificados IA - EPMI & INECOVE*\n\n"
+        f"  *Siguiente Correlativo sugerido:* `{corr_sig}`\n\n"
+        f"• **📷 OCR Guía:** Sube el PDF de la guía y la IA extraerá todos los datos.\n"
+        f"• **✍️ Manual:** Emisión rápida con selectores de catálogos y residuos.\n"
+        f"• **🗂️ Repositorio:** Consolidación de guías registradas en Google Sheets.\n"
+        f"• **🔄 Modificar:** Sustitución quirúrgica en Google Drive conservando guías intactas."
+    )
+    await update.message.reply_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def safe_edit_or_reply(query, text, reply_markup=None, parse_mode=None):
     """Edita el mensaje si es texto plano, o envía una nueva respuesta si el mensaje original es un documento o foto."""
     try:
@@ -1027,17 +1071,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data in ('menu_certificados', 'modo_buscar_cert'):
+    elif query.data == 'menu_certificados':
+        user_states[user_id] = None
+        from core.certificados_service import obtener_siguiente_correlativo_cert, obtener_url_webapp_certificados
+        corr_sig = obtener_siguiente_correlativo_cert("Comercialización")
+        url_app = obtener_url_webapp_certificados(correlativo=corr_sig, user_id=user_id)
+        url_mod = obtener_url_webapp_certificados(user_id=user_id, modo="modificar")
+        keyboard = [
+            [InlineKeyboardButton("🚀 Abrir Certificados IA (Mini App)", web_app=WebAppInfo(url=url_app))],
+            [InlineKeyboardButton("🔄 Modificar Expediente (Docs/PDF)", web_app=WebAppInfo(url=url_mod))],
+            [InlineKeyboardButton("🔍 Buscar en Chat por Criterios", callback_data='modo_buscar_cert')],
+            [InlineKeyboardButton("🔙 Volver a Documentos", callback_data='menu_documentos'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+        ]
+        texto = (
+            f"📄 *Módulo de Certificados IA - EPMI & INECOVE*\n\n"
+            f"  *Siguiente Correlativo sugerido:* `{corr_sig}`\n"
+            f"  Pulsa *🚀 Abrir Certificados IA* para emitir con OCR, manual o repositorio.\n"
+            f"  Pulsa *🔄 Modificar Expediente* para regenerar quirurgicamente un certificado.\n"
+            f"  O pulsa *🔍 Buscar en Chat* para consultar por fecha, empresa o fundo."
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data == 'modo_buscar_cert':
         user_states[user_id] = None
         keyboard = [
             [InlineKeyboardButton("📅 Por Fecha", callback_data='cert_search_fecha'),
              InlineKeyboardButton("🏡 Por Fundo", callback_data='cert_search_fundo')],
             [InlineKeyboardButton("🏢 Por Empresa", callback_data='cert_search_empresa'),
              InlineKeyboardButton("🔢 Por Correlativo", callback_data='cert_search_corre')],
-            [InlineKeyboardButton("🔙 Volver a Documentos", callback_data='menu_documentos')]
+            [InlineKeyboardButton("🔙 Volver a Certificados", callback_data='menu_certificados')]
         ]
         texto = (
-            "📜 *Módulo de Certificados*\n\n"
+            "🔍 *Búsqueda de Certificados en Chat*\n\n"
             "¿Por qué criterio deseas buscar el certificado?"
         )
         await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1948,10 +2013,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if len(reporte) > 4000:
                     reporte = reporte[:4000] + "\n\n⚠️ _[Reporte recortado por límite de caracteres]_"
-                    
-                await msg.edit_text(reporte, parse_mode='Markdown', disable_web_page_preview=True)
+
+                kb_rows = []
+                if len(encontrados) == 1:
+                    c_corr = str(encontrados[0].get('Correlativo', '')).strip()
+                    if c_corr:
+                        from core.certificados_service import obtener_url_webapp_certificados
+                        u_id = update.effective_user.id if update.effective_user else None
+                        url_m = obtener_url_webapp_certificados(correlativo=c_corr, user_id=u_id, modo="modificar")
+                        kb_rows.append([InlineKeyboardButton(f"✏️ Gestionar #{c_corr} en Mini App", web_app=WebAppInfo(url=url_m))])
+                kb_rows.append([InlineKeyboardButton("🔙 Menú Certificados", callback_data='menu_certificados'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')])
+
+                await msg.edit_text(reporte, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(kb_rows))
             else:
-                await msg.edit_text("❌ No se encontraron certificados con ese término.")
+                kb_fail = [[InlineKeyboardButton("🔙 Volver a Certificados", callback_data='menu_certificados')]]
+                await msg.edit_text("❌ No se encontraron certificados con ese término.", reply_markup=InlineKeyboardMarkup(kb_fail))
         except Exception as e:
             logger.error(f"Error en búsqueda de certificados: {e}")
             await msg.edit_text(f"❌ Error en la búsqueda: {e}")
@@ -3569,7 +3645,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Error al procesar los datos de la cotización.")
             return
 
-        if payload.get("tipo") == "COMPLETADO":
+        if payload.get("tipo") in ["COMPLETADO", "CERTIFICADO_EMITIDO"]:
             return
 
         correlativo = payload.get("correlativo", "---")

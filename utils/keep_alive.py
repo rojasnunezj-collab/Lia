@@ -85,6 +85,119 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error(f"Error sirviendo /panel: {e}")
 
+        elif path in ['/certificados', '/certificados.html']:
+            try:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                html_path = os.path.join(base_dir, 'webapp', 'certificados.html')
+                if os.path.exists(html_path):
+                    with open(html_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                    self.send_header('Pragma', 'no-cache')
+                    self.send_header('Expires', '0')
+                    self.end_headers()
+                    self.wfile.write(content.encode('utf-8'))
+                    return
+                else:
+                    self.send_response(404)
+                    self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(b"Vista /certificados aun no creada.")
+                    return
+            except Exception as e:
+                logger.error(f"Error sirviendo /certificados: {e}")
+
+        elif path == '/api/certificados/catalogos':
+            try:
+                from core.certificados_service import obtener_catalogo_empresas, obtener_catalogo_servicios, obtener_siguiente_correlativo_cert
+                empresas = obtener_catalogo_empresas()
+                servicios = obtener_catalogo_servicios()
+                corr_com = obtener_siguiente_correlativo_cert("Comercialización")
+                corr_ser = obtener_siguiente_correlativo_cert("Disposición Final 1")
+                data = {
+                    "empresas": empresas,
+                    "servicios": servicios,
+                    "siguiente_correlativo_com": corr_com,
+                    "siguiente_correlativo_ser": corr_ser
+                }
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(data).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/certificados/catalogos: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/certificados/correlativo':
+            try:
+                from core.certificados_service import obtener_siguiente_correlativo_cert
+                q_params = parse_qs(parsed.query)
+                tipo = q_params.get('tipo', ['Comercialización'])[0]
+                corr = obtener_siguiente_correlativo_cert(tipo)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'correlativo': corr}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/certificados/correlativo: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/certificados/buscar':
+            try:
+                from core.certificados_service import buscar_datos_certificado_en_historial
+                q_params = parse_qs(parsed.query)
+                corr = q_params.get('corr', [''])[0]
+                res = buscar_datos_certificado_en_historial(corr)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'resultados': res}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/certificados/buscar: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/certificados/repositorio':
+            try:
+                from core.certificados_service import obtener_guias_pendientes_repositorio
+                guias = obtener_guias_pendientes_repositorio()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'guias': guias}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/certificados/repositorio: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
         elif path == '/api/pendientes':
             try:
                 from core.pendientes_service import obtener_pendientes_sync
@@ -293,6 +406,207 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 return
             except Exception as e:
                 logger.error(f"Error en POST /api/credenciales: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/certificados/ocr':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                pdf_base64 = payload.get('pdf_base64')
+                if not pdf_base64:
+                    raise ValueError("No se recibió 'pdf_base64' en la petición.")
+
+                import base64
+                if ',' in pdf_base64:
+                    pdf_base64 = pdf_base64.split(',', 1)[1]
+                pdf_bytes = base64.b64decode(pdf_base64)
+
+                from core.certificados_service import procesar_guia_ia_vertex
+                datos_extraidos = procesar_guia_ia_vertex(pdf_bytes)
+
+                if not datos_extraidos:
+                    self.send_response(422)
+                    self.send_header('Content-Type', 'application/json; charset=utf-8')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': 'No se pudo extraer información del documento con IA.'}).encode('utf-8'))
+                    return
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'datos': datos_extraidos}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/certificados/ocr: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/certificados/emitir':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                import base64
+                remision_bytes = None
+                transporte_bytes = None
+                if payload.get('remision_base64'):
+                    raw_rem = payload['remision_base64']
+                    if ',' in raw_rem: raw_rem = raw_rem.split(',', 1)[1]
+                    remision_bytes = base64.b64decode(raw_rem)
+
+                if payload.get('transporte_base64'):
+                    raw_trans = payload['transporte_base64']
+                    if ',' in raw_trans: raw_trans = raw_trans.split(',', 1)[1]
+                    transporte_bytes = base64.b64decode(raw_trans)
+
+                from core.certificados_service import procesar_generacion_certificado, obtener_url_webapp_certificados
+                res = procesar_generacion_certificado(payload, remision_bytes=remision_bytes, transporte_bytes=transporte_bytes)
+
+                # Envío automático del PDF al chat de Telegram
+                target_chat_id = payload.get('user_id') or os.getenv("ADMIN_CHAT_ID")
+                token = os.getenv("TELEGRAM_TOKEN")
+                if target_chat_id and token:
+                    import requests
+                    import html
+                    url_edit = obtener_url_webapp_certificados(correlativo=res['correlativo'], user_id=target_chat_id, modo="modificar")
+                    c_cli = html.escape(str(res['cliente']))
+                    c_corr = html.escape(str(res['correlativo']))
+                    c_fec = html.escape(str(res['fecha']))
+                    c_nom = html.escape(str(res['nombre_archivo']))
+                    caption = (
+                        f"✅ <b>Certificado Emitido Exitosamente</b>\n\n"
+                        f"📌 <b>Código:</b> <code>{c_nom}</code>\n"
+                        f"🔢 <b>Correlativo:</b> <code>{c_corr}</code>\n"
+                        f"🏢 <b>Cliente:</b> <code>{c_cli}</code>\n"
+                        f"📅 <b>Fecha:</b> <code>{c_fec}</code>\n\n"
+                        f"💾 Guardado en Google Drive y registrado en la hoja Historial."
+                    )
+                    kb_buttons = []
+                    row1 = []
+                    if res.get('doc_link'):
+                        row1.append({'text': '📄 Word Editable', 'url': res['doc_link']})
+                    if res.get('pdf_link'):
+                        row1.append({'text': '📂 Ver en Drive', 'url': res['pdf_link']})
+                    if row1:
+                        kb_buttons.append(row1)
+                    kb_buttons.append([{'text': '✏️ Modificar en Mini App', 'web_app': {'url': url_edit}}])
+                    kb_buttons.append([{'text': '📋 Menú Certificados', 'callback_data': 'menu_certificados'}, {'text': '❌ Salir', 'callback_data': 'cancelar_start'}])
+
+                    files = {'document': (res['nombre_archivo'], res['pdf_bytes'], 'application/pdf')}
+                    data_tg = {
+                        'chat_id': str(target_chat_id),
+                        'caption': caption,
+                        'parse_mode': 'HTML',
+                        'reply_markup': json.dumps({'inline_keyboard': kb_buttons})
+                    }
+                    try:
+                        requests.post(f"https://api.telegram.org/bot{token}/sendDocument", data=data_tg, files=files, timeout=30)
+                    except Exception as e_tg:
+                        logger.error(f"Error enviando certificado por Telegram: {e_tg}")
+
+                # Respuesta segura JSON para la Mini App
+                res_safe = {k: v for k, v in res.items() if k != 'pdf_bytes'}
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'res': res_safe}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/certificados/emitir: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/certificados/regenerar':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                corr = payload.get('correlativo')
+                if not corr:
+                    raise ValueError("Falta 'correlativo' en la solicitud.")
+
+                import base64
+                nuevo_doc_bytes = None
+                nuevo_pdf_bytes = None
+                if payload.get('nuevo_doc_base64'):
+                    raw_doc = payload['nuevo_doc_base64']
+                    if ',' in raw_doc: raw_doc = raw_doc.split(',', 1)[1]
+                    nuevo_doc_bytes = base64.b64decode(raw_doc)
+                if payload.get('nuevo_pdf_base64'):
+                    raw_pdf = payload['nuevo_pdf_base64']
+                    if ',' in raw_pdf: raw_pdf = raw_pdf.split(',', 1)[1]
+                    nuevo_pdf_bytes = base64.b64decode(raw_pdf)
+
+                from core.certificados_service import procesar_regeneracion_expediente
+                res = procesar_regeneracion_expediente(
+                    correlativo=corr,
+                    nuevo_doc_bytes=nuevo_doc_bytes,
+                    nuevo_pdf_bytes=nuevo_pdf_bytes,
+                    nombre_pdf_usuario=payload.get('nombre_pdf', ''),
+                    obs_extra=payload.get('obs', ''),
+                    usuario_editor=payload.get('usuario_email', 'Usuario MiniApp')
+                )
+
+                # Si hay usuario o admin, notificar por Telegram
+                target_chat_id = payload.get('user_id') or os.getenv("ADMIN_CHAT_ID")
+                token = os.getenv("TELEGRAM_TOKEN")
+                if target_chat_id and token:
+                    import requests
+                    import html
+                    c_corr = html.escape(str(corr))
+                    c_nom = html.escape(str(res['nombre_archivo']))
+                    caption = (
+                        f"🔄 <b>Expediente Regenerado Quirúrgicamente</b>\n\n"
+                        f"📌 <b>Archivo:</b> <code>{c_nom}</code>\n"
+                        f"🔢 <b>Correlativo:</b> <code>{c_corr}</code>\n"
+                        f"📑 <i>Las guías originales se preservaron intactas.</i>\n\n"
+                        f"💾 Enlace de Google Drive actualizado in-place."
+                    )
+                    kb_buttons = [
+                        [{'text': '📂 Ver PDF en Drive', 'url': res['pdf_link']}],
+                        [{'text': '📋 Menú Certificados', 'callback_data': 'menu_certificados'}, {'text': '❌ Salir', 'callback_data': 'cancelar_start'}]
+                    ]
+                    files = {'document': (res['nombre_archivo'], res['pdf_bytes'], 'application/pdf')}
+                    data_tg = {
+                        'chat_id': str(target_chat_id),
+                        'caption': caption,
+                        'parse_mode': 'HTML',
+                        'reply_markup': json.dumps({'inline_keyboard': kb_buttons})
+                    }
+                    try:
+                        requests.post(f"https://api.telegram.org/bot{token}/sendDocument", data=data_tg, files=files, timeout=30)
+                    except Exception as e_tg:
+                        logger.error(f"Error enviando actualización por Telegram: {e_tg}")
+
+                res_safe = {k: v for k, v in res.items() if k != 'pdf_bytes'}
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'res': res_safe}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/certificados/regenerar: {e}")
                 self.send_response(500)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self.send_header('Access-Control-Allow-Origin', '*')
