@@ -464,6 +464,33 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
                 return
 
+        elif path == '/api/certificados/consolidar_repo':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+                guias = payload.get('guias', [])
+                if not guias:
+                    raise ValueError("No se enviaron guías para consolidar.")
+
+                from core.certificados_service import consolidar_guias_repositorio_ocr
+                res = consolidar_guias_repositorio_ocr(guias)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(res).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/certificados/consolidar_repo: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
         elif path == '/api/certificados/emitir':
             try:
                 content_len = int(self.headers.get('Content-Length', 0))

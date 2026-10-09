@@ -145,6 +145,52 @@ def normalizar_texto_sin_tildes(texto: Any) -> str:
     t = str(texto or '').lower()
     return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
 
+def limpiar_descripcion(texto: Any) -> str:
+    """Limpia prefijos de residuos como 'VEN - AMB -'."""
+    if not texto:
+        return ""
+    return re.sub(r'VEN\s*-\s*AMB\s*-\s*', '', str(texto).strip(), flags=re.IGNORECASE).strip().upper()
+
+def es_formato_guia(valor: Any) -> bool:
+    """Determina si un valor tiene formato característico de Guía de Remisión."""
+    if not valor:
+        return False
+    s = str(valor).strip().upper()
+    if s in ['', 'NONE', 'NAN', 'S/N', 'SIN DATOS']:
+        return False
+    if '-' in s:
+        partes = s.split('-', 1)
+        serie = partes[0].strip()
+        correlativo = partes[1].strip()
+        if re.match(r'^(T\d{2,3}|EG\d{2}|E\d{3}|V\d{3}|GR\d{2}|[A-Z]\d{3})$', serie) and correlativo.isdigit():
+            return True
+        if re.match(r'^\d{3,4}$', serie) and correlativo.isdigit():
+            return True
+        if re.match(r'^[A-Z0-9]{3,4}$', serie) and correlativo.isdigit() and len(correlativo) >= 4:
+            return True
+    return False
+
+def es_formato_placa(valor: Any) -> bool:
+    """Determina si un valor corresponde al patrón de una placa vehicular peruana."""
+    if not valor:
+        return False
+    s = str(valor).strip().upper()
+    if s in ['', 'NONE', 'NAN', 'S/N', 'SIN DATOS']:
+        return False
+    s_limpio = s.replace('-', '').replace(' ', '')
+    if len(s_limpio) not in [5, 6]:
+        return False
+    if re.match(r'^(T\d{3}|EG\d{2}|E\d{3}|V\d{3}|GR\d{2})$', s_limpio[:4]):
+        return False
+    if re.match(r'^[A-Z0-9]{3}[A-Z0-9]{3}$', s_limpio):
+        tiene_letras = bool(re.search(r'[A-Z]', s_limpio))
+        tiene_numeros = bool(re.search(r'\d', s_limpio))
+        if tiene_letras and tiene_numeros:
+            return True
+    if re.match(r'^[A-Z]{2}\d{4}$', s_limpio):
+        return True
+    return False
+
 def extraer_id_drive(valor: Any) -> Optional[str]:
     """Extrae de forma robusta el fileId de URLs de Google Drive o Docs."""
     if not valor:
@@ -183,6 +229,83 @@ def obtener_link_archivo_drive(servicio_drive, nombre_o_id: str) -> Optional[str
         return files[0].get('webViewLink') if files else None
     except Exception as e:
         logger.error(f"Error resolviendo link en Drive para '{nombre_o_id}': {e}")
+        return None
+
+def descargar_archivo_drive_por_id_o_nombre(nombre_o_id: str, drive_service=None) -> Optional[bytes]:
+    """
+    Descarga el contenido binario de un archivo de Google Drive
+    identificado por ID, URL o nombre de archivo.
+    """
+    if not drive_service:
+        drive_service, _ = obtener_servicios_google()
+    if not nombre_o_id:
+        return None
+
+    archivo_id = extraer_id_drive(nombre_o_id)
+    es_posible_id = bool(archivo_id) or bool(re.match(r'^[a-zA-Z0-9_-]{25,65}$', str(nombre_o_id).strip()))
+    file_id_final = archivo_id or (str(nombre_o_id).strip() if es_posible_id else None)
+
+    try:
+        if file_id_final:
+            meta = drive_service.files().get(
+                fileId=file_id_final, fields='id, name, mimeType', supportsAllDrives=True
+            ).execute()
+            mime_type = meta.get('mimeType', '')
+            if mime_type == 'application/vnd.google-apps.document':
+                req = drive_service.files().export_media(fileId=file_id_final, mimeType='application/pdf')
+            else:
+                req = drive_service.files().get_media(fileId=file_id_final, supportsAllDrives=True)
+            fh = io.BytesIO()
+            dl = MediaIoBaseDownload(fh, req)
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
+            return fh.getvalue()
+        else:
+            nombre_limpio = str(nombre_o_id).strip()
+            q_term = nombre_limpio.replace("'", "\\'")
+            query = f"name contains '{q_term}' and trashed = false"
+            res = drive_service.files().list(
+                q=query,
+                spaces='drive',
+                corpora='allDrives',
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True,
+                fields='files(id, name, mimeType)'
+            ).execute()
+            files = res.get('files', [])
+
+            if not files and '.' in nombre_limpio:
+                sin_ext = nombre_limpio.rsplit('.', 1)[0].replace("'", "\\'")
+                query2 = f"name contains '{sin_ext}' and trashed = false"
+                res2 = drive_service.files().list(
+                    q=query2,
+                    spaces='drive',
+                    corpora='allDrives',
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
+                    fields='files(id, name, mimeType)'
+                ).execute()
+                files = res2.get('files', [])
+
+            if files:
+                f_id = files[0]['id']
+                m_type = files[0].get('mimeType', '')
+                if m_type == 'application/vnd.google-apps.document':
+                    req = drive_service.files().export_media(fileId=f_id, mimeType='application/pdf')
+                else:
+                    req = drive_service.files().get_media(fileId=f_id, supportsAllDrives=True)
+                fh = io.BytesIO()
+                dl = MediaIoBaseDownload(fh, req)
+                done = False
+                while not done:
+                    _, done = dl.next_chunk()
+                return fh.getvalue()
+            else:
+                logger.warning(f"No se encontró archivo en Drive con nombre '{nombre_o_id}'")
+                return None
+    except Exception as e:
+        logger.error(f"Error descargando archivo '{nombre_o_id}' desde Drive: {e}")
         return None
 
 # ====================================================================
@@ -1188,6 +1311,126 @@ def obtener_guias_pendientes_repositorio(sheets_service=None) -> List[Dict[str, 
     except Exception as e:
         logger.error(f"Error consultando guías pendientes: {e}")
         return []
+
+def consolidar_guias_repositorio_ocr(guias: List[Dict[str, Any]], drive_service=None) -> Dict[str, Any]:
+    """
+    Descarga cada guía de Drive seleccionada, ejecuta Vertex OCR,
+    extrae vehículos (placas), ítems con sus descripciones/cantidades/pesos,
+    y unifica todo para el formulario de la Mini App.
+    """
+    if not drive_service:
+        drive_service, _ = obtener_servicios_google()
+
+    items_resultado = []
+    placas = []
+    punto_partida_detectado = ""
+    punto_llegada_detectado = ""
+    cliente_detectado = ""
+    ruc_detectado = ""
+
+    for g in guias:
+        nombre_o_id = g.get('archivo') or g.get('link_guia') or ''
+        guia_num_fallback = g.get('guia') or g.get('numero_guia') or ''
+        fecha_fallback = normalizar_fecha(g.get('fecha', ''))
+
+        pdf_bytes = None
+        if nombre_o_id:
+            pdf_bytes = descargar_archivo_drive_por_id_o_nombre(nombre_o_id, drive_service)
+
+        datos_ocr = None
+        if pdf_bytes:
+            try:
+                datos_ocr = procesar_guia_ia_vertex(pdf_bytes)
+            except Exception as e:
+                logger.warning(f"Error OCR para guía '{guia_num_fallback}': {e}")
+
+        if datos_ocr:
+            s = datos_ocr.get('serie') or guia_num_fallback
+            f = normalizar_fecha(datos_ocr.get('fecha') or fecha_fallback)
+            p = str(datos_ocr.get('vehiculo', '')).strip().upper()
+
+            # Auto-corrección si Vertex invirtió serie y placa
+            if es_formato_placa(s) and es_formato_guia(p):
+                s, p = p, s
+
+            if p and p not in placas:
+                placas.append(p)
+
+            if not punto_partida_detectado and datos_ocr.get('punto_partida'):
+                punto_partida_detectado = datos_ocr.get('punto_partida')
+
+            if not punto_llegada_detectado and datos_ocr.get('punto_llegada'):
+                punto_llegada_detectado = datos_ocr.get('punto_llegada')
+
+            if not cliente_detectado and datos_ocr.get('cliente'):
+                cliente_detectado = datos_ocr.get('cliente')
+
+            if not ruc_detectado and datos_ocr.get('ruc_cliente'):
+                ruc_detectado = datos_ocr.get('ruc_cliente')
+
+            ocr_items = datos_ocr.get('items', [])
+            if ocr_items:
+                for it in ocr_items:
+                    desc_limpia = limpiar_descripcion(it.get('desc', ''))
+                    cant_limpia = formato_inteligente(limpiar_monto(it.get('cant', 1)))
+                    um_raw = str(it.get('um', 'KG')).upper()
+                    um_limpia = 'KG' if 'KILO' in um_raw else ('GLN' if 'GALO' in um_raw else ('UNID' if 'UNIDA' in um_raw else um_raw))
+                    peso_limpio = formato_inteligente(limpiar_monto(it.get('peso', 0)))
+
+                    items_resultado.append({
+                        'fecha_origen': f,
+                        'placa_origen': p,
+                        'guia_origen': s,
+                        'desc': desc_limpia,
+                        'cant': cant_limpia,
+                        'um': um_limpia,
+                        'peso': peso_limpio
+                    })
+            else:
+                items_resultado.append({
+                    'fecha_origen': f,
+                    'placa_origen': p,
+                    'guia_origen': s,
+                    'desc': 'RESIDUOS RECICLABLES Y APROVECHABLES',
+                    'cant': '1',
+                    'um': 'KG',
+                    'peso': '0.00'
+                })
+        else:
+            # Fallback si no hay PDF o falló OCR
+            items_resultado.append({
+                'fecha_origen': fecha_fallback,
+                'placa_origen': '',
+                'guia_origen': guia_num_fallback,
+                'desc': 'RESIDUOS RECICLABLES Y APROVECHABLES',
+                'cant': '1',
+                'um': 'KG',
+                'peso': '0.00'
+            })
+
+    def fecha_a_entero(fecha_str):
+        try:
+            p = str(fecha_str).strip().split('/')
+            if len(p) == 3:
+                return int(f"{p[2]}{p[1]}{p[0]}")
+        except Exception:
+            pass
+        return 99999999
+
+    items_resultado.sort(key=lambda x: fecha_a_entero(x['fecha_origen']))
+    placa_sugerida = ", ".join(placas) if placas else ""
+
+    return {
+        "success": True,
+        "placa": placa_sugerida,
+        "placas": placas,
+        "items": items_resultado,
+        "punto_partida": punto_partida_detectado,
+        "punto_llegada": punto_llegada_detectado,
+        "cliente": cliente_detectado,
+        "ruc_cliente": ruc_detectado,
+        "total_procesadas": len(guias)
+    }
 
 def obtener_url_webapp_certificados(correlativo: Optional[str] = None, datos_edicion: Optional[Dict[str, Any]] = None, user_id: Optional[Any] = None, modo: Optional[str] = None) -> str:
     """Construye la URL segura HTTPS para abrir la Telegram Mini App de Certificados."""

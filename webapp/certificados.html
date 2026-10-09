@@ -606,11 +606,6 @@
         <input type="text" id="puntoPartida" placeholder="Dirección Base - Fundo / Predio">
       </div>
 
-      <div class="form-group">
-        <label>Punto de Llegada (Destino / Planta)</label>
-        <input type="text" id="puntoLlegada" placeholder="Planta de Disposición / Destino">
-      </div>
-
       <div class="form-row">
         <div class="form-group">
           <label>Servicio</label>
@@ -664,12 +659,21 @@
         <span>🗂️ Guías Pendientes en Google Sheets</span>
         <button type="button" onclick="cargarRepositorioGuias()" style="background:none; border:none; color:var(--info); font-size:12px; font-weight:700; cursor:pointer;">🔄 Recargar</button>
       </div>
-      <!-- Filtro por Empresa -->
-      <div class="form-group" style="margin-bottom:8px;">
-        <label>🏢 Filtrar por Empresa:</label>
-        <select id="repoEmpresaSelect" onchange="filtrarRepositorio()">
-          <option value="">-- Todas las Empresas --</option>
-        </select>
+
+      <!-- Filtros en cascada: Solo empresas y fundos con certificados pendientes -->
+      <div class="form-row" style="margin-bottom:8px;">
+        <div class="form-group" style="flex:1;">
+          <label>🏢 Empresa Pendiente:</label>
+          <select id="repoEmpresaSelect" onchange="onRepoEmpresaChange()">
+            <option value="">-- Seleccionar Empresa --</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label>🌱 Fundo / Planta:</label>
+          <select id="repoFundoSelect" onchange="filtrarRepositorio()" disabled>
+            <option value="">-- Todos los Fundos --</option>
+          </select>
+        </div>
       </div>
 
       <!-- Filtro por Texto / Guía -->
@@ -1050,7 +1054,8 @@
       if (d.ruc_cliente) document.getElementById('rucCliente').value = d.ruc_cliente;
       if (d.vehiculo) document.getElementById('placa').value = d.vehiculo;
       if (d.punto_partida) document.getElementById('puntoPartida').value = d.punto_partida;
-      if (d.punto_llegada) document.getElementById('puntoLlegada').value = d.punto_llegada;
+      const elLlegada = document.getElementById('puntoLlegada');
+      if (elLlegada && d.punto_llegada) elLlegada.value = d.punto_llegada;
       if (d.fecha) document.getElementById('fechaEmision').value = d.fecha;
 
       // Cargar ítems
@@ -1174,7 +1179,7 @@
         cliente: cliente,
         ruc_cliente: document.getElementById('rucCliente').value.trim(),
         punto_partida: document.getElementById('puntoPartida').value.trim(),
-        punto_llegada: document.getElementById('puntoLlegada').value.trim(),
+        punto_llegada: document.getElementById('puntoLlegada')?.value?.trim() || '',
         servicio: document.getElementById('servicio').value.trim(),
         tipo_residuo: document.getElementById('tipoResiduo').value.trim(),
         items: items,
@@ -1239,27 +1244,34 @@
           uid: idx
         }));
 
-        // Poblar select de empresas
+        // Poblar select de empresas (solo con empresas que tengan guías pendientes)
         const selEmp = document.getElementById('repoEmpresaSelect');
+        const selFundo = document.getElementById('repoFundoSelect');
+
         if (selEmp) {
-          selEmp.innerHTML = `<option value="">-- Todas las Empresas (${guiasRepositorioList.length} guías) --</option>`;
+          selEmp.innerHTML = `<option value="">-- Seleccionar Empresa (${guiasRepositorioList.length} guías) --</option>`;
           
           const empConteo = {};
           guiasRepositorioList.forEach(g => {
-            const emp = g.empresa || 'S/D';
+            const emp = (g.empresa || 'S/D').trim();
             empConteo[emp] = (empConteo[emp] || 0) + 1;
           });
           
           Object.keys(empConteo).sort().forEach(emp => {
             const opt = document.createElement('option');
             opt.value = emp;
-            opt.innerText = `${emp} (${empConteo[emp]})`;
+            opt.innerText = `${emp} (${empConteo[emp]} guías pendientes)`;
             selEmp.appendChild(opt);
           });
         }
 
+        if (selFundo) {
+          selFundo.innerHTML = `<option value="">-- Todos los Fundos --</option>`;
+          selFundo.disabled = true;
+        }
+
         if (guiasRepositorioList.length === 0) {
-          container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:20px 0;">No hay guías pendientes por emitir.</p>';
+          container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:20px 0;">✅ ¡Todo al día! No hay guías pendientes por emitir.</p>';
           return;
         }
 
@@ -1269,19 +1281,54 @@
       }
     }
 
+    function onRepoEmpresaChange() {
+      const selEmp = document.getElementById('repoEmpresaSelect');
+      const selFundo = document.getElementById('repoFundoSelect');
+      const empSel = (selEmp?.value || '').trim();
+
+      if (!selFundo) return;
+
+      if (!empSel) {
+        selFundo.innerHTML = `<option value="">-- Todos los Fundos --</option>`;
+        selFundo.disabled = true;
+      } else {
+        selFundo.disabled = false;
+        // Filtrar fundos pendientes de esa empresa específica
+        const guiasEmpresa = guiasRepositorioList.filter(g => (g.empresa || '').trim().toUpperCase() === empSel.toUpperCase());
+        const fundoConteo = {};
+        guiasEmpresa.forEach(g => {
+          const f = (g.fundo || 'General').trim();
+          fundoConteo[f] = (fundoConteo[f] || 0) + 1;
+        });
+
+        selFundo.innerHTML = `<option value="">-- Todos los Fundos (${guiasEmpresa.length} guías) --</option>`;
+        Object.keys(fundoConteo).sort().forEach(fundo => {
+          const opt = document.createElement('option');
+          opt.value = fundo;
+          opt.innerText = `${fundo} (${fundoConteo[fundo]} guías)`;
+          selFundo.appendChild(opt);
+        });
+      }
+
+      filtrarRepositorio();
+    }
+
     function filtrarRepositorio() {
       const empSel = (document.getElementById('repoEmpresaSelect')?.value || '').toLowerCase().trim();
+      const fundoSel = (document.getElementById('repoFundoSelect')?.value || '').toLowerCase().trim();
       const q = (document.getElementById('repoFiltro')?.value || '').toLowerCase().trim();
 
       guiasFiltradasList = guiasRepositorioList.filter(g => {
-        const matchEmp = !empSel || (g.empresa || '').toLowerCase() === empSel;
+        const matchEmp = !empSel || (g.empresa || '').toLowerCase().trim() === empSel;
+        const gFundo = (g.fundo || 'General').toLowerCase().trim();
+        const matchFundo = !fundoSel || gFundo === fundoSel;
         const matchTexto = !q || (
           (g.empresa || '').toLowerCase().includes(q) ||
           (g.fundo || '').toLowerCase().includes(q) ||
           (g.guia || '').toLowerCase().includes(q) ||
           (g.fecha || '').toLowerCase().includes(q)
         );
-        return matchEmp && matchTexto;
+        return matchEmp && matchFundo && matchTexto;
       });
 
       renderRepositorio(guiasFiltradasList);
@@ -1352,7 +1399,7 @@
       }
     }
 
-    function consolidarGuiasSeleccionadas() {
+    async function consolidarGuiasSeleccionadas() {
       if (guiasSeleccionadasSet.size === 0) {
         alert("Selecciona al menos una guía de la lista marcando la casilla.");
         return;
@@ -1372,55 +1419,87 @@
 
       // Ordenar cronológicamente si es posible
       seleccionadas.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
-
       const primera = seleccionadas[0];
 
-      // 1. Cliente
-      document.getElementById('cliente').value = primera.empresa || '';
+      showLoading("Procesando Guías con IA (OCR)", `Descargando ${seleccionadas.length} guía(s) desde Drive y extrayendo placas e ítems con Gemini...`);
+      haptic('medium');
 
-      // 2. RUC (desde la guía o el catálogo)
-      let rucVal = primera.ruc || '';
-      if (!rucVal && catalogosData && catalogosData.clientes) {
-        const empU = (primera.empresa || '').toUpperCase().trim();
-        const cliMatch = catalogosData.clientes[empU] || Object.values(catalogosData.clientes).find(c => (c.empresa || '').toUpperCase() === empU || empU.includes((c.empresa || '').toUpperCase()));
-        if (cliMatch) rucVal = cliMatch.ruc || '';
-      }
-      document.getElementById('rucCliente').value = rucVal;
+      try {
+        const res = await fetch(getApiUrl('/api/certificados/consolidar_repo'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ guias: seleccionadas })
+        });
+        const data = await res.json();
+        hideLoading();
 
-      // 3. Punto de Partida
-      document.getElementById('puntoPartida').value = primera.direccion_partida || (primera.fundo ? `Fundo - ${primera.fundo}` : '');
+        // 1. Cliente
+        document.getElementById('cliente').value = data.cliente || primera.empresa || '';
 
-      // 4. Tipo de Certificado
-      if (primera.tipo_sugerido) {
-        document.getElementById('tipoFlujo').value = primera.tipo_sugerido;
-        actualizarCamposPorTipo();
-      }
+        // 2. RUC (desde OCR o desde catálogo de cliente)
+        let rucVal = data.ruc_cliente || primera.ruc || '';
+        if (!rucVal && catalogosData && catalogosData.clientes) {
+          const empU = (primera.empresa || '').toUpperCase().trim();
+          const cliMatch = catalogosData.clientes[empU] || Object.values(catalogosData.clientes).find(c => (c.empresa || '').toUpperCase() === empU || empU.includes((c.empresa || '').toUpperCase()));
+          if (cliMatch) rucVal = cliMatch.ruc || '';
+        }
+        document.getElementById('rucCliente').value = rucVal;
 
-      // 5. Fecha de Emisión sugerida
-      if (primera.fecha) {
-        document.getElementById('fechaEmision').value = calcularFechaEmisionSugerida(primera.fecha, document.getElementById('tipoFlujo').value);
-      }
+        // 3. Placa Vehicular leída de la guía
+        if (data.placa) {
+          document.getElementById('placa').value = data.placa;
+        }
 
-      // 6. Cargar los ítems en el formulario
-      const container = document.getElementById('itemsContainer');
-      container.innerHTML = '';
+        // 4. Punto de Partida
+        document.getElementById('puntoPartida').value = data.punto_partida || primera.direccion_partida || (primera.fundo ? `Fundo - ${primera.fundo}` : '');
 
-      seleccionadas.forEach(g => {
-        agregarFilaItem({
-          fecha: g.fecha || '',
-          placa: g.placa || '',
-          guia: g.guia || '',
+        // 5. Tipo de Certificado
+        if (primera.tipo_sugerido) {
+          document.getElementById('tipoFlujo').value = primera.tipo_sugerido;
+          actualizarCamposPorTipo();
+        }
+
+        // 6. Fecha de Emisión sugerida
+        if (primera.fecha) {
+          document.getElementById('fechaEmision').value = calcularFechaEmisionSugerida(primera.fecha, document.getElementById('tipoFlujo').value);
+        }
+
+        // 7. Cargar los ítems reales extraídos por OCR en la tabla
+        const container = document.getElementById('itemsContainer');
+        container.innerHTML = '';
+
+        const itemsACargar = (data.items && data.items.length > 0) ? data.items : seleccionadas.map(g => ({
+          fecha_origen: g.fecha || '',
+          placa_origen: '',
+          guia_origen: g.guia || '',
           desc: 'RESIDUOS RECICLABLES Y APROVECHABLES',
           cant: '1',
           um: 'KG',
           peso: '0.00'
-        });
-      });
+        }));
 
-      // 7. Cambiar a la pestaña de Emisión Manual
-      switchTab('tab-manual');
-      haptic('success');
-      alert(`✅ Se consolidaron ${seleccionadas.length} guía(s) de "${primera.empresa}" en el formulario de emisión.`);
+        itemsACargar.forEach(it => {
+          agregarFilaItem({
+            fecha: it.fecha_origen || primera.fecha || '',
+            placa: it.placa_origen || data.placa || '',
+            guia: it.guia_origen || '',
+            desc: it.desc || '',
+            cant: it.cant || '1',
+            um: it.um || 'KG',
+            peso: it.peso || '0.00'
+          });
+        });
+
+        // 8. Cambiar a la pestaña de Emisión Manual
+        switchTab('tab-manual');
+        haptic('success');
+        alert(`🎉 ¡Consolidación exitosa!\n\nSe procesaron ${seleccionadas.length} guía(s) con IA Gemini.\nPlaca: ${data.placa || 'Extraída'}\nÍtems cargados: ${itemsACargar.length}`);
+      } catch (e) {
+        hideLoading();
+        haptic('error');
+        console.error("Error consolidando guías con OCR:", e);
+        alert("Error de procesamiento al consolidar guías: " + e.message);
+      }
     }
 
     function calcularFechaEmisionSugerida(fechaGuia, tipoFlujo) {
