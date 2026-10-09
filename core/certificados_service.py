@@ -340,6 +340,132 @@ def _set_table_margins(table, top=72, bottom=72, left=30, right=30):
     ''')
     tblPr.append(tblCellMar)
 
+def ajustar_posicion_y_tamano_firmas(doc: Document, num_items: int) -> None:
+    """
+    Ajusta dinámicamente las firmas en la plantilla Word (.docx) para que se acomoden
+    de forma limpia entre el último párrafo y el pie de página, evitando que se bajen
+    y se sobrepongan al pie de página. Si el espacio físico no fuera suficiente
+    (por una tabla inusualmente extensa), se mantiene una escala legible mínima
+    para permitir edición manual.
+    """
+    try:
+        # 1. Localizar el párrafo de firmas (buscando desde el final hacia arriba)
+        sig_p = None
+        sig_idx = -1
+        total_p = len(doc.paragraphs)
+        for i in range(total_p - 1, -1, -1):
+            if i < total_p // 2:
+                break
+            p = doc.paragraphs[i]
+            drawings = p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
+            sig_drawings = []
+            for d in drawings:
+                ext = d.find('.//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent')
+                if ext is not None:
+                    try:
+                        cy = int(ext.get('cy', 0))
+                        # Las firmas tienen alto > 20 pt (254,000 EMUs) y no son marcas de agua de página completa (cy < 4,000,000)
+                        if 254000 < cy < 4000000:
+                            sig_drawings.append(d)
+                    except (ValueError, TypeError):
+                        pass
+            if len(sig_drawings) >= 1 and ('[[TABLA_NOTAS]]' not in p.text):
+                sig_p = p
+                sig_idx = i
+                break
+
+        if sig_p is None or sig_idx == -1:
+            return
+
+        # 2. Eliminar párrafos vacíos posteriores al párrafo de firmas
+        paras_posteriores_a_eliminar = []
+        for i in range(sig_idx + 1, len(doc.paragraphs)):
+            p = doc.paragraphs[i]
+            drawings = p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
+            if not p.text.strip() and not drawings:
+                paras_posteriores_a_eliminar.append(p)
+        for p in paras_posteriores_a_eliminar:
+            try:
+                p._element.getparent().remove(p._element)
+            except Exception:
+                pass
+
+        # 3. Eliminar párrafos vacíos inmediatamente anteriores al párrafo de firmas
+        paras_anteriores_a_eliminar = []
+        for i in range(sig_idx - 1, -1, -1):
+            p = doc.paragraphs[i]
+            drawings = p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
+            if not p.text.strip() and not drawings:
+                paras_anteriores_a_eliminar.append(p)
+            else:
+                break
+        for p in paras_anteriores_a_eliminar:
+            try:
+                p._element.getparent().remove(p._element)
+            except Exception:
+                pass
+
+        # 4. Compactar espaciado del párrafo de firmas
+        sig_p.paragraph_format.space_before = Pt(0)
+        sig_p.paragraph_format.space_after = Pt(0)
+        sig_p.paragraph_format.line_spacing = 1.0
+
+        # Si hay varios ítems (>= 4), compactar párrafos vacíos intermedios anteriores
+        if num_items >= 4:
+            for p in doc.paragraphs:
+                if not p.text.strip() and not p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing'):
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
+                    p.paragraph_format.line_spacing = Pt(3)
+
+        # 5. Escala y desplazamiento vertical adaptativo según el número de filas
+        if num_items <= 1:
+            scale = 1.0
+            offset_v = 100000  # ~7.8 pt
+        elif num_items == 2:
+            scale = 0.90
+            offset_v = 70000   # ~5.5 pt
+        elif num_items <= 4:
+            scale = 0.82
+            offset_v = 50000   # ~3.9 pt
+        elif num_items <= 6:
+            scale = 0.74
+            offset_v = 30000   # ~2.3 pt
+        else:
+            # 7 o más ítems: escala mínima 0.68 para no comprometer legibilidad
+            scale = 0.68
+            offset_v = 15000   # ~1.2 pt
+
+        # 6. Aplicar ajustes en el XML de las firmas
+        drawings = sig_p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
+        for d in drawings:
+            # Eliminar márgenes de envoltura en anchor
+            for anchor in d.findall('.//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}anchor'):
+                anchor.set('distT', '0')
+                anchor.set('distB', '0')
+
+            # Ajustar posición vertical respecto al párrafo
+            posV = d.find('.//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}positionV')
+            if posV is not None:
+                posOffset = posV.find('{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}posOffset')
+                if posOffset is not None:
+                    posOffset.text = str(offset_v)
+
+            # Escalar dimensiones manteniendo la relación de aspecto
+            if scale < 1.0:
+                for el in d.iter():
+                    if 'cx' in el.attrib and 'cy' in el.attrib:
+                        try:
+                            cx = int(el.attrib['cx'])
+                            cy = int(el.attrib['cy'])
+                            el.attrib['cx'] = str(int(cx * scale))
+                            el.attrib['cy'] = str(int(cy * scale))
+                        except (ValueError, TypeError):
+                            pass
+
+    except Exception as e:
+        logger.warning(f"Aviso en ajuste de firmas: {e}")
+
 def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]]) -> bytes:
     """
     Inyecta la tabla formateada en el marcador [[TABLA_NOTAS]] del documento Word.
@@ -371,7 +497,7 @@ def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]])
         for i, col in enumerate(table.columns):
             col.width = widths[i]
 
-        encabezados = ['Fecha', 'Placa', 'N° Guía', 'Descripción', 'Cantidad', 'Medida', 'Peso']
+        encabezados = ['Fecha', 'Placa', 'N° Guía', 'Descripción', 'Cantidad', 'Medida', 'Peso (Kg)']
         hdr_cells = table.rows[0].cells
         for i, nombre in enumerate(encabezados):
             cell = hdr_cells[i]
@@ -418,6 +544,9 @@ def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]])
 
         tbl, p_elem = table._tbl, target_paragraph._p
         p_elem.addnext(tbl)
+
+    # Ajuste adaptativo de firmas para evitar superposición con el pie de página
+    ajustar_posicion_y_tamano_firmas(doc, len(data_items))
 
     new_buffer = io.BytesIO()
     doc.save(new_buffer)
@@ -632,24 +761,35 @@ def obtener_catalogo_servicios(sheets_service=None) -> Dict[str, Dict[str, List[
 
         seccion_actual = "COMERCIALIZACION"
         KEYWORDS_HEADER = ["COMERCIALIZACION", "COMERCIALIZACIÓN", "SERVICIOS", "DISPOSICION FINAL", "DISPOSICIÓN FINAL"]
+        norm_keywords = [normalizar_texto_sin_tildes(k).upper() for k in KEYWORDS_HEADER]
 
         for row in filas:
             c0 = str(row[0]).strip() if len(row) > 0 else ""
             c1 = str(row[1]).strip() if len(row) > 1 else ""
             c2 = str(row[2]).strip() if len(row) > 2 else ""
 
-            c0_norm = normalizar_texto_sin_tildes(c0).upper()
-            if any(k in c0_norm for k in KEYWORDS_HEADER):
+            c0_clean = " ".join(c0.split())
+            c1_clean = " ".join(c1.split())
+            c2_clean = " ".join(c2.split())
+
+            c0_norm = normalizar_texto_sin_tildes(c0_clean).upper()
+
+            # Ignorar encabezados de tabla (fila 1: TITULOS, SERVICIO O COMPRA, TIPO DE RESIDUO)
+            if c0_norm in ["TITULOS", "TITULO"]:
+                continue
+
+            # Detectar cambio de sección por coincidencia EXACTA
+            if c0_norm in norm_keywords:
                 seccion_actual = "COMERCIALIZACION" if "COMERC" in c0_norm else "SERVICIOS"
                 continue
 
             if seccion_actual in secciones:
-                if c0 and c0 not in secciones[seccion_actual]["titulos"]:
-                    secciones[seccion_actual]["titulos"].append(c0)
-                if c1 and c1 not in secciones[seccion_actual]["servicios"]:
-                    secciones[seccion_actual]["servicios"].append(c1)
-                if c2 and c2 not in secciones[seccion_actual]["residuos"]:
-                    secciones[seccion_actual]["residuos"].append(c2)
+                if c0_clean and c0_clean not in secciones[seccion_actual]["titulos"]:
+                    secciones[seccion_actual]["titulos"].append(c0_clean)
+                if c1_clean and c1_clean not in secciones[seccion_actual]["servicios"]:
+                    secciones[seccion_actual]["servicios"].append(c1_clean)
+                if c2_clean and c2_clean not in secciones[seccion_actual]["residuos"]:
+                    secciones[seccion_actual]["residuos"].append(c2_clean)
         return secciones
     except Exception as e:
         logger.error(f"Error leyendo pestaña SERVICIOS: {e}")
@@ -1072,27 +1212,67 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     else:
         tipo_flujo = "Comercialización"
 
+    tipo_cod = "COM" if "comercializa" in str(tipo_flujo).lower() else "SER"
+    sec_key = "COMERCIALIZACION" if tipo_cod == "COM" else "SERVICIOS"
+
+    # Obtener catálogo para frases oficiales por defecto
+    try:
+        cat_servicios = obtener_catalogo_servicios(sheets_service)
+    except Exception:
+        cat_servicios = {}
+
+    def_titulos = cat_servicios.get(sec_key, {}).get("titulos", [])
+    def_servicios = cat_servicios.get(sec_key, {}).get("servicios", [])
+    def_residuos = cat_servicios.get(sec_key, {}).get("residuos", [])
+
+    fallback_tit = def_titulos[0] if def_titulos else (
+        "CERTIFICADO DE RECOLECCIÓN, TRANSPORTE Y COMERCIALIZACIÓN DE RESIDUOS SÓLIDOS" if tipo_cod == "COM" 
+        else "CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE DE RESIDUOS SÓLIDOS PELIGROSOS"
+    )
+    fallback_serv = def_servicios[0] if def_servicios else (
+        "RECOLECCIÓN, TRANSPORTE Y COMERCIALIZACIÓN DE RESIDUOS SÓLIDOS" if tipo_cod == "COM"
+        else "RECOLECCIÓN Y TRANSPORTE DE RESIDUOS SÓLIDOS"
+    )
+    fallback_res = def_residuos[0] if def_residuos else (
+        "RESIDUOS APROVECHABLES" if tipo_cod == "COM" else "RESIDUOS NO APROVECHABLES"
+    )
+
     es_modelo = bool(payload.get("es_modelo", False))
 
     v_corr = str(payload.get("correlativo", "")).strip()
-    v_tit = str(payload.get("titulo", "CERTIFICADO DE OPERACIÓN")).strip()
+
+    v_tit_raw = str(payload.get("titulo", "")).strip()
+    if not v_tit_raw or v_tit_raw.upper() in ["S/D", "NONE", "CERTIFICADO DE OPERACIÓN"]:
+        v_tit = fallback_tit
+    else:
+        v_tit = v_tit_raw
+
     v_cli = str(payload.get("cliente", "")).strip()
     v_ruc_c = str(payload.get("ruc_cliente", "")).strip()
 
     v_serv_raw = str(payload.get("servicio", "")).strip()
-    if not v_serv_raw or v_serv_raw.upper() in ["S/D", "NONE"]:
-        v_serv = "COMERCIALIZACIÓN" if tipo_flujo == "Comercialización" else "DISPOSICIÓN FINAL"
+    if not v_serv_raw or v_serv_raw.upper() in ["S/D", "NONE", "COMERCIALIZACIÓN", "COMERCIALIZACION", "DISPOSICIÓN FINAL", "DISPOSICION FINAL"]:
+        v_serv = fallback_serv
     else:
         v_serv = v_serv_raw
 
     v_res_raw = str(payload.get("tipo_residuo", "")).strip()
     if not v_res_raw or v_res_raw.upper() in ["S/D", "NONE"]:
-        v_res = "RESIDUOS PELIGROSOS" if tipo_flujo == "Disposición Final 2" else "RESIDUOS NO PELIGROSOS"
+        v_res = fallback_res
     else:
         v_res = v_res_raw
+
     v_partida = str(payload.get("punto_partida", "")).strip()
-    v_llegada = str(payload.get("punto_llegada", "")).strip()
-    v_fec_emis = str(payload.get("fecha_emision", datetime.now(PET).strftime("%d/%m/%Y"))).strip()
+    # En el sistema de certificados actualizado, la dirección de llegada se envía vacía para usar la predeterminada
+    v_llegada = ""
+
+    # Regla de fecha de emisión (Prosembra / Villacurí en Comercialización => Hoy)
+    v_cli_norm = normalizar_texto_sin_tildes(v_cli).upper()
+    es_prosembra_villacuri = ("PROSEMBRA" in v_cli_norm) or ("VILLACURI" in v_cli_norm.replace(" ", ""))
+    if es_prosembra_villacuri and tipo_cod == "COM":
+        v_fec_emis = (datetime.now(PET)).strftime("%d/%m/%Y")
+    else:
+        v_fec_emis = str(payload.get("fecha_emision", datetime.now(PET).strftime("%d/%m/%Y"))).strip()
     items = payload.get("items", [])
 
     # Obtener RUC y registro de la empresa firmante
@@ -1116,6 +1296,7 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
         "RUC_CLIENTE": v_ruc_c,
         "RAZON_SOCIAL_CLIENTE": v_cli,
         "SERVICIO_O_COMPRA": v_serv,
+        "SERVICIO O COMPRA": v_serv,
         "TIPO_DE_RESIDUO": v_res,
         "PUNTO_PARTIDA": v_partida,
         "DIRECCION_EMPRESA": v_llegada,

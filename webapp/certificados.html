@@ -606,14 +606,19 @@
         <input type="text" id="puntoPartida" placeholder="Dirección Base - Fundo / Predio">
       </div>
 
+      <div class="form-group">
+        <label>Título del Certificado</label>
+        <select id="tituloCert"></select>
+      </div>
+
       <div class="form-row">
         <div class="form-group">
           <label>Servicio</label>
-          <input type="text" id="servicio" value="COMERCIALIZACIÓN">
+          <select id="servicio"></select>
         </div>
         <div class="form-group">
           <label>Tipo de Residuo</label>
-          <input type="text" id="tipoResiduo" value="RESIDUOS NO PELIGROSOS">
+          <select id="tipoResiduo"></select>
         </div>
       </div>
     </div>
@@ -842,20 +847,68 @@
         .replace(/'/g, '&#039;');
     }
 
+    function poblarSelectConOpciones(selectEl, opciones, valorPorDefecto = '') {
+      if (!selectEl) return;
+      const valPrevio = selectEl.value;
+      selectEl.innerHTML = '';
+      (opciones || []).forEach(op => {
+        const opt = document.createElement('option');
+        opt.value = op;
+        opt.textContent = op;
+        selectEl.appendChild(opt);
+      });
+      if (valorPorDefecto && opciones.includes(valorPorDefecto)) {
+        selectEl.value = valorPorDefecto;
+      } else if (valPrevio && opciones.includes(valPrevio)) {
+        selectEl.value = valPrevio;
+      } else if (selectEl.options.length > 0) {
+        selectEl.selectedIndex = 0;
+      }
+    }
+
     function actualizarCamposPorTipo() {
       const flujo = document.getElementById('tipoFlujo')?.value || 'Comercialización';
-      const servInput = document.getElementById('servicio');
-      const resInput = document.getElementById('tipoResiduo');
-      if (flujo.includes('Comercial')) {
-        if (servInput) servInput.value = 'COMERCIALIZACIÓN';
-        if (resInput) resInput.value = 'RESIDUOS NO PELIGROSOS';
-      } else if (flujo.includes('Final 2')) {
-        if (servInput) servInput.value = 'DISPOSICIÓN FINAL';
-        if (resInput) resInput.value = 'RESIDUOS PELIGROSOS';
-      } else {
-        if (servInput) servInput.value = 'DISPOSICIÓN FINAL';
-        if (resInput) resInput.value = 'RESIDUOS NO PELIGROSOS';
+      const esCom = flujo.toLowerCase().includes('comercial');
+      const secActual = esCom ? 'COMERCIALIZACION' : 'SERVICIOS';
+      const otraSec = esCom ? 'SERVICIOS' : 'COMERCIALIZACION';
+
+      const sData = catalogosData?.servicios || {};
+      const actualTit = sData[secActual]?.titulos || [];
+      const otroTit = sData[otraSec]?.titulos || [];
+      const optsTit = actualTit.concat(otroTit.filter(x => !actualTit.includes(x)));
+
+      const actualServ = sData[secActual]?.servicios || [];
+      const otroServ = sData[otraSec]?.servicios || [];
+      const optsServ = actualServ.concat(otroServ.filter(x => !actualServ.includes(x)));
+
+      const actualRes = sData[secActual]?.residuos || [];
+      const otroRes = sData[otraSec]?.residuos || [];
+      const optsRes = actualRes.concat(otroRes.filter(x => !actualRes.includes(x)));
+
+      const defTit = optsTit[0] || (esCom 
+        ? 'CERTIFICADO DE RECOLECCIÓN, TRANSPORTE Y COMERCIALIZACIÓN DE RESIDUOS SÓLIDOS' 
+        : 'CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE DE RESIDUOS SÓLIDOS PELIGROSOS');
+
+      const defServ = optsServ[0] || (esCom 
+        ? 'RECOLECCIÓN, TRANSPORTE Y COMERCIALIZACIÓN DE RESIDUOS SÓLIDOS' 
+        : 'RECOLECCIÓN Y TRANSPORTE DE RESIDUOS SÓLIDOS');
+
+      let defRes = optsRes[0];
+      if (flujo.includes('Final 2')) {
+        defRes = optsRes.find(r => r.toUpperCase().includes('PELIGROSO')) || 'RESIDUOS PELIGROSOS';
+      } else if (!defRes) {
+        defRes = esCom ? 'RESIDUOS APROVECHABLES' : 'RESIDUOS NO APROVECHABLES';
       }
+
+      poblarSelectConOpciones(document.getElementById('tituloCert'), optsTit.length ? optsTit : [defTit], defTit);
+      poblarSelectConOpciones(document.getElementById('servicio'), optsServ.length ? optsServ : [defServ], defServ);
+      poblarSelectConOpciones(document.getElementById('tipoResiduo'), optsRes.length ? optsRes : [defRes], defRes);
+
+      const fBase = document.getElementById('fechaEmision')?.value;
+      if (fBase) {
+        document.getElementById('fechaEmision').value = calcularFechaEmisionSugerida(fBase, flujo);
+      }
+
       actualizarCorrelativoSugerido();
     }
 
@@ -979,6 +1032,8 @@
             });
           }
         }
+        // Poblar selects con las opciones completas de los catálogos
+        actualizarCamposPorTipo();
       } catch (e) {
         console.warn("Falla cargando catálogos remotos:", e);
       }
@@ -996,6 +1051,13 @@
         if (cli.direccion && !document.getElementById('puntoPartida').value) {
           document.getElementById('puntoPartida').value = cli.direccion;
         }
+      }
+
+      // Regla especial de fecha para Prosembra / Villacurí en Comercialización
+      const flujo = document.getElementById('tipoFlujo')?.value || 'Comercialización';
+      const fBase = document.getElementById('fechaEmision')?.value;
+      if (fBase) {
+        document.getElementById('fechaEmision').value = calcularFechaEmisionSugerida(fBase, flujo, v);
       }
     }
 
@@ -1214,13 +1276,14 @@
         tipo_flujo: document.getElementById('tipoFlujo').value,
         es_modelo: document.getElementById('esModelo').checked,
         correlativo: correlativo,
+        titulo: document.getElementById('tituloCert')?.value?.trim() || '',
         fecha_emision: document.getElementById('fechaEmision').value,
         cliente: cliente,
         ruc_cliente: document.getElementById('rucCliente').value.trim(),
         punto_partida: document.getElementById('puntoPartida').value.trim(),
         punto_llegada: document.getElementById('puntoLlegada')?.value?.trim() || '',
-        servicio: document.getElementById('servicio').value.trim(),
-        tipo_residuo: document.getElementById('tipoResiduo').value.trim(),
+        servicio: document.getElementById('servicio')?.value?.trim() || '',
+        tipo_residuo: document.getElementById('tipoResiduo')?.value?.trim() || '',
         items: items,
         user_id: tg?.initDataUnsafe?.user?.id || null,
         usuario_email: tg?.initDataUnsafe?.user?.username || "MiniApp",
@@ -1643,8 +1706,20 @@
       }
     }
 
-    function calcularFechaEmisionSugerida(fechaGuia, tipoFlujo) {
+    function calcularFechaEmisionSugerida(fechaGuia, tipoFlujo, cliente = '') {
       try {
+        const cliNorm = (cliente || document.getElementById('cliente')?.value || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const esComercializacion = (tipoFlujo || '').toLowerCase().includes('comercial');
+
+        // REGLA ESPECIAL PROSEMBRA / VILLACURI EN COMERCIALIZACIÓN => HOY
+        if (esComercializacion && (cliNorm.includes('PROSEMBRA') || cliNorm.replace(/\s+/g, '').includes('VILLACURI'))) {
+          const hoy = new Date();
+          const dd = String(hoy.getDate()).padStart(2, '0');
+          const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+          const yyyy = hoy.getFullYear();
+          return `${dd}/${mm}/${yyyy}`;
+        }
+
         const partes = fechaGuia.split(/[\/\-]/);
         if (partes.length === 3) {
           let d = parseInt(partes[0], 10);
