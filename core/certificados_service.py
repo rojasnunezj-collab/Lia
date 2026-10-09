@@ -60,7 +60,7 @@ PLANTILLAS_FALLBACK: Dict[str, Dict[str, str]] = {
         "Disposición Final 2": "1fpdZef3Fe3tl00yAuM0Cehx2_o3AusrErcOJisBtdBM"
     },
     "INECOVE S.A.C.": {
-        "Comercialización": os.getenv("TEMPLATE_INECOVE_ID", "1MPzCwxR538osP3_br4VrTDybplqpTBtB08Jo"),
+        "Comercialización": os.getenv("TEMPLATE_INECOVE_ID", "1JbTdRtinFfTnjDLKmrm7Dvd6DI3p0_kqn_fwwOoIBgU"),
         "Disposición Final 1": os.getenv("TEMPLATE_INECOVE_PELIGROSO_ID", "1W-HyVSivqug13gBRBclBuICAOSBUHm1WN5cnqtMQcZY"),
         "Disposición Final 2": os.getenv("TEMPLATE_INECOVE_PELIGROSO_ID", "1W-HyVSivqug13gBRBclBuICAOSBUHm1WN5cnqtMQcZY")
     }
@@ -746,30 +746,51 @@ def obtener_siguiente_correlativo_cert(tipo_flujo: str = "Comercialización", sh
 def resolver_plantilla_drive(empresa_nombre: str, tipo_certificado: str, drive_service, es_modelo: bool = False) -> str:
     """
     Busca la plantilla .docx en la carpeta de Drive o retorna el ID fallback.
+    Garantiza que 'Comercialización' nunca use plantillas de Disposición Final.
     """
     carpeta_id = CARPETA_PLANTILLAS_MODELO if es_modelo else CARPETA_PLANTILLAS_NORMALES
-    palabra_flujo = "Comercializacion" if "comercializa" in str(tipo_certificado).lower() else "Final"
+    emp_key = "INECOVE S.A.C." if "INECOVE" in empresa_nombre.upper() else "EPMI S.A.C."
     empresa_limpia = "INECOVE" if "INECOVE" in empresa_nombre.upper() else "EPMI"
 
-    try:
-        query = (
-            f"'{carpeta_id}' in parents "
-            f"and name contains '{empresa_limpia}' "
-            f"and name contains '{palabra_flujo}' "
-            f"and trashed = false"
-        )
-        res = drive_service.files().list(
-            q=query, spaces='drive', fields='files(id, name, mimeType)', supportsAllDrives=True
-        ).execute()
-        files = res.get('files', [])
-        if files:
-            return files[0]['id']
-    except Exception as e:
-        logger.warning(f"Búsqueda dinámica de plantilla falló ({e}). Usando fallback.")
+    tipo_str = str(tipo_certificado or "").lower()
+    if "comercial" in tipo_str:
+        flujo_key = "Comercialización"
+        palabra_flujo = "COMERCIALIZACION"
+    elif "2" in tipo_str:
+        flujo_key = "Disposición Final 2"
+        palabra_flujo = "final 2"
+    else:
+        flujo_key = "Disposición Final 1"
+        palabra_flujo = "final 1"
 
-    # Fallback predeterminado
-    emp_key = "INECOVE S.A.C." if "INECOVE" in empresa_nombre.upper() else "EPMI S.A.C."
-    flujo_key = "Comercialización" if "comercializa" in str(tipo_certificado).lower() else "Disposición Final 1"
+    if es_modelo:
+        palabra_modelo = "COMERCIALIZACION" if flujo_key == "Comercialización" else "FINAL"
+        try:
+            query = f"'{carpeta_id}' in parents and name contains '{palabra_modelo}' and trashed = false"
+            res = drive_service.files().list(q=query, spaces='drive', fields='files(id, name)', supportsAllDrives=True).execute()
+            files = res.get('files', [])
+            if files:
+                return files[0]['id']
+        except Exception as e:
+            logger.warning(f"Búsqueda dinámica de plantilla modelo falló ({e}).")
+    else:
+        try:
+            query = (
+                f"'{carpeta_id}' in parents "
+                f"and name contains '{empresa_limpia}' "
+                f"and name contains '{palabra_flujo}' "
+                f"and trashed = false"
+            )
+            res = drive_service.files().list(
+                q=query, spaces='drive', fields='files(id, name, mimeType)', supportsAllDrives=True
+            ).execute()
+            files = res.get('files', [])
+            if files:
+                return files[0]['id']
+        except Exception as e:
+            logger.warning(f"Búsqueda dinámica de plantilla falló ({e}). Usando fallback.")
+
+    # Fallback predeterminado según empresa y flujo
     return PLANTILLAS_FALLBACK.get(emp_key, {}).get(flujo_key, "1d09vmlBlW_4yjrrz5M1XM8WpCvzTI4f11pERDbxFvNE")
 
 def descargar_plantilla_docx(plantilla_id: str, drive_service) -> bytes:
@@ -962,6 +983,63 @@ def buscar_datos_certificado_en_historial(correlativo: str, sheets_service=None,
         logger.error(f"Error buscando certificado en 'historial': {e}")
         return []
 
+def actualizar_bitacora_guias_recibidas(guias_lista: List[str], filas_repositorio: Optional[List[int]] = None, sheets_service=None) -> int:
+    """
+    Registra la marca '✅ Nuevo: dd/mm/yyyy hh:mm' en la Columna H de 'Guias_recibidas'
+    para todas las guías procesadas, ya sea por número de fila o buscando por número de guía.
+    """
+    if not sheets_service:
+        _, sheets_service = obtener_servicios_google()
+
+    ahora_pe = (datetime.now(PET)).strftime("%d/%m/%Y %H:%M")
+    marca = f"✅ Nuevo: {ahora_pe}"
+    filas_a_actualizar = set()
+
+    if filas_repositorio:
+        for f in filas_repositorio:
+            try:
+                f_int = int(f)
+                if f_int >= 2:
+                    filas_a_actualizar.add(f_int)
+            except Exception:
+                pass
+
+    if guias_lista:
+        try:
+            from bot.handlers import match_guia_en_texto
+            res = sheets_service.spreadsheets().values().get(
+                spreadsheetId=ID_SHEET_REPOSITORIO, range="'Guias_recibidas'!B2:H"
+            ).execute()
+            filas_sheet = res.get('values', [])
+            for idx, r in enumerate(filas_sheet):
+                f_num = idx + 2
+                g_sheet = r[0] if len(r) > 0 else ""
+                col_h = r[6] if len(r) > 6 else ""
+                if "✅" in col_h:
+                    continue
+                for g_buscada in guias_lista:
+                    if g_sheet and match_guia_en_texto(g_buscada, g_sheet):
+                        filas_a_actualizar.add(f_num)
+                        break
+        except Exception as e:
+            logger.error(f"Error escaneando Guias_recibidas para marcar bitácora: {e}")
+
+    actualizados = 0
+    for f_num in sorted(list(filas_a_actualizar)):
+        try:
+            sheets_service.spreadsheets().values().update(
+                spreadsheetId=ID_SHEET_REPOSITORIO,
+                range=f"'Guias_recibidas'!H{f_num}",
+                valueInputOption="USER_ENTERED",
+                body={"values": [[marca]]}
+            ).execute()
+            actualizados += 1
+        except Exception as e:
+            logger.error(f"Error actualizando Col H en Guias_recibidas fila {f_num}: {e}")
+
+    logger.info(f"Bitácora Guias_recibidas actualizada: {actualizados} filas marcadas con '{marca}'.")
+    return actualizados
+
 # ====================================================================
 # --- BLOQUE 10: GENERACIÓN COMPLETA DE CERTIFICADOS ---
 # ====================================================================
@@ -975,19 +1053,43 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     5. Consolida PDF unificado (Certificado + Guías)
     6. Sube Word y PDF a Drive
     7. Registra fila en 'historial' de Google Sheets
+    8. Actualiza bitácora en Guias_recibidas (Columna H)
     """
     drive_service, sheets_service = obtener_servicios_google()
 
     empresa_firma = payload.get("empresa_firma", "EPMI S.A.C.")
-    tipo_flujo = payload.get("tipo_flujo", "Comercialización")
+    raw_flujo = str(payload.get("tipo_flujo", "")).strip()
+    raw_tipo_cert = str(payload.get("tipo_certificado", "")).strip()
+    flujo_detectado = raw_flujo or raw_tipo_cert or "Comercialización"
+    norm_flujo = normalizar_texto_sin_tildes(flujo_detectado).lower()
+
+    if "comercial" in norm_flujo:
+        tipo_flujo = "Comercialización"
+    elif "final 2" in norm_flujo or "2" in norm_flujo:
+        tipo_flujo = "Disposición Final 2"
+    elif "disposic" in norm_flujo or "final" in norm_flujo or "servicio" in norm_flujo:
+        tipo_flujo = "Disposición Final 1"
+    else:
+        tipo_flujo = "Comercialización"
+
     es_modelo = bool(payload.get("es_modelo", False))
 
     v_corr = str(payload.get("correlativo", "")).strip()
     v_tit = str(payload.get("titulo", "CERTIFICADO DE OPERACIÓN")).strip()
     v_cli = str(payload.get("cliente", "")).strip()
     v_ruc_c = str(payload.get("ruc_cliente", "")).strip()
-    v_serv = str(payload.get("servicio", "COMERCIALIZACIÓN")).strip()
-    v_res = str(payload.get("tipo_residuo", "RESIDUOS NO PELIGROSOS")).strip()
+
+    v_serv_raw = str(payload.get("servicio", "")).strip()
+    if not v_serv_raw or v_serv_raw.upper() in ["S/D", "NONE"]:
+        v_serv = "COMERCIALIZACIÓN" if tipo_flujo == "Comercialización" else "DISPOSICIÓN FINAL"
+    else:
+        v_serv = v_serv_raw
+
+    v_res_raw = str(payload.get("tipo_residuo", "")).strip()
+    if not v_res_raw or v_res_raw.upper() in ["S/D", "NONE"]:
+        v_res = "RESIDUOS PELIGROSOS" if tipo_flujo == "Disposición Final 2" else "RESIDUOS NO PELIGROSOS"
+    else:
+        v_res = v_res_raw
     v_partida = str(payload.get("punto_partida", "")).strip()
     v_llegada = str(payload.get("punto_llegada", "")).strip()
     v_fec_emis = str(payload.get("fecha_emision", datetime.now(PET).strftime("%d/%m/%Y"))).strip()
@@ -1097,6 +1199,13 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
 
     fila_historial = registrar_en_historial_sheets(datos_log, sheets_service)
 
+    # 10. Actualizar bitácora en Guias_recibidas (Columna H)
+    filas_repo = payload.get('filas_repositorio') or []
+    try:
+        actualizar_bitacora_guias_recibidas(guias_lista, filas_repositorio=filas_repo, sheets_service=sheets_service)
+    except Exception as e_bit:
+        logger.error(f"Error actualizando bitácora en Guias_recibidas: {e_bit}")
+
     return {
         "status": "success",
         "correlativo": v_corr,
@@ -1109,7 +1218,9 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
         "pdf_bytes": pdf_unificado_bytes,
         "cliente": v_cli,
         "fecha": v_fec_emis,
-        "tipo_cod": tipo_cod
+        "tipo_cod": tipo_cod,
+        "guias": guias_lista,
+        "filas_repositorio": filas_repo
     }
 
 # ====================================================================
@@ -1250,8 +1361,8 @@ def obtener_guias_pendientes_repositorio(sheets_service=None) -> List[Dict[str, 
                 if not guia_num or not empresa or empresa.upper() in ["S/D", "EMPRESA"]:
                     continue
 
-                # Si ya tiene un certificado emitido explícito en col H:
-                if col_cert and any(term in col_cert.upper() for term in ["EMITIDO", "CERT-", "FINAL", "COMERCIALIZACION"]):
+                # Si ya tiene un certificado emitido o marca en Col H (ej. '✅ Nuevo:...'):
+                if col_cert and ("✅" in col_cert or "NUEVO" in col_cert.upper() or any(term in col_cert.upper() for term in ["EMITIDO", "CERT", "FINAL", "COMERCIAL"]) or len(col_cert.strip()) > 3):
                     continue
 
                 # Si ya está registrado en la pestaña historial:
@@ -1290,8 +1401,15 @@ def obtener_guias_pendientes_repositorio(sheets_service=None) -> List[Dict[str, 
                 if not dir_resuelta and fundo:
                     dir_resuelta = f"Fundo - {fundo}"
 
-                tipo_sug = tipo_cert
-                if not tipo_sug:
+                # Normalizar tipo sugerido exactamente a las opciones del selector
+                tipo_raw_norm = normalizar_texto_sin_tildes(tipo_cert).upper()
+                if "COMERC" in tipo_raw_norm:
+                    tipo_sug = "Comercialización"
+                elif "FINAL 2" in tipo_raw_norm or "2" in tipo_raw_norm:
+                    tipo_sug = "Disposición Final 2"
+                elif "DISPOSIC" in tipo_raw_norm or "FINAL" in tipo_raw_norm or "SERVICIO" in tipo_raw_norm:
+                    tipo_sug = "Disposición Final 1"
+                else:
                     tipo_sug = "Disposición Final 1" if "PETRAMAS" in empresa_upper else "Comercialización"
 
                 pendientes.append({
@@ -1457,3 +1575,241 @@ def obtener_url_webapp_certificados(correlativo: Optional[str] = None, datos_edi
 
     sep = '&' if '?' in base_url else '?'
     return f"{base_url}{sep}{urllib.parse.urlencode(params)}"
+
+# ====================================================================
+# --- BLOQUE 14: JUNTE DE EXPEDIENTE (CERTIFICADO + GUÍAS) ---
+# ====================================================================
+def buscar_guias_asociadas_para_unir(guias_lista: List[str], sheets_service=None, drive_service=None) -> Tuple[List[str], List[str]]:
+    """
+    Localiza los archivos de Google Drive (nombres o IDs) correspondientes a la(s) Guía(s) de Remisión
+    y a la(s) Guía(s) de Transporte cruzando 'Registro_Guias', 'Guias_recibidas' y búsqueda directa en Drive.
+    Retorna (archivos_remision, archivos_transporte).
+    """
+    if not drive_service or not sheets_service:
+        drive_service, sheets_service = obtener_servicios_google()
+
+    from bot.handlers import match_guia_en_texto
+
+    archivos_remision = []
+    archivos_transporte = []
+    guias_ligadas_descubiertas = []
+
+    # 1. Escanear Registro_Guias (Columnas A:N)
+    try:
+        res_reg = sheets_service.spreadsheets().values().get(
+            spreadsheetId=ID_SHEET_CONTROL, range="Registro_Guias!A2:N"
+        ).execute()
+        filas_reg = res_reg.get('values', [])
+    except Exception as e:
+        logger.error(f"Error leyendo Registro_Guias: {e}")
+        filas_reg = []
+
+    for r in filas_reg:
+        num_guia = r[1] if len(r) > 1 else ''
+        guia_lig = r[2] if len(r) > 2 else ''
+        tipo_guia = (r[3] if len(r) > 3 else '').upper()
+        archivo_hecho = r[8] if len(r) > 8 else ''
+        archivo_recib = r[9] if len(r) > 9 else ''
+        archivo = archivo_hecho or archivo_recib
+        obs = (r[11] if len(r) > 11 else '').upper()
+
+        if 'ERRADA' in obs or 'ERROR' in obs:
+            continue
+
+        for g in guias_lista:
+            if match_guia_en_texto(g, num_guia) or match_guia_en_texto(g, guia_lig):
+                if 'TRANS' in tipo_guia:
+                    if archivo and archivo not in archivos_transporte:
+                        archivos_transporte.append(archivo)
+                else:
+                    if archivo and archivo not in archivos_remision:
+                        archivos_remision.append(archivo)
+
+                if guia_lig and guia_lig.upper() not in ['SIN GUIA', 'NO TIENE', '-', ''] and guia_lig not in guias_ligadas_descubiertas:
+                    guias_ligadas_descubiertas.append(guia_lig)
+
+    # 2. Para contrapartes descubiertas en Registro_Guias:
+    for g_lig in guias_ligadas_descubiertas:
+        for r2 in filas_reg:
+            n2 = r2[1] if len(r2) > 1 else ''
+            t2 = (r2[3] if len(r2) > 3 else '').upper()
+            a2 = (r2[8] if len(r2) > 8 else '') or (r2[9] if len(r2) > 9 else '')
+            obs2 = (r2[11] if len(r2) > 11 else '').upper()
+            if 'ERRADA' in obs2 or 'ERROR' in obs2:
+                continue
+            if match_guia_en_texto(g_lig, n2):
+                if 'TRANS' in t2 and a2 and a2 not in archivos_transporte:
+                    archivos_transporte.append(a2)
+                elif a2 and a2 not in archivos_remision:
+                    archivos_remision.append(a2)
+
+    # 3. Escanear Guias_recibidas (Columnas A:F)
+    try:
+        res_rec = sheets_service.spreadsheets().values().get(
+            spreadsheetId=ID_SHEET_REPOSITORIO, range="'Guias_recibidas'!A2:F"
+        ).execute()
+        filas_rec = res_rec.get('values', [])
+    except Exception as e:
+        logger.error(f"Error leyendo Guias_recibidas para unión: {e}")
+        filas_rec = []
+
+    todas_guias_buscar = list(set(guias_lista + guias_ligadas_descubiertas))
+    for r in filas_rec:
+        num = r[1] if len(r) > 1 else ''
+        tipo = (r[2] if len(r) > 2 else '').upper()
+        arch = r[5] if len(r) > 5 else ''
+        if not arch:
+            continue
+        for g in todas_guias_buscar:
+            if match_guia_en_texto(g, num):
+                if 'TRANS' in tipo:
+                    if arch not in archivos_transporte:
+                        archivos_transporte.append(arch)
+                else:
+                    if arch not in archivos_remision:
+                        archivos_remision.append(arch)
+
+    # 4. Si aún faltan archivos de transporte o remisión, buscar directamente en Drive por nombre de guía
+    for g in todas_guias_buscar:
+        partes = [p.strip() for p in str(g).split('-') if p.strip()]
+        filtros = []
+        if len(partes) >= 2:
+            filtros.append(f"name contains '{partes[0]}' and name contains '{partes[1].lstrip('0')}'")
+        filtros.append(f"name contains '{g}'")
+
+        for f_q in filtros:
+            try:
+                q = f"({f_q}) and mimeType = 'application/pdf' and trashed = false"
+                res_d = drive_service.files().list(q=q, fields='files(id, name)', supportsAllDrives=True).execute()
+                for fd in res_d.get('files', []):
+                    fname = fd['name']
+                    if 'TR' in fname.upper() or 'TRANS' in fname.upper():
+                        if fname not in archivos_transporte:
+                            archivos_transporte.append(fname)
+                    else:
+                        if fname not in archivos_remision:
+                            archivos_remision.append(fname)
+            except Exception as e_dq:
+                pass
+
+    return archivos_remision, archivos_transporte
+
+def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]] = None, usuario_editor: str = "MiniApp") -> Dict[str, Any]:
+    """
+    Une el Certificado emitido con sus Guías de Remisión y de Transporte en un solo PDF:
+    Orden estricto:
+      1. Certificado (Página inicial)
+      2. Guía(s) de Remisión
+      3. Guía(s) de Transporte
+    Sobrescribe el PDF en Google Drive in-place y registra auditoría en 'historial'.
+    """
+    drive_service, sheets_service = obtener_servicios_google()
+
+    # 1. Localizar el certificado en Historial
+    certificados = buscar_datos_certificado_en_historial(correlativo, sheets_service, drive_service)
+    if not certificados:
+        raise ValueError(f"No se encontró ningún certificado con el correlativo '{correlativo}' en Historial.")
+
+    cert_sel = certificados[0]
+    num_fila = cert_sel['fila']
+    link_pdf = cert_sel.get('link_pdf') or cert_sel.get('raw_pdf')
+    empresa = cert_sel.get('empresa', 'EPMI S.A.C.')
+    tipo_cert = cert_sel.get('tipo_cert', 'Comercialización')
+    nombre_pdf = cert_sel.get('raw_pdf') or f"CERT-{correlativo}.pdf"
+
+    if not link_pdf:
+        raise ValueError(f"El certificado #{correlativo} no tiene un enlace a PDF en Historial.")
+
+    pdf_id = extraer_id_drive(link_pdf)
+    if not pdf_id:
+        raise ValueError(f"No se pudo resolver el ID de Drive del PDF para #{correlativo}.")
+
+    # 2. Descargar PDF existente (carátula del certificado)
+    req = drive_service.files().get_media(fileId=pdf_id, supportsAllDrives=True)
+    fh = io.BytesIO()
+    dl = MediaIoBaseDownload(fh, req)
+    done = False
+    while not done:
+        _, done = dl.next_chunk()
+    cert_pdf_bytes = fh.getvalue()
+
+    # 3. Determinar lista de guías a buscar
+    if not guias_lista:
+        raw_guias_str = cert_sel.get('guias', '')
+        guias_lista = [g.strip() for g in raw_guias_str.split(',') if g.strip()]
+
+    if not guias_lista and cert_sel.get('link_guia'):
+        guias_lista = [cert_sel.get('link_guia').strip()]
+
+    archivos_rem, archivos_trans = buscar_guias_asociadas_para_unir(guias_lista, sheets_service, drive_service)
+
+    # 4. Descargar PDFs de guías
+    bytes_remision = []
+    for arch in archivos_rem:
+        b = descargar_archivo_drive_por_id_o_nombre(arch, drive_service)
+        if b:
+            bytes_remision.append(b)
+
+    bytes_transporte = []
+    for arch in archivos_trans:
+        b = descargar_archivo_drive_por_id_o_nombre(arch, drive_service)
+        if b:
+            bytes_transporte.append(b)
+
+    if not bytes_remision and not bytes_transporte:
+        raise ValueError(f"No se encontraron archivos PDF de guías asociados en Drive para las guías: {', '.join(guias_lista)}")
+
+    # 5. Unir con PdfWriter:
+    # Página 1: Carátula del Certificado
+    # Páginas intermedias: Guías de Remisión
+    # Páginas finales: Guías de Transporte
+    writer = PdfWriter()
+    reader_cert = PdfReader(io.BytesIO(cert_pdf_bytes))
+    if len(reader_cert.pages) > 0:
+        writer.add_page(reader_cert.pages[0])
+
+    for b_rem in bytes_remision:
+        try:
+            r = PdfReader(io.BytesIO(b_rem))
+            for p in r.pages:
+                writer.add_page(p)
+        except Exception as e:
+            logger.warning(f"Error añadiendo páginas de remisión: {e}")
+
+    for b_tr in bytes_transporte:
+        try:
+            r = PdfReader(io.BytesIO(b_tr))
+            for p in r.pages:
+                writer.add_page(p)
+        except Exception as e:
+            logger.warning(f"Error añadiendo páginas de transporte: {e}")
+
+    out_io = io.BytesIO()
+    writer.write(out_io)
+    out_io.seek(0)
+    pdf_unificado_bytes = out_io.getvalue()
+
+    # 6. Sobrescribir in-place en Drive
+    nuevo_link = sobrescribir_o_subir_pdf_drive(
+        pdf_id, pdf_unificado_bytes, nombre_pdf, tipo_cert, empresa
+    )
+
+    # 7. Registrar auditoría en Sheets
+    ahora_pe = (datetime.now(PET)).strftime("%d/%m/%Y %H:%M")
+    obs_unir = f"Expediente unificado ({ahora_pe}): {len(bytes_remision)} Guía(s) Remisión, {len(bytes_transporte)} Guía(s) Transporte"
+    registrar_edicion_en_historial(
+        num_fila, nuevo_link or link_pdf, usuario_editor=usuario_editor,
+        obs_extra=obs_unir, sheets_service=sheets_service
+    )
+
+    return {
+        "status": "success",
+        "correlativo": correlativo,
+        "fila": num_fila,
+        "pdf_link": nuevo_link or link_pdf,
+        "nombre_archivo": nombre_pdf,
+        "remisiones_unidas": len(bytes_remision),
+        "transportes_unidos": len(bytes_transporte),
+        "total_paginas": len(writer.pages),
+        "pdf_bytes": pdf_unificado_bytes
+    }

@@ -651,6 +651,75 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
                 return
 
+        elif path == '/api/certificados/juntar_expediente':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                corr = payload.get('correlativo')
+                if not corr:
+                    raise ValueError("Falta 'correlativo' en la solicitud.")
+
+                guias = payload.get('guias') or []
+                usuario_email = payload.get('usuario_email', 'Usuario MiniApp')
+
+                from core.certificados_service import juntar_expediente_completo
+                res = juntar_expediente_completo(
+                    correlativo=corr,
+                    guias_lista=guias,
+                    usuario_editor=usuario_email
+                )
+
+                # Notificar y enviar documento consolidado por Telegram
+                target_chat_id = payload.get('user_id') or os.getenv("ADMIN_CHAT_ID")
+                token = os.getenv("TELEGRAM_TOKEN")
+                if target_chat_id and token:
+                    import requests
+                    import html
+                    c_corr = html.escape(str(corr))
+                    c_nom = html.escape(str(res['nombre_archivo']))
+                    caption = (
+                        f"📑 <b>Expediente Unificado con Guías</b>\n\n"
+                        f"📌 <b>Archivo:</b> <code>{c_nom}</code>\n"
+                        f"🔢 <b>Correlativo:</b> <code>{c_corr}</code>\n"
+                        f"📄 <b>Guías Remisión unidas:</b> {res['remisiones_unidas']}\n"
+                        f"🚛 <b>Guías Transporte unidas:</b> {res['transportes_unidos']}\n"
+                        f"📑 <b>Total Páginas:</b> {res['total_paginas']}\n\n"
+                        f"💾 PDF consolidado actualizado en Google Drive."
+                    )
+                    kb_buttons = [
+                        [{'text': '📂 Ver PDF en Drive', 'url': res['pdf_link']}],
+                        [{'text': '📋 Menú Certificados', 'callback_data': 'menu_certificados'}, {'text': '❌ Salir', 'callback_data': 'cancelar_start'}]
+                    ]
+                    files = {'document': (res['nombre_archivo'], res['pdf_bytes'], 'application/pdf')}
+                    data_tg = {
+                        'chat_id': str(target_chat_id),
+                        'caption': caption,
+                        'parse_mode': 'HTML',
+                        'reply_markup': json.dumps({'inline_keyboard': kb_buttons})
+                    }
+                    try:
+                        requests.post(f"https://api.telegram.org/bot{token}/sendDocument", data=data_tg, files=files, timeout=30)
+                    except Exception as e_tg:
+                        logger.error(f"Error enviando expediente unificado por Telegram: {e_tg}")
+
+                res_safe = {k: v for k, v in res.items() if k != 'pdf_bytes'}
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'res': res_safe}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/certificados/juntar_expediente: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
     def do_HEAD(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')

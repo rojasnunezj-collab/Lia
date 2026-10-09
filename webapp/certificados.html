@@ -551,7 +551,7 @@
         </div>
         <div class="form-group">
           <label>Tipo de Certificado</label>
-          <select id="tipoFlujo" onchange="actualizarCorrelativoSugerido()">
+          <select id="tipoFlujo" onchange="actualizarCamposPorTipo()">
             <option value="Comercialización">Comercialización</option>
             <option value="Disposición Final 1">Disposición Final 1</option>
             <option value="Disposición Final 2">Disposición Final 2</option>
@@ -735,13 +735,16 @@
         <div id="modObsBox" style="display:none; color:#b45309; margin-top:4px;">📝 <b>Obs previa:</b> <span id="modObs"></span></div>
       </div>
 
-      <div style="display:flex; gap:8px; margin-bottom:12px;">
-        <a id="btnLinkWord" href="#" target="_blank" class="btn-action btn-info" style="text-decoration:none; font-size:12px; padding:8px;">
+      <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+        <a id="btnLinkWord" href="#" target="_blank" class="btn-action btn-info" style="text-decoration:none; font-size:12px; padding:8px; flex:1;">
           📄 Editar Word en Docs ↗
         </a>
-        <a id="btnLinkPdf" href="#" target="_blank" class="btn-action btn-primary" style="text-decoration:none; font-size:12px; padding:8px;">
+        <a id="btnLinkPdf" href="#" target="_blank" class="btn-action btn-primary" style="text-decoration:none; font-size:12px; padding:8px; flex:1;">
           📑 Ver PDF en Drive ↗
         </a>
+        <button type="button" class="btn-action btn-success" id="btnModUnirGuias" onclick="juntarExpedienteDesdeModificar()" style="font-size:12px; padding:8px; width:100%;">
+          📑 Unir con Guías Asociadas (Remitente + Transporte)
+        </button>
       </div>
 
       <hr style="border:none; border-top:1px solid #e2e8f0; margin:12px 0;">
@@ -790,6 +793,29 @@
     </div>
   </div>
 
+  <!-- MODAL DE ÉXITO DE EMISIÓN -->
+  <div id="modalExito" class="modal-overlay" style="display:none;">
+    <div class="modal-card" style="text-align:left; max-width:340px; width:90%;">
+      <div style="font-size:32px; text-align:center; margin-bottom:6px;">🎉</div>
+      <h3 id="modalExitoTitulo" style="font-size:16px; font-weight:700; color:var(--primary-dark); text-align:center; margin-bottom:12px;">Certificado Emitido</h3>
+      <div id="modalExitoDetalle" style="font-size:12px; background:var(--bg-main); padding:10px; border-radius:8px; margin-bottom:12px; line-height:1.5;"></div>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <button type="button" class="btn-action btn-info" id="btnModalJuntar" onclick="ejecutarJuntarTrasEmision()">
+          📑 Juntar con Guías (Remisión + Transporte)
+        </button>
+        <a id="btnModalVerPdf" href="#" target="_blank" class="btn-action btn-primary" style="text-decoration:none; text-align:center;">
+          📂 Ver PDF en Drive ↗
+        </a>
+        <a id="btnModalVerDoc" href="#" target="_blank" class="btn-action btn-success" style="text-decoration:none; text-align:center;">
+          📄 Ver Word en Docs ↗
+        </a>
+        <button type="button" class="btn-action" style="background:#e2e8f0; color:#334155; margin-top:4px;" onclick="cerrarModalExito()">
+          ✔️ Listo / Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- JAVASCRIPT LOGIC -->
   <script>
     // Inicialización Telegram WebApp
@@ -817,6 +843,19 @@
     }
 
     function actualizarCamposPorTipo() {
+      const flujo = document.getElementById('tipoFlujo')?.value || 'Comercialización';
+      const servInput = document.getElementById('servicio');
+      const resInput = document.getElementById('tipoResiduo');
+      if (flujo.includes('Comercial')) {
+        if (servInput) servInput.value = 'COMERCIALIZACIÓN';
+        if (resInput) resInput.value = 'RESIDUOS NO PELIGROSOS';
+      } else if (flujo.includes('Final 2')) {
+        if (servInput) servInput.value = 'DISPOSICIÓN FINAL';
+        if (resInput) resInput.value = 'RESIDUOS PELIGROSOS';
+      } else {
+        if (servInput) servInput.value = 'DISPOSICIÓN FINAL';
+        if (resInput) resInput.value = 'RESIDUOS NO PELIGROSOS';
+      }
       actualizarCorrelativoSugerido();
     }
 
@@ -1184,7 +1223,8 @@
         tipo_residuo: document.getElementById('tipoResiduo').value.trim(),
         items: items,
         user_id: tg?.initDataUnsafe?.user?.id || null,
-        usuario_email: tg?.initDataUnsafe?.user?.username || "MiniApp"
+        usuario_email: tg?.initDataUnsafe?.user?.username || "MiniApp",
+        filas_repositorio: window.filasRepositorioSeleccionadas || []
       };
 
       // Si hay archivo cargado en OCR o en anexos, convertir a Base64
@@ -1206,16 +1246,106 @@
 
         if (d.success) {
           haptic('success');
-          alert(`🎉 Certificado N° ${correlativo} emitido con éxito!\n\nSe ha guardado en Drive y enviado a tu chat de Telegram.`);
-          if (tg) {
-            try {
-              tg.sendData(JSON.stringify({ tipo: "CERTIFICADO_EMITIDO", correlativo: correlativo }));
-              setTimeout(() => tg.close(), 1500);
-            } catch (e) {}
-          }
+          actualizarCorrelativoSugerido();
+          mostrarModalExito(d.res || {
+            correlativo: correlativo,
+            nombre_archivo: `CERT-${correlativo}.pdf`,
+            cliente: cliente,
+            fecha: payload.fecha_emision,
+            guias: window.guiasSeleccionadasLista || []
+          });
         } else {
           haptic('error');
           alert("❌ Error emitiendo certificado: " + (d.error || "Falla desconocida."));
+        }
+      } catch (e) {
+        hideLoading();
+        haptic('error');
+        alert("Error de red: " + e.message);
+      }
+    }
+
+    let ultimoCertificadoEmitido = null;
+
+    function mostrarModalExito(res) {
+      ultimoCertificadoEmitido = res;
+      document.getElementById('modalExitoTitulo').innerText = `Certificado N° ${res.correlativo || ''} Emitido`;
+      const guiasTexto = (res.guias && res.guias.length > 0) ? res.guias.join(', ') : '-';
+      document.getElementById('modalExitoDetalle').innerHTML = `
+        <div><b>Archivo:</b> ${escapeHtml(res.nombre_archivo || '')}</div>
+        <div><b>Cliente:</b> ${escapeHtml(res.cliente || '')}</div>
+        <div><b>Fecha:</b> ${escapeHtml(res.fecha || '')}</div>
+        <div><b>Guías:</b> ${escapeHtml(guiasTexto)}</div>
+      `;
+      const btnPdf = document.getElementById('btnModalVerPdf');
+      if (res.pdf_link) {
+        btnPdf.href = res.pdf_link;
+        btnPdf.style.display = 'block';
+      } else {
+        btnPdf.style.display = 'none';
+      }
+      const btnDoc = document.getElementById('btnModalVerDoc');
+      if (res.doc_link) {
+        btnDoc.href = res.doc_link;
+        btnDoc.style.display = 'block';
+      } else {
+        btnDoc.style.display = 'none';
+      }
+      document.getElementById('modalExito').style.display = 'flex';
+    }
+
+    function cerrarModalExito() {
+      document.getElementById('modalExito').style.display = 'none';
+      if (tg) {
+        try {
+          tg.sendData(JSON.stringify({ tipo: "CERTIFICADO_EMITIDO", correlativo: ultimoCertificadoEmitido?.correlativo }));
+          tg.close();
+        } catch(e) {}
+      }
+    }
+
+    async function ejecutarJuntarTrasEmision() {
+      if (!ultimoCertificadoEmitido) return;
+      await juntarExpediente(ultimoCertificadoEmitido.correlativo, ultimoCertificadoEmitido.guias || window.guiasSeleccionadasLista);
+    }
+
+    async function juntarExpedienteDesdeModificar() {
+      if (!certificadoEncontrado) return;
+      const guiasArray = certificadoEncontrado.guias ? certificadoEncontrado.guias.split(',').map(s => s.trim()).filter(Boolean) : [];
+      await juntarExpediente(certificadoEncontrado.correlativo, guiasArray);
+    }
+
+    async function juntarExpediente(correlativo, guias = null) {
+      if (!correlativo) return;
+      showLoading("Uniendo Expediente", "Buscando Guías de Remisión y Transporte en Drive y consolidando en un solo PDF...");
+      haptic('medium');
+
+      try {
+        const res = await fetch(getApiUrl('/api/certificados/juntar_expediente'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            correlativo: correlativo,
+            guias: guias || window.guiasSeleccionadasLista || [],
+            user_id: tg?.initDataUnsafe?.user?.id || null,
+            usuario_email: tg?.initDataUnsafe?.user?.username || "MiniApp"
+          })
+        });
+        const d = await res.json();
+        hideLoading();
+
+        if (d.success) {
+          haptic('success');
+          alert(`🎉 ¡Expediente N° ${correlativo} unificado con éxito!\n\nSe unieron:\n📄 ${d.res.remisiones_unidas} Guía(s) de Remisión\n🚛 ${d.res.transportes_unidos} Guía(s) de Transporte\n📑 Total Páginas: ${d.res.total_paginas}\n\nEl PDF en Drive se actualizó y se envió a tu chat.`);
+          if (d.res.pdf_link) {
+            const btnPdfModal = document.getElementById('btnModalVerPdf');
+            if (btnPdfModal) btnPdfModal.href = d.res.pdf_link;
+            const btnPdfModificar = document.getElementById('btnLinkPdf');
+            if (btnPdfModificar) btnPdfModificar.href = d.res.pdf_link;
+          }
+        } else {
+          haptic('error');
+          alert("❌ Error uniendo expediente: " + (d.error || "Falla desconocida."));
         }
       } catch (e) {
         hideLoading();
@@ -1417,6 +1547,10 @@
         return;
       }
 
+      // Guardar referencias globales para la bitácora y unión de expediente
+      window.filasRepositorioSeleccionadas = seleccionadas.map(g => g.fila).filter(Boolean);
+      window.guiasSeleccionadasLista = seleccionadas.map(g => g.guia).filter(Boolean);
+
       // Ordenar cronológicamente si es posible
       seleccionadas.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
       const primera = seleccionadas[0];
@@ -1454,10 +1588,17 @@
         document.getElementById('puntoPartida').value = data.punto_partida || primera.direccion_partida || (primera.fundo ? `Fundo - ${primera.fundo}` : '');
 
         // 5. Tipo de Certificado
-        if (primera.tipo_sugerido) {
-          document.getElementById('tipoFlujo').value = primera.tipo_sugerido;
-          actualizarCamposPorTipo();
+        let flujoSugerido = 'Comercialización';
+        const tSugNorm = (primera.tipo_sugerido || '').toLowerCase();
+        if (tSugNorm.includes('2')) {
+          flujoSugerido = 'Disposición Final 2';
+        } else if (tSugNorm.includes('final') || tSugNorm.includes('disposic') || tSugNorm.includes('servicio')) {
+          flujoSugerido = 'Disposición Final 1';
+        } else {
+          flujoSugerido = 'Comercialización';
         }
+        document.getElementById('tipoFlujo').value = flujoSugerido;
+        actualizarCamposPorTipo();
 
         // 6. Fecha de Emisión sugerida
         if (primera.fecha) {
