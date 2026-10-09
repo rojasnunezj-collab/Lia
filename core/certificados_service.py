@@ -532,6 +532,60 @@ def obtener_catalogo_servicios(sheets_service=None) -> Dict[str, Dict[str, List[
         logger.error(f"Error leyendo pestaña SERVICIOS: {e}")
         return secciones
 
+def obtener_catalogo_clientes_certificados(sheets_service=None) -> Dict[str, Dict[str, str]]:
+    """Lee la pestaña 'CLIENTES' (A=Empresa, B=RUC, C=Registro, D=Dirección Certificado, E=Domicilio Fiscal)."""
+    if not sheets_service:
+        _, sheets_service = obtener_servicios_google()
+    try:
+        res = sheets_service.spreadsheets().values().get(
+            spreadsheetId=ID_SHEET_CONTROL, range="CLIENTES!A2:E"
+        ).execute()
+        filas = res.get('values', [])
+        catalogo = {}
+        for fila in filas:
+            if len(fila) >= 1:
+                empresa = str(fila[0]).strip().upper()
+                if not empresa or empresa in ["S/D", "EMPRESA"]:
+                    continue
+                ruc = str(fila[1]).strip() if len(fila) > 1 else ""
+                registro = str(fila[2]).strip() if len(fila) > 2 else ""
+                dir_cert = str(fila[3]).strip() if len(fila) > 3 else ""
+                dom_fisc = str(fila[4]).strip() if len(fila) > 4 else ""
+                catalogo[empresa] = {
+                    "empresa": empresa,
+                    "ruc": ruc,
+                    "registro": registro,
+                    "direccion": dir_cert or dom_fisc
+                }
+        return catalogo
+    except Exception as e:
+        logger.error(f"Error leyendo catálogo CLIENTES: {e}")
+        return {}
+
+def obtener_catalogo_direcciones_certificados(sheets_service=None) -> Dict[str, Dict[str, str]]:
+    """Lee la pestaña 'Direcciones' (A=Empresa, B=Fundo/Planta, C=Palabra Clave, D=Dirección)."""
+    if not sheets_service:
+        _, sheets_service = obtener_servicios_google()
+    try:
+        res = sheets_service.spreadsheets().values().get(
+            spreadsheetId=ID_SHEET_CONTROL, range="Direcciones!A2:D"
+        ).execute()
+        filas = res.get('values', [])
+        catalogo = {}
+        for fila in filas:
+            if len(fila) >= 4:
+                empresa = str(fila[0]).strip().upper()
+                fundo = str(fila[1]).strip().upper()
+                direccion = str(fila[3]).strip()
+                if empresa and fundo and direccion:
+                    if empresa not in catalogo:
+                        catalogo[empresa] = {}
+                    catalogo[empresa][fundo] = direccion
+        return catalogo
+    except Exception as e:
+        logger.error(f"Error leyendo catálogo Direcciones: {e}")
+        return {}
+
 def obtener_siguiente_correlativo_cert(tipo_flujo: str = "Comercialización", sheets_service=None) -> str:
     """Calcula el siguiente número correlativo sugerido leyendo 'historial'."""
     if not sheets_service:
@@ -1031,40 +1085,105 @@ def procesar_regeneracion_expediente(
 def obtener_guias_pendientes_repositorio(sheets_service=None) -> List[Dict[str, Any]]:
     """
     Retorna la lista de guías registradas en 'Guias_recibidas' que aún no tienen certificado emitido.
+    Cruza contra 'historial' y contra columna H para evitar duplicados.
+    Resuelve RUC y Dirección desde los catálogos de CLIENTES y Direcciones.
     """
     if not sheets_service:
         _, sheets_service = obtener_servicios_google()
     try:
-        res = sheets_service.spreadsheets().values().get(
-            spreadsheetId=ID_SHEET_REPOSITORIO, range="'Guias_recibidas'!A2:J"
+        # 1. Cargar guías emitidas en 'historial'
+        res_hist = sheets_service.spreadsheets().values().get(
+            spreadsheetId=ID_SHEET_CONTROL, range="'historial'!F2:F"
         ).execute()
-        filas = res.get('values', [])
+        filas_hist = res_hist.get('values', [])
+        guias_emitidas_hist = [str(r[0]).strip().upper() for r in filas_hist if r and len(r) > 0 and str(r[0]).strip()]
+
+        # 2. Cargar catálogos para enriquecer cada guía
+        cat_clientes = obtener_catalogo_clientes_certificados(sheets_service)
+        cat_direcciones = obtener_catalogo_direcciones_certificados(sheets_service)
+
+        # 3. Importar normalizador / matcher
+        from bot.handlers import match_guia_en_texto
+
+        # 4. Leer 'Guias_recibidas'
+        res_recib = sheets_service.spreadsheets().values().get(
+            spreadsheetId=ID_SHEET_REPOSITORIO, range="'Guias_recibidas'!A2:K"
+        ).execute()
+        filas_recib = res_recib.get('values', [])
+
         pendientes = []
-        for i, fila in enumerate(filas):
+        for i, fila in enumerate(filas_recib):
             fila_num = i + 2
-            if len(fila) >= 6:
-                fecha_str = str(fila[0]).strip()
-                serie = str(fila[1]).strip() if len(fila) > 1 else ""
-                numero = str(fila[2]).strip() if len(fila) > 2 else ""
-                empresa = str(fila[3]).strip()
-                fundo = str(fila[4]).strip()
-                archivo = str(fila[5]).strip()
-                bitacora = str(fila[7]).strip() if len(fila) > 7 else ""
+            if len(fila) >= 4:
+                fecha_str = str(fila[0]).strip() if len(fila) > 0 else ""
+                guia_num = str(fila[1]).strip() if len(fila) > 1 else ""
+                tipo_guia = str(fila[2]).strip() if len(fila) > 2 else ""
+                empresa = str(fila[3]).strip() if len(fila) > 3 else ""
+                fundo = str(fila[4]).strip() if len(fila) > 4 else ""
+                archivo = str(fila[5]).strip() if len(fila) > 5 else ""
+                col_cert = str(fila[7]).strip() if len(fila) > 7 else ""
                 tipo_cert = str(fila[9]).strip() if len(fila) > 9 else ""
 
-                if "✅ Nuevo" in bitacora or "EMITIDO" in bitacora.upper():
+                if not guia_num or not empresa or empresa.upper() in ["S/D", "EMPRESA"]:
                     continue
 
-                guia_fmt = f"{serie}-{numero}".strip('-') if (serie or numero) else archivo
+                # Si ya tiene un certificado emitido explícito en col H:
+                if col_cert and any(term in col_cert.upper() for term in ["EMITIDO", "CERT-", "FINAL", "COMERCIALIZACION"]):
+                    continue
+
+                # Si ya está registrado en la pestaña historial:
+                if any(match_guia_en_texto(guia_num, gh) for gh in guias_emitidas_hist):
+                    continue
+
+                # Resolver RUC
+                empresa_upper = empresa.upper()
+                ruc_resuelto = ""
+                if empresa_upper in cat_clientes:
+                    ruc_resuelto = cat_clientes[empresa_upper].get("ruc", "")
+                else:
+                    for k_cli, v_cli in cat_clientes.items():
+                        if k_cli in empresa_upper or empresa_upper in k_cli:
+                            ruc_resuelto = v_cli.get("ruc", "")
+                            break
+
+                # Resolver Dirección de Partida
+                fundo_upper = fundo.upper()
+                dir_resuelta = ""
+                dirs_empresa = cat_direcciones.get(empresa_upper, {})
+                if not dirs_empresa:
+                    for k_dir, v_map in cat_direcciones.items():
+                        if k_dir in empresa_upper or empresa_upper in k_dir:
+                            dirs_empresa = v_map
+                            break
+                if dirs_empresa:
+                    if fundo_upper in dirs_empresa:
+                        dir_resuelta = dirs_empresa[fundo_upper]
+                    else:
+                        for f_k, d_val in dirs_empresa.items():
+                            if f_k in fundo_upper or fundo_upper in f_k:
+                                dir_resuelta = d_val
+                                break
+
+                if not dir_resuelta and fundo:
+                    dir_resuelta = f"Fundo - {fundo}"
+
+                tipo_sug = tipo_cert
+                if not tipo_sug:
+                    tipo_sug = "Disposición Final 1" if "PETRAMAS" in empresa_upper else "Comercialización"
+
                 pendientes.append({
                     "fila": fila_num,
                     "fecha": fecha_str,
                     "empresa": empresa,
                     "fundo": fundo,
-                    "guia": guia_fmt,
+                    "guia": guia_num,
+                    "tipo_guia": tipo_guia,
+                    "ruc": ruc_resuelto,
+                    "direccion_partida": dir_resuelta,
                     "archivo": archivo,
-                    "tipo_sugerido": tipo_cert or "Comercialización"
+                    "tipo_sugerido": tipo_sug
                 })
+
         return pendientes
     except Exception as e:
         logger.error(f"Error consultando guías pendientes: {e}")

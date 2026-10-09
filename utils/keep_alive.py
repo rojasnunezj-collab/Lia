@@ -111,14 +111,24 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
 
         elif path == '/api/certificados/catalogos':
             try:
-                from core.certificados_service import obtener_catalogo_empresas, obtener_catalogo_servicios, obtener_siguiente_correlativo_cert
+                from core.certificados_service import (
+                    obtener_catalogo_empresas, 
+                    obtener_catalogo_servicios, 
+                    obtener_siguiente_correlativo_cert,
+                    obtener_catalogo_clientes_certificados,
+                    obtener_catalogo_direcciones_certificados
+                )
                 empresas = obtener_catalogo_empresas()
                 servicios = obtener_catalogo_servicios()
+                clientes = obtener_catalogo_clientes_certificados()
+                direcciones = obtener_catalogo_direcciones_certificados()
                 corr_com = obtener_siguiente_correlativo_cert("Comercialización")
                 corr_ser = obtener_siguiente_correlativo_cert("Disposición Final 1")
                 data = {
                     "empresas": empresas,
                     "servicios": servicios,
+                    "clientes": clientes,
+                    "direcciones": direcciones,
                     "siguiente_correlativo_com": corr_com,
                     "siguiente_correlativo_ser": corr_ser
                 }

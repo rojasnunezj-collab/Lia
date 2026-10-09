@@ -443,6 +443,11 @@
       background: #f8fafc;
     }
 
+    .repo-item.selected {
+      background: #eff6ff !important;
+      border-left: 3px solid var(--primary);
+    }
+
     .repo-check {
       margin-top: 4px;
       width: 18px;
@@ -581,7 +586,8 @@
 
       <div class="form-group">
         <label>Cliente / Remitente</label>
-        <input type="text" id="cliente" placeholder="Razón Social del Cliente">
+        <input type="text" id="cliente" list="listaClientes" placeholder="Razón Social del Cliente" oninput="autoCompletarCliente(this.value)">
+        <datalist id="listaClientes"></datalist>
       </div>
 
       <div class="form-row">
@@ -658,13 +664,33 @@
         <span>🗂️ Guías Pendientes en Google Sheets</span>
         <button type="button" onclick="cargarRepositorioGuias()" style="background:none; border:none; color:var(--info); font-size:12px; font-weight:700; cursor:pointer;">🔄 Recargar</button>
       </div>
-      <input type="text" id="repoFiltro" placeholder="Filtrar por empresa, fundo o guía..." onkeyup="filtrarRepositorio()" style="margin-bottom:10px;">
+      <!-- Filtro por Empresa -->
+      <div class="form-group" style="margin-bottom:8px;">
+        <label>🏢 Filtrar por Empresa:</label>
+        <select id="repoEmpresaSelect" onchange="filtrarRepositorio()">
+          <option value="">-- Todas las Empresas --</option>
+        </select>
+      </div>
+
+      <!-- Filtro por Texto / Guía -->
+      <div class="form-group" style="margin-bottom:10px;">
+        <input type="text" id="repoFiltro" placeholder="🔍 Buscar por guía, fundo o fecha..." onkeyup="filtrarRepositorio()">
+      </div>
+
+      <!-- Barra de acciones y contador -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; font-size:12px;">
+        <span id="repoCountSelected" style="font-weight:700; color:var(--primary);">0 seleccionadas</span>
+        <div>
+          <button type="button" onclick="seleccionarTodasFiltradas(true)" style="padding:4px 8px; font-size:11px; background:#e2e8f0; border:none; border-radius:6px; font-weight:600; color:#334155; cursor:pointer;">Seleccionar Todas</button>
+          <button type="button" onclick="seleccionarTodasFiltradas(false)" style="padding:4px 8px; font-size:11px; background:#e2e8f0; border:none; border-radius:6px; font-weight:600; color:#334155; cursor:pointer; margin-left:4px;">Limpiar</button>
+        </div>
+      </div>
       
-      <div id="repoContainer" style="max-height: 400px; overflow-y: auto;">
+      <div id="repoContainer" style="max-height: 420px; overflow-y: auto;">
         <p style="text-align:center; color:var(--text-muted); padding:20px 0;">Cargando guías...</p>
       </div>
 
-      <div style="margin-top: 12px;">
+      <div style="margin-top: 14px;">
         <button type="button" class="btn-action btn-primary" onclick="consolidarGuiasSeleccionadas()">
           📥 Consolidar Seleccionadas en Formulario
         </button>
@@ -883,8 +909,36 @@
         const r = await fetch(getApiUrl('/api/certificados/catalogos'));
         catalogosData = await r.json();
         actualizarCorrelativoSugerido();
+
+        // Poblar datalist de clientes
+        if (catalogosData && catalogosData.clientes) {
+          const dl = document.getElementById('listaClientes');
+          if (dl) {
+            dl.innerHTML = '';
+            Object.keys(catalogosData.clientes).sort().forEach(emp => {
+              const opt = document.createElement('option');
+              opt.value = emp;
+              dl.appendChild(opt);
+            });
+          }
+        }
       } catch (e) {
         console.warn("Falla cargando catálogos remotos:", e);
+      }
+    }
+
+    function autoCompletarCliente(val) {
+      if (!catalogosData || !catalogosData.clientes) return;
+      const v = (val || '').trim().toUpperCase();
+      if (!v) return;
+      const cli = catalogosData.clientes[v] || Object.values(catalogosData.clientes).find(c => (c.empresa || '').toUpperCase() === v || (c.empresa || '').toUpperCase().includes(v));
+      if (cli) {
+        if (cli.ruc) {
+          document.getElementById('rucCliente').value = cli.ruc;
+        }
+        if (cli.direccion && !document.getElementById('puntoPartida').value) {
+          document.getElementById('puntoPartida').value = cli.direccion;
+        }
       }
     }
 
@@ -1152,91 +1206,241 @@
     }
 
     // Repositorio de Guías Pendientes
+    let guiasRepositorioList = [];
+    let guiasFiltradasList = [];
+    const guiasSeleccionadasSet = new Set();
+
     async function cargarRepositorioGuias() {
       const container = document.getElementById('repoContainer');
       container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:20px 0;">Consultando Google Sheets...</p>';
+      guiasSeleccionadasSet.clear();
+      actualizarContadorSeleccionadas();
 
       try {
         const r = await fetch(getApiUrl('/api/certificados/repositorio'));
         const d = await r.json();
-        guiasRepositorioList = d.guias || [];
+        
+        // Asignar UID único y permanente a cada guía para evitar errores al filtrar
+        guiasRepositorioList = (d.guias || []).map((g, idx) => ({
+          ...g,
+          uid: idx
+        }));
+
+        // Poblar select de empresas
+        const selEmp = document.getElementById('repoEmpresaSelect');
+        if (selEmp) {
+          selEmp.innerHTML = `<option value="">-- Todas las Empresas (${guiasRepositorioList.length} guías) --</option>`;
+          
+          const empConteo = {};
+          guiasRepositorioList.forEach(g => {
+            const emp = g.empresa || 'S/D';
+            empConteo[emp] = (empConteo[emp] || 0) + 1;
+          });
+          
+          Object.keys(empConteo).sort().forEach(emp => {
+            const opt = document.createElement('option');
+            opt.value = emp;
+            opt.innerText = `${emp} (${empConteo[emp]})`;
+            selEmp.appendChild(opt);
+          });
+        }
 
         if (guiasRepositorioList.length === 0) {
           container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:20px 0;">No hay guías pendientes por emitir.</p>';
           return;
         }
 
-        renderRepositorio(guiasRepositorioList);
+        filtrarRepositorio();
       } catch (e) {
         container.innerHTML = `<p style="text-align:center; color:var(--danger); padding:20px 0;">Error cargando guías: ${e.message}</p>`;
       }
+    }
+
+    function filtrarRepositorio() {
+      const empSel = (document.getElementById('repoEmpresaSelect')?.value || '').toLowerCase().trim();
+      const q = (document.getElementById('repoFiltro')?.value || '').toLowerCase().trim();
+
+      guiasFiltradasList = guiasRepositorioList.filter(g => {
+        const matchEmp = !empSel || (g.empresa || '').toLowerCase() === empSel;
+        const matchTexto = !q || (
+          (g.empresa || '').toLowerCase().includes(q) ||
+          (g.fundo || '').toLowerCase().includes(q) ||
+          (g.guia || '').toLowerCase().includes(q) ||
+          (g.fecha || '').toLowerCase().includes(q)
+        );
+        return matchEmp && matchTexto;
+      });
+
+      renderRepositorio(guiasFiltradasList);
     }
 
     function renderRepositorio(lista) {
       const container = document.getElementById('repoContainer');
       container.innerHTML = '';
 
-      lista.forEach((g, idx) => {
+      if (!lista || lista.length === 0) {
+        container.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding:20px 0;">No se encontraron guías con ese filtro.</p>';
+        actualizarContadorSeleccionadas();
+        return;
+      }
+
+      lista.forEach((g) => {
         const item = document.createElement('div');
         item.className = 'repo-item';
+        item.id = `repo-item-${g.uid}`;
+        const isChecked = guiasSeleccionadasSet.has(g.uid);
+        if (isChecked) item.classList.add('selected');
+
         item.innerHTML = `
-          <input type="checkbox" class="repo-check" data-idx="${idx}">
-          <div class="repo-info">
-            <div class="repo-guia">🚛 Guía: ${g.guia}</div>
-            <div class="repo-meta">🏢 ${g.empresa} | 📅 ${g.fecha}</div>
-            <span class="badge-dest">🌱 ${g.fundo || 'General'}</span>
+          <input type="checkbox" class="repo-check" data-uid="${g.uid}" ${isChecked ? 'checked' : ''} onchange="toggleSeleccionGuia(${g.uid}, this.checked)">
+          <div class="repo-info" onclick="toggleItemClick(${g.uid})">
+            <div class="repo-guia">🚛 Guía: <b>${escapeHtml(g.guia)}</b></div>
+            <div class="repo-meta">🏢 ${escapeHtml(g.empresa)} | 📅 ${escapeHtml(g.fecha)}</div>
+            <div style="margin-top:4px; display:flex; gap:6px; flex-wrap:wrap;">
+              <span class="badge-dest">🌱 ${escapeHtml(g.fundo || 'General')}</span>
+              <span class="badge-dest" style="background:#2a3b5c; color:#93c5fd;">📋 ${escapeHtml(g.tipo_sugerido || 'Comercialización')}</span>
+            </div>
           </div>
         `;
         container.appendChild(item);
       });
+
+      actualizarContadorSeleccionadas();
     }
 
-    function filtrarRepositorio() {
-      const q = document.getElementById('repoFiltro').value.toLowerCase();
-      const filtradas = guiasRepositorioList.filter(g => 
-        (g.empresa || '').toLowerCase().includes(q) ||
-        (g.fundo || '').toLowerCase().includes(q) ||
-        (g.guia || '').toLowerCase().includes(q)
-      );
-      renderRepositorio(filtradas);
+    function toggleSeleccionGuia(uid, checked) {
+      if (checked) {
+        guiasSeleccionadasSet.add(uid);
+      } else {
+        guiasSeleccionadasSet.delete(uid);
+      }
+      const itemEl = document.getElementById(`repo-item-${uid}`);
+      if (itemEl) {
+        if (checked) itemEl.classList.add('selected');
+        else itemEl.classList.remove('selected');
+      }
+      actualizarContadorSeleccionadas();
+    }
+
+    function toggleItemClick(uid) {
+      const chk = document.querySelector(`.repo-check[data-uid="${uid}"]`);
+      if (chk) {
+        chk.checked = !chk.checked;
+        toggleSeleccionGuia(uid, chk.checked);
+      }
+    }
+
+    function seleccionarTodasFiltradas(marcar) {
+      guiasFiltradasList.forEach(g => {
+        if (marcar) guiasSeleccionadasSet.add(g.uid);
+        else guiasSeleccionadasSet.delete(g.uid);
+      });
+      renderRepositorio(guiasFiltradasList);
+    }
+
+    function actualizarContadorSeleccionadas() {
+      const countEl = document.getElementById('repoCountSelected');
+      if (countEl) {
+        countEl.innerText = `${guiasSeleccionadasSet.size} guía(s) seleccionada(s)`;
+      }
     }
 
     function consolidarGuiasSeleccionadas() {
-      const checks = document.querySelectorAll('.repo-check:checked');
-      if (checks.length === 0) {
-        alert("Selecciona al menos una guía de la lista.");
+      if (guiasSeleccionadasSet.size === 0) {
+        alert("Selecciona al menos una guía de la lista marcando la casilla.");
         return;
       }
 
+      // Obtener los objetos seleccionados usando el UID exacto
       const seleccionadas = [];
-      checks.forEach(c => {
-        const idx = parseInt(c.getAttribute('data-idx'));
-        seleccionadas.push(guiasRepositorioList[idx]);
+      guiasSeleccionadasSet.forEach(uid => {
+        const item = guiasRepositorioList.find(g => g.uid === uid);
+        if (item) seleccionadas.push(item);
       });
 
-      const primera = seleccionadas[0];
-      document.getElementById('cliente').value = primera.empresa || '';
-      document.getElementById('puntoPartida').value = primera.fundo ? `Fundo - ${primera.fundo}` : '';
-      if (primera.tipo_sugerido) {
-        document.getElementById('tipoFlujo').value = primera.tipo_sugerido;
+      if (seleccionadas.length === 0) {
+        alert("No se pudieron cargar las guías seleccionadas.");
+        return;
       }
 
+      // Ordenar cronológicamente si es posible
+      seleccionadas.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+
+      const primera = seleccionadas[0];
+
+      // 1. Cliente
+      document.getElementById('cliente').value = primera.empresa || '';
+
+      // 2. RUC (desde la guía o el catálogo)
+      let rucVal = primera.ruc || '';
+      if (!rucVal && catalogosData && catalogosData.clientes) {
+        const empU = (primera.empresa || '').toUpperCase().trim();
+        const cliMatch = catalogosData.clientes[empU] || Object.values(catalogosData.clientes).find(c => (c.empresa || '').toUpperCase() === empU || empU.includes((c.empresa || '').toUpperCase()));
+        if (cliMatch) rucVal = cliMatch.ruc || '';
+      }
+      document.getElementById('rucCliente').value = rucVal;
+
+      // 3. Punto de Partida
+      document.getElementById('puntoPartida').value = primera.direccion_partida || (primera.fundo ? `Fundo - ${primera.fundo}` : '');
+
+      // 4. Tipo de Certificado
+      if (primera.tipo_sugerido) {
+        document.getElementById('tipoFlujo').value = primera.tipo_sugerido;
+        actualizarCamposPorTipo();
+      }
+
+      // 5. Fecha de Emisión sugerida
+      if (primera.fecha) {
+        document.getElementById('fechaEmision').value = calcularFechaEmisionSugerida(primera.fecha, document.getElementById('tipoFlujo').value);
+      }
+
+      // 6. Cargar los ítems en el formulario
       const container = document.getElementById('itemsContainer');
       container.innerHTML = '';
+
       seleccionadas.forEach(g => {
         agregarFilaItem({
-          fecha: g.fecha,
-          placa: '',
-          guia: g.guia,
-          desc: 'RESIDUOS VARIOS',
+          fecha: g.fecha || '',
+          placa: g.placa || '',
+          guia: g.guia || '',
+          desc: 'RESIDUOS RECICLABLES Y APROVECHABLES',
           cant: '1',
           um: 'KG',
           peso: '0.00'
         });
       });
 
+      // 7. Cambiar a la pestaña de Emisión Manual
       switchTab('tab-manual');
-      alert(`✅ Se consolidaron ${seleccionadas.length} guías en el formulario.`);
+      haptic('success');
+      alert(`✅ Se consolidaron ${seleccionadas.length} guía(s) de "${primera.empresa}" en el formulario de emisión.`);
+    }
+
+    function calcularFechaEmisionSugerida(fechaGuia, tipoFlujo) {
+      try {
+        const partes = fechaGuia.split(/[\/\-]/);
+        if (partes.length === 3) {
+          let d = parseInt(partes[0], 10);
+          let m = parseInt(partes[1], 10);
+          let y = parseInt(partes[2], 10);
+          if (y < 100) y += 2000;
+
+          const esComercializacion = (tipoFlujo || '').toLowerCase().includes('comercial');
+          if (esComercializacion) {
+            // Último día de ese mes
+            const ultDia = new Date(y, m, 0).getDate();
+            const mm = String(m).padStart(2, '0');
+            return `${String(ultDia).padStart(2, '0')}/${mm}/${y}`;
+          } else {
+            // Disposición Final: +2 días
+            const dt = new Date(y, m - 1, d + 2);
+            const dd = String(dt.getDate()).padStart(2, '0');
+            const mm = String(dt.getMonth() + 1).padStart(2, '0');
+            return `${dd}/${mm}/${dt.getFullYear()}`;
+          }
+        }
+      } catch (e) {}
+      return fechaGuia;
     }
 
     // Búsqueda para Modificación / Actualización
