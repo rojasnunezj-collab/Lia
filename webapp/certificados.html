@@ -802,6 +802,20 @@
     let correlativoActual = "";
     let base64OcrPdf = null;
 
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function actualizarCamposPorTipo() {
+      actualizarCorrelativoSugerido();
+    }
+
     function getApiUrl(path) {
       if (window.location.origin.includes('github.io') || window.location.origin === 'null' || window.location.protocol === 'file:') {
         return 'https://lia-w2yb.onrender.com' + path;
@@ -1206,7 +1220,6 @@
     }
 
     // Repositorio de Guías Pendientes
-    let guiasRepositorioList = [];
     let guiasFiltradasList = [];
     const guiasSeleccionadasSet = new Set();
 
@@ -1288,19 +1301,19 @@
         const item = document.createElement('div');
         item.className = 'repo-item';
         item.id = `repo-item-${g.uid}`;
-        const isChecked = guiasSeleccionadasSet.has(g.uid);
+        const isChecked = guiasSeleccionadasSet.has(Number(g.uid));
         if (isChecked) item.classList.add('selected');
 
         item.innerHTML = `
-          <input type="checkbox" class="repo-check" data-uid="${g.uid}" ${isChecked ? 'checked' : ''} onchange="toggleSeleccionGuia(${g.uid}, this.checked)">
-          <div class="repo-info" onclick="toggleItemClick(${g.uid})">
+          <input type="checkbox" class="repo-check" id="chk-${g.uid}" data-uid="${g.uid}" ${isChecked ? 'checked' : ''} onchange="toggleSeleccionGuia(${g.uid}, this.checked)">
+          <label for="chk-${g.uid}" class="repo-info" style="cursor:pointer; flex:1; margin:0; user-select:none;">
             <div class="repo-guia">🚛 Guía: <b>${escapeHtml(g.guia)}</b></div>
             <div class="repo-meta">🏢 ${escapeHtml(g.empresa)} | 📅 ${escapeHtml(g.fecha)}</div>
             <div style="margin-top:4px; display:flex; gap:6px; flex-wrap:wrap;">
               <span class="badge-dest">🌱 ${escapeHtml(g.fundo || 'General')}</span>
               <span class="badge-dest" style="background:#2a3b5c; color:#93c5fd;">📋 ${escapeHtml(g.tipo_sugerido || 'Comercialización')}</span>
             </div>
-          </div>
+          </label>
         `;
         container.appendChild(item);
       });
@@ -1309,12 +1322,13 @@
     }
 
     function toggleSeleccionGuia(uid, checked) {
+      const idNum = Number(uid);
       if (checked) {
-        guiasSeleccionadasSet.add(uid);
+        guiasSeleccionadasSet.add(idNum);
       } else {
-        guiasSeleccionadasSet.delete(uid);
+        guiasSeleccionadasSet.delete(idNum);
       }
-      const itemEl = document.getElementById(`repo-item-${uid}`);
+      const itemEl = document.getElementById(`repo-item-${idNum}`);
       if (itemEl) {
         if (checked) itemEl.classList.add('selected');
         else itemEl.classList.remove('selected');
@@ -1322,18 +1336,11 @@
       actualizarContadorSeleccionadas();
     }
 
-    function toggleItemClick(uid) {
-      const chk = document.querySelector(`.repo-check[data-uid="${uid}"]`);
-      if (chk) {
-        chk.checked = !chk.checked;
-        toggleSeleccionGuia(uid, chk.checked);
-      }
-    }
-
     function seleccionarTodasFiltradas(marcar) {
       guiasFiltradasList.forEach(g => {
-        if (marcar) guiasSeleccionadasSet.add(g.uid);
-        else guiasSeleccionadasSet.delete(g.uid);
+        const idNum = Number(g.uid);
+        if (marcar) guiasSeleccionadasSet.add(idNum);
+        else guiasSeleccionadasSet.delete(idNum);
       });
       renderRepositorio(guiasFiltradasList);
     }
@@ -1354,7 +1361,7 @@
       // Obtener los objetos seleccionados usando el UID exacto
       const seleccionadas = [];
       guiasSeleccionadasSet.forEach(uid => {
-        const item = guiasRepositorioList.find(g => g.uid === uid);
+        const item = guiasRepositorioList.find(g => Number(g.uid) === Number(uid));
         if (item) seleccionadas.push(item);
       });
 
