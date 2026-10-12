@@ -10,6 +10,10 @@
       --primary: #198754;
       --primary-dark: #146c43;
       --primary-light: #e8f5e9;
+      --accent: #0284c7;
+      --accent-light: #f0f9ff;
+      --warning: #d97706;
+      --warning-light: #fffbeb;
       --bg: #f8f9fa;
       --card-bg: #ffffff;
       --text: #212529;
@@ -29,7 +33,7 @@
       background-color: var(--bg);
       color: var(--text);
       padding: 12px;
-      padding-bottom: 90px;
+      padding-bottom: 95px;
     }
 
     .header {
@@ -109,7 +113,7 @@
       letter-spacing: 0.5px;
     }
 
-    input, select {
+    input, select, textarea {
       width: 100%;
       padding: 9px 12px;
       font-size: 14px;
@@ -120,12 +124,12 @@
       transition: border-color 0.2s;
     }
 
-    input:focus, select:focus {
+    input:focus, select:focus, textarea:focus {
       border-color: var(--primary);
       background: #fff;
     }
 
-    /* Tabla de Ítems */
+    /* Tarjetas de Ítems */
     .item-card {
       background: #fdfdfd;
       border: 1px solid #e9ecef;
@@ -289,7 +293,29 @@
   </div>
 
   <form id="cotizacionForm">
-    <!-- 1. Datos Generales -->
+    <!-- 0. Selección de Plantilla y Tipo de Cotización -->
+    <div class="card" style="border: 1.5px solid #198754; background: #fbfdfb;">
+      <div class="card-title">📋 Selección de Plantilla</div>
+      
+      <div class="form-group">
+        <label for="tipo_servicio">Tipo de Cotización</label>
+        <select id="tipo_servicio" onchange="onTipoServicioChange(true)" style="font-weight: 700; color: #146c43; background: #fff; border-color: #198754;">
+          <option value="COMERCIALIZACION">♻️ Comercialización (Residuos no peligrosos)</option>
+          <option value="DISPOSICION_FINAL">🏗️ Disposición Final (Rellenos Sanitarios)</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="grupoSubtipoFinal" style="display: none;">
+        <label for="subtipo_final">Relleno Sanitario / Destino Final</label>
+        <select id="subtipo_final" onchange="onSubtipoFinalChange(true)" style="font-weight: 600; color: #0f766e; background: #fff; border-color: #0d9488;">
+          <option value="PETRAMAS">📍 PETRAMAS (Relleno Huaycoloro - San Antonio)</option>
+          <option value="ARE_YAKU">📍 ARE YAKU PACHAS (Ica)</option>
+          <option value="LOS_OLIVOS">📍 LOS OLIVOS (Residuos Sólidos Peligrosos)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 1. Datos Generales de la Cotización -->
     <div class="card">
       <div class="card-title">📌 Datos de la Cotización</div>
       <div class="form-row">
@@ -301,6 +327,10 @@
           <label for="fecha">Fecha de Emisión</label>
           <input type="text" id="fecha" placeholder="01 de octubre del 2026" required>
         </div>
+      </div>
+      <div class="form-group">
+        <label for="asunto">Asunto del Documento</label>
+        <input type="text" id="asunto" placeholder="Servicio de recolección, transporte..." required>
       </div>
     </div>
 
@@ -333,8 +363,31 @@
       </div>
     </div>
 
-    <!-- 3. Propuesta Económica (Tabla) -->
+    <!-- 3. Condiciones Comerciales y Especificaciones (Variables Editables) -->
     <div class="card">
+      <div class="card-title">⚙️ Condiciones y Especificaciones</div>
+      <div class="form-row">
+        <div class="form-group" style="flex: 1.2;">
+          <label for="personal">Cuadrilla / Personal</label>
+          <input type="text" id="personal" value="01 conductor y 02 operarios" placeholder="01 conductor y 02 operarios" required>
+        </div>
+        <div class="form-group" style="flex: 1;">
+          <label for="validez">Validez</label>
+          <input type="text" id="validez" value="30 días calendario" placeholder="30 días calendario" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="condicion_igv">Condición Comercial IGV</label>
+        <select id="condicion_igv">
+          <option value="Los precios incluyen IGV.">Los precios incluyen IGV.</option>
+          <option value="Los precios no incluyen IGV.">Los precios no incluyen IGV.</option>
+          <option value="Los precios están expresados en Soles y no incluyen IGV.">Los precios están expresados en Soles y no incluyen IGV.</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 4. Propuesta Económica: Modo Comercialización -->
+    <div id="seccionComercializacion" class="card">
       <div class="card-title">💰 Propuesta Económica (Residuos)</div>
       
       <div id="itemsContainer"></div>
@@ -343,36 +396,44 @@
         <button type="button" class="btn-add" style="flex: 1;" onclick="agregarItem()">
           ➕ 1 Residuo
         </button>
-        <button type="button" class="btn-quick" style="flex: 1.2;" onclick="abrirModalCargaRapida()">
+        <button type="button" class="btn-quick" style="flex: 1.2;" onclick="abrirModalCargaRapida('comercializacion')">
           ⚡ Pegar Lista (Bloque)
         </button>
       </div>
     </div>
 
-    <!-- Modal de Carga Rápida -->
-    <div id="modalCargaRapida" class="modal-overlay" style="display: none;">
-      <div class="modal-card">
-        <div class="modal-header">
-          <div style="font-weight: 700; font-size: 15px; color: #198754;">⚡ Carga Rápida de Residuos</div>
-          <button type="button" class="btn-close-modal" onclick="cerrarModalCargaRapida()">✕</button>
+    <!-- 5. Propuesta Económica: Modo Disposición Final (2 Tablas) -->
+    <div id="seccionDisposicionFinal" style="display: none;">
+      <!-- Tabla 1: Recolección y Transporte -->
+      <div class="card">
+        <div class="card-title" style="color: #0369a1;">🚚 1. Recolección y Transporte</div>
+        <div id="itemsTransporteContainer"></div>
+        <div style="display: flex; gap: 8px; margin-top: 6px;">
+          <button type="button" class="btn-add" style="flex: 1; border-color: #0284c7; color: #0369a1; background: #f0f9ff;" onclick="agregarItemTransporte()">
+            ➕ 1 Servicio Transp.
+          </button>
+          <button type="button" class="btn-quick" style="flex: 1.2;" onclick="abrirModalCargaRapida('transporte')">
+            ⚡ Pegar Transporte
+          </button>
         </div>
-        <p style="font-size: 11px; color: #6c757d; margin: 8px 0; line-height: 1.4;">
-          Pega o escribe varios residuos (uno por línea):<br>
-          <b>Ejemplos válidos:</b><br>
-          <code>CARTON 0.10</code><br>
-          <code>PLASTICO FILM 0.80 KG</code><br>
-          <code>CHATARRA 450 TN</code><br>
-          <code>PARIHUELAS 15 UNID</code>
-        </p>
-        <textarea id="txtCargaRapida" rows="7" placeholder="Pega aquí la lista de WhatsApp o notas..." style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ced4da; font-size: 13px; font-family: monospace; outline: none;"></textarea>
-        <div style="display: flex; gap: 8px; margin-top: 10px;">
-          <button type="button" style="flex: 1; padding: 10px; background: #f8f9fa; border: 1px solid #ced4da; border-radius: 8px; font-weight: 600; cursor: pointer;" onclick="cerrarModalCargaRapida()">Cancelar</button>
-          <button type="button" style="flex: 1.2; padding: 10px; background: #198754; color: white; border: none; border-radius: 8px; font-weight: 700; cursor: pointer;" onclick="procesarCargaRapida()">✅ Cargar a la Tabla</button>
+      </div>
+
+      <!-- Tabla 2: Disposición Final -->
+      <div class="card">
+        <div class="card-title" style="color: #b45309;">🏗️ 2. Disposición Final</div>
+        <div id="itemsDisposicionContainer"></div>
+        <div style="display: flex; gap: 8px; margin-top: 6px;">
+          <button type="button" class="btn-add" style="flex: 1; border-color: #d97706; color: #b45309; background: #fffbeb;" onclick="agregarItemDisposicion()">
+            ➕ 1 Residuo Disp.
+          </button>
+          <button type="button" class="btn-quick" style="flex: 1.2;" onclick="abrirModalCargaRapida('disposicion')">
+            ⚡ Pegar Disposición
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- 4. Firmante -->
+    <!-- 6. Firmante -->
     <div class="card">
       <div class="card-title">✍️ Responsable Técnico</div>
       <div class="form-row">
@@ -396,6 +457,24 @@
     </div>
   </form>
 
+  <!-- Modal Adaptable de Carga Rápida -->
+  <div id="modalCargaRapida" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div id="modalTitulo" style="font-weight: 700; font-size: 15px; color: #198754;">⚡ Carga Rápida de Residuos</div>
+        <button type="button" class="btn-close-modal" onclick="cerrarModalCargaRapida()">✕</button>
+      </div>
+      <p id="modalEjemplos" style="font-size: 11px; color: #6c757d; margin: 8px 0; line-height: 1.4;">
+        Pega o escribe varios ítems (uno por línea):
+      </p>
+      <textarea id="txtCargaRapida" rows="7" placeholder="Pega aquí la lista de WhatsApp o notas..." style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ced4da; font-size: 13px; font-family: monospace; outline: none;"></textarea>
+      <div style="display: flex; gap: 8px; margin-top: 10px;">
+        <button type="button" style="flex: 1; padding: 10px; background: #f8f9fa; border: 1px solid #ced4da; border-radius: 8px; font-weight: 600; cursor: pointer;" onclick="cerrarModalCargaRapida()">Cancelar</button>
+        <button type="button" style="flex: 1.2; padding: 10px; background: #198754; color: white; border: none; border-radius: 8px; font-weight: 700; cursor: pointer;" onclick="procesarCargaRapida()">✅ Cargar a la Tabla</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Lista sugerida de residuos -->
   <datalist id="residuosSugeridos">
     <option value="CARTÓN">
@@ -417,6 +496,33 @@
       tg.expand();
       tg.ready();
     }
+
+    const DEFAULTS_PLANTILLA = {
+      "COMERCIALIZACION": {
+        "asunto": "Servicio de recolección, transporte y comercialización de residuos solidos",
+        "personal": "01 conductor y 02 operarios",
+        "condicion_igv": "Los precios incluyen IGV.",
+        "validez": "30 días calendario"
+      },
+      "PETRAMAS": {
+        "asunto": "Servicio de recolección, transporte y disposición final de residuos solidos",
+        "personal": "01 conductor y 01 operarios",
+        "condicion_igv": "Los precios no incluyen IGV.",
+        "validez": "30 días calendario"
+      },
+      "ARE_YAKU": {
+        "asunto": "Servicio de recolección, transporte y disposición final de residuos solidos",
+        "personal": "01 conductor y 02 operarios",
+        "condicion_igv": "Los precios no incluyen IGV.",
+        "validez": "30 días calendario"
+      },
+      "LOS_OLIVOS": {
+        "asunto": "Servicio de recolección, transporte y disposición final de residuos sólidos peligrosos",
+        "personal": "01 conductor y 02 operarios",
+        "condicion_igv": "Los precios no incluyen IGV.",
+        "validez": "30 días calendario"
+      }
+    };
 
     const CLIENTES_PREDETERMINADOS = [
       {"empresa": "AGRICOLA ANDREA S.A.C", "ruc": "20505688903", "direccion": "FND. ELISE S/N, LOTE 1 Y LOTE A6 1A-4, SAN ANDRES, PISCO, ICA"},
@@ -445,7 +551,55 @@
     ];
 
     let clientesCatalogo = CLIENTES_PREDETERMINADOS;
-    let itemsCount = 0;
+    let countComercial = 0;
+    let countTransporte = 0;
+    let countDisposicion = 0;
+    let modalTarget = 'comercializacion';
+
+    function onTipoServicioChange(actualizarTextos = true) {
+      const tipo = document.getElementById('tipo_servicio').value;
+      const grupoSubtipo = document.getElementById('grupoSubtipoFinal');
+      const secComercial = document.getElementById('seccionComercializacion');
+      const secFinal = document.getElementById('seccionDisposicionFinal');
+
+      if (tipo === 'DISPOSICION_FINAL') {
+        grupoSubtipo.style.display = 'block';
+        secComercial.style.display = 'none';
+        secFinal.style.display = 'block';
+        onSubtipoFinalChange(actualizarTextos);
+      } else {
+        grupoSubtipo.style.display = 'none';
+        secComercial.style.display = 'block';
+        secFinal.style.display = 'none';
+        if (actualizarTextos) {
+          aplicarDefaultsPlantilla("COMERCIALIZACION");
+        }
+        if (document.querySelectorAll('#itemsContainer .item-card').length === 0) {
+          agregarItem();
+        }
+      }
+    }
+
+    function onSubtipoFinalChange(actualizarTextos = true) {
+      const sub = document.getElementById('subtipo_final').value;
+      if (actualizarTextos) {
+        aplicarDefaultsPlantilla(sub);
+      }
+      if (document.querySelectorAll('#itemsTransporteContainer .item-card').length === 0) {
+        agregarItemTransporte("RECOLECCIÓN Y TRANSPORTE DE RESIDUOS", "1 SERVICIO", "FURGÓN", "");
+      }
+      if (document.querySelectorAll('#itemsDisposicionContainer .item-card').length === 0) {
+        agregarItemDisposicion("DISPOSICIÓN FINAL DE RESIDUOS", "1 TN", "");
+      }
+    }
+
+    function aplicarDefaultsPlantilla(key) {
+      const conf = DEFAULTS_PLANTILLA[key] || DEFAULTS_PLANTILLA["COMERCIALIZACION"];
+      document.getElementById('asunto').value = conf.asunto;
+      document.getElementById('personal').value = conf.personal;
+      document.getElementById('condicion_igv').value = conf.condicion_igv;
+      document.getElementById('validez').value = conf.validez;
+    }
 
     function poblarSelectClientes(lista) {
       clientesCatalogo = lista;
@@ -484,7 +638,6 @@
       }
     }
 
-    // Inicialización de Fecha
     function fechaHoyTexto() {
       const meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
       const d = new Date();
@@ -498,11 +651,9 @@
       return path;
     }
 
-    // Cargar Catálogo de Clientes si viene en URL o cargar iniciales
     function inicializarFormulario() {
       poblarSelectClientes(CLIENTES_PREDETERMINADOS);
 
-      // Refrescar catálogo en vivo desde /api/clientes
       fetch(getApiUrl('/api/clientes'))
         .then(r => r.json())
         .then(data => {
@@ -513,8 +664,8 @@
         .catch(err => console.log("Usando catálogo local"));
 
       document.getElementById('fecha').value = fechaHoyTexto();
+      aplicarDefaultsPlantilla("COMERCIALIZACION");
 
-      // Revisar si viene data por URL (Modo Edición)
       const urlParams = new URLSearchParams(window.location.search);
       const dataParam = urlParams.get('data');
       const corrParam = urlParams.get('corr');
@@ -533,9 +684,7 @@
         document.getElementById('correlativo').value = corrParam;
       }
 
-      // La tabla de residuos inicia vacía
-      document.getElementById('itemsContainer').innerHTML = '';
-      itemsCount = 0;
+      onTipoServicioChange(false);
     }
 
     function cargarDatosEdicion(data) {
@@ -549,6 +698,25 @@
       document.getElementById('responsable').value = data.responsable || 'Alexander Chamochumbi Chávez';
       document.getElementById('cargo').value = data.cargo || 'Responsable Técnico';
 
+      // Tipo de Servicio y Subtipo
+      const tipoServ = data.tipo_servicio || (data.template_key && data.template_key.startsWith('FINAL') ? 'DISPOSICION_FINAL' : 'COMERCIALIZACION');
+      document.getElementById('tipo_servicio').value = tipoServ;
+
+      let subFinal = data.subtipo_final || '';
+      if (!subFinal && data.template_key) {
+        subFinal = data.template_key.replace('FINAL_', '');
+      }
+      if (subFinal) {
+        document.getElementById('subtipo_final').value = subFinal;
+      }
+
+      onTipoServicioChange(false);
+
+      if (data.asunto) document.getElementById('asunto').value = data.asunto;
+      if (data.personal) document.getElementById('personal').value = data.personal;
+      if (data.condicion_igv) document.getElementById('condicion_igv').value = data.condicion_igv;
+      if (data.validez) document.getElementById('validez').value = data.validez;
+
       window.editingDocId = data.doc_id || null;
       window.editingPdfId = data.pdf_id || null;
 
@@ -556,26 +724,46 @@
       btn.innerText = "💾 Guardar Cambios en Cotización";
       btn.style.background = "#0d6efd";
 
-      document.getElementById('itemsContainer').innerHTML = '';
-      itemsCount = 0;
-      if (data.items && data.items.length > 0) {
-        data.items.forEach(it => agregarItem(it.descripcion, it.unidad, it.precio));
+      if (tipoServ === 'COMERCIALIZACION') {
+        document.getElementById('itemsContainer').innerHTML = '';
+        countComercial = 0;
+        if (data.items && data.items.length > 0) {
+          data.items.forEach(it => agregarItem(it.descripcion, it.unidad, it.precio));
+        } else {
+          agregarItem();
+        }
       } else {
-        agregarItem();
+        document.getElementById('itemsTransporteContainer').innerHTML = '';
+        document.getElementById('itemsDisposicionContainer').innerHTML = '';
+        countTransporte = 0;
+        countDisposicion = 0;
+
+        if (data.items_transporte && data.items_transporte.length > 0) {
+          data.items_transporte.forEach(it => agregarItemTransporte(it.descripcion, it.cantidad, it.vehiculo, it.precio));
+        } else {
+          agregarItemTransporte();
+        }
+
+        if (data.items_disposicion && data.items_disposicion.length > 0) {
+          data.items_disposicion.forEach(it => agregarItemDisposicion(it.descripcion, it.cantidad, it.precio));
+        } else {
+          agregarItemDisposicion();
+        }
       }
     }
 
+    /* --- GESTIÓN TABLA COMERCIALIZACIÓN --- */
     function agregarItem(desc = '', unidad = 'KG', precio = '') {
-      itemsCount++;
-      const id = itemsCount;
+      countComercial++;
+      const id = countComercial;
       const container = document.getElementById('itemsContainer');
       const div = document.createElement('div');
       div.className = 'item-card';
-      div.id = `item_row_${id}`;
+      div.id = `item_comercial_${id}`;
       div.innerHTML = `
         <div class="item-header">
           <span class="item-badge">Ítem #${id}</span>
-          <button type="button" class="btn-delete" onclick="eliminarItem(${id})">🗑 Eliminar</button>
+          <button type="button" class="btn-delete" onclick="eliminarItemComercial(${id})">🗑 Eliminar</button>
         </div>
         <div class="form-group">
           <label>Residuo / Descripción</label>
@@ -599,25 +787,135 @@
         </div>
       `;
       container.appendChild(div);
-      renumerarBadges();
+      renumerarBadgesComercial();
     }
 
-    function eliminarItem(id) {
-      const el = document.getElementById(`item_row_${id}`);
+    function eliminarItemComercial(id) {
+      const el = document.getElementById(`item_comercial_${id}`);
       if (el) el.remove();
-      renumerarBadges();
+      renumerarBadgesComercial();
     }
 
-    function renumerarBadges() {
-      const cards = document.querySelectorAll('.item-card');
+    function renumerarBadgesComercial() {
+      const cards = document.querySelectorAll('#itemsContainer .item-card');
       cards.forEach((card, index) => {
         const badge = card.querySelector('.item-badge');
         if (badge) badge.innerText = `Ítem #${index + 1}`;
       });
     }
 
-    function abrirModalCargaRapida() {
+    /* --- GESTIÓN TABLA TRANSPORTE (DISPOSICIÓN FINAL) --- */
+    function agregarItemTransporte(desc = 'RECOLECCIÓN Y TRANSPORTE DE RESIDUOS', cant = '1 SERVICIO', veh = 'FURGÓN', precio = '') {
+      countTransporte++;
+      const id = countTransporte;
+      const container = document.getElementById('itemsTransporteContainer');
+      const div = document.createElement('div');
+      div.className = 'item-card';
+      div.id = `item_transporte_${id}`;
+      div.innerHTML = `
+        <div class="item-header">
+          <span class="item-badge" style="background:#e0f2fe; color:#0369a1;">Transporte #${id}</span>
+          <button type="button" class="btn-delete" onclick="eliminarItemTransporte(${id})">🗑 Eliminar</button>
+        </div>
+        <div class="form-group">
+          <label>Descripción del Servicio</label>
+          <input type="text" class="it-desc" placeholder="Ej: RECOLECCIÓN Y TRANSPORTE DE RESIDUOS" value="${desc}" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex: 1;">
+            <label>Cantidad</label>
+            <input type="text" class="it-cant" placeholder="1 SERVICIO" value="${cant}" required>
+          </div>
+          <div class="form-group" style="flex: 1.2;">
+            <label>Vehículo</label>
+            <input type="text" class="it-veh" placeholder="FURGÓN 5 TN" value="${veh}" required>
+          </div>
+          <div class="form-group" style="flex: 1;">
+            <label>Precio</label>
+            <input type="text" class="it-precio" placeholder="S/. 0.00" value="${precio}" required>
+          </div>
+        </div>
+      `;
+      container.appendChild(div);
+      renumerarBadgesTransporte();
+    }
+
+    function eliminarItemTransporte(id) {
+      const el = document.getElementById(`item_transporte_${id}`);
+      if (el) el.remove();
+      renumerarBadgesTransporte();
+    }
+
+    function renumerarBadgesTransporte() {
+      const cards = document.querySelectorAll('#itemsTransporteContainer .item-card');
+      cards.forEach((card, index) => {
+        const badge = card.querySelector('.item-badge');
+        if (badge) badge.innerText = `Transporte #${index + 1}`;
+      });
+    }
+
+    /* --- GESTIÓN TABLA DISPOSICIÓN FINAL --- */
+    function agregarItemDisposicion(desc = 'DISPOSICIÓN FINAL DE RESIDUOS', cant = '1 TN', precio = '') {
+      countDisposicion++;
+      const id = countDisposicion;
+      const container = document.getElementById('itemsDisposicionContainer');
+      const div = document.createElement('div');
+      div.className = 'item-card';
+      div.id = `item_disposicion_${id}`;
+      div.innerHTML = `
+        <div class="item-header">
+          <span class="item-badge" style="background:#fef3c7; color:#92400e;">Disposición #${id}</span>
+          <button type="button" class="btn-delete" onclick="eliminarItemDisposicion(${id})">🗑 Eliminar</button>
+        </div>
+        <div class="form-group">
+          <label>Descripción del Residuo / Disposición</label>
+          <input type="text" class="id-desc" placeholder="Ej: DISPOSICIÓN FINAL DE RESIDUOS" value="${desc}" required>
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex: 1;">
+            <label>Cantidad</label>
+            <input type="text" class="id-cant" placeholder="1 TN" value="${cant}" required>
+          </div>
+          <div class="form-group" style="flex: 1;">
+            <label>Precio Unitario</label>
+            <input type="text" class="id-precio" placeholder="S/. 0.00" value="${precio}" required>
+          </div>
+        </div>
+      `;
+      container.appendChild(div);
+      renumerarBadgesDisposicion();
+    }
+
+    function eliminarItemDisposicion(id) {
+      const el = document.getElementById(`item_disposicion_${id}`);
+      if (el) el.remove();
+      renumerarBadgesDisposicion();
+    }
+
+    function renumerarBadgesDisposicion() {
+      const cards = document.querySelectorAll('#itemsDisposicionContainer .item-card');
+      cards.forEach((card, index) => {
+        const badge = card.querySelector('.item-badge');
+        if (badge) badge.innerText = `Disposición #${index + 1}`;
+      });
+    }
+
+    /* --- MODAL CARGA RÁPIDA --- */
+    function abrirModalCargaRapida(target = 'comercializacion') {
+      modalTarget = target;
       const modal = document.getElementById('modalCargaRapida');
+      const titulo = document.getElementById('modalTitulo');
+      const ejemplos = document.getElementById('modalEjemplos');
+      if (target === 'comercializacion') {
+        titulo.innerText = "⚡ Carga Rápida de Residuos";
+        ejemplos.innerHTML = "Pega o escribe varios residuos (uno por línea):<br><code>CARTON 0.10</code> | <code>PLASTICO FILM 0.80 KG</code> | <code>CHATARRA 450 TN</code>";
+      } else if (target === 'transporte') {
+        titulo.innerText = "⚡ Carga Rápida de Transporte";
+        ejemplos.innerHTML = "Pega servicios de transporte (uno por línea):<br><code>TRANSPORTE 1 VIAJE FURGON 5 TN 850</code>";
+      } else if (target === 'disposicion') {
+        titulo.innerText = "⚡ Carga Rápida de Disposición Final";
+        ejemplos.innerHTML = "Pega ítems para disposición final (uno por línea):<br><code>DISPOSICION EN RELLENO 5 TN 150.00</code>";
+      }
       if (modal) {
         modal.style.display = 'flex';
         const txt = document.getElementById('txtCargaRapida');
@@ -639,27 +937,11 @@
       }
 
       const lineas = val.split('\n');
-      let agregados = 0;
-
       lineas.forEach(linea => {
         let l = linea.trim();
         if (!l) return;
-        // Quitar viñetas iniciales como "- ", "* ", "1. ", "• ", "1) "
         l = l.replace(/^[-*•\d+.)\s]+/, '').trim();
         if (!l) return;
-
-        // Detectar Unidad (KG, TN, UNID, M3, GL)
-        let unidad = 'KG';
-        const mUnidad = l.match(/\b(TONELADAS?|TN|TON|KILOS?|KG|UNIDADES?|UNID|UND|PZAS?|M3|GALONES?|GL|GAL|LITROS?|LT)\b/i);
-        if (mUnidad) {
-          const uRaw = mUnidad[1].toUpperCase();
-          if (uRaw.startsWith('TON') || uRaw === 'TN') unidad = 'TN';
-          else if (uRaw.startsWith('UN') || uRaw.startsWith('PZ')) unidad = 'UNID';
-          else if (uRaw === 'M3') unidad = 'M3';
-          else if (uRaw.startsWith('GL') || uRaw.startsWith('GAL') || uRaw.startsWith('L')) unidad = 'GL';
-          else unidad = 'KG';
-          l = l.replace(mUnidad[0], ' ');
-        }
 
         // Detectar Precio
         let precio = '';
@@ -673,11 +955,25 @@
           l = l.replace(mPrecio[0], ' ');
         }
 
-        // Descripción limpia restante
-        let desc = l.replace(/[,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-        if (desc) {
-          agregarItem(desc, unidad, precio || 'S/.0.00');
-          agregados++;
+        if (modalTarget === 'comercializacion') {
+          let unidad = 'KG';
+          const mUnidad = l.match(/\b(TONELADAS?|TN|TON|KILOS?|KG|UNIDADES?|UNID|UND|PZAS?|M3|GALONES?|GL|GAL|LITROS?|LT)\b/i);
+          if (mUnidad) {
+            const uRaw = mUnidad[1].toUpperCase();
+            if (uRaw.startsWith('TON') || uRaw === 'TN') unidad = 'TN';
+            else if (uRaw.startsWith('UN') || uRaw.startsWith('PZ')) unidad = 'UNID';
+            else if (uRaw === 'M3') unidad = 'M3';
+            else if (uRaw.startsWith('GL') || uRaw.startsWith('GAL') || uRaw.startsWith('L')) unidad = 'GL';
+            l = l.replace(mUnidad[0], ' ');
+          }
+          let desc = l.replace(/[,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+          if (desc) agregarItem(desc, unidad, precio || 'S/.0.00');
+        } else if (modalTarget === 'transporte') {
+          let desc = l.replace(/[,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+          if (desc) agregarItemTransporte(desc, "1 SERVICIO", "FURGÓN", precio || 'S/.0.00');
+        } else if (modalTarget === 'disposicion') {
+          let desc = l.replace(/[,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+          if (desc) agregarItemDisposicion(desc, "1 TN", precio || 'S/.0.00');
         }
       });
 
@@ -685,74 +981,98 @@
       cerrarModalCargaRapida();
     }
 
-    function onClienteManualInput() {
-      // Si el usuario escribe manualmente en el input cliente
-      const val = document.getElementById('cliente').value.toUpperCase().trim();
-      const match = clientesCatalogo.find(c => c.empresa.toUpperCase() === val);
-      if (match) {
-        if (match.ruc && !document.getElementById('ruc').value) document.getElementById('ruc').value = match.ruc;
-        if (match.direccion && !document.getElementById('direccion').value) document.getElementById('direccion').value = match.direccion;
-      }
-    }
-
     function enviarCotizacion() {
+      const tipoServicio = document.getElementById('tipo_servicio').value;
+      const subtipoFinal = document.getElementById('subtipo_final').value;
       const correlativo = document.getElementById('correlativo').value.trim();
       const fecha = document.getElementById('fecha').value.trim();
+      const asunto = document.getElementById('asunto').value.trim();
       const cliente = document.getElementById('cliente').value.trim();
       const ruc = document.getElementById('ruc').value.trim();
       const direccion = document.getElementById('direccion').value.trim();
+      const personal = document.getElementById('personal').value.trim();
+      const condicionIgv = document.getElementById('condicion_igv').value.trim();
+      const validez = document.getElementById('validez').value.trim();
       const responsable = document.getElementById('responsable').value.trim();
       const cargo = document.getElementById('cargo').value.trim();
 
       if (!correlativo || !cliente || !ruc || !direccion) {
-        alert("Por favor completa los campos del cliente, RUC, dirección y correlativo.");
+        alert("Por favor completa los campos obligatorios: Correlativo, Cliente, RUC y Dirección.");
         return;
       }
 
-      const rows = document.querySelectorAll('.item-card');
-      if (rows.length === 0) {
-        alert("Agrega al menos 1 residuo a la cotización.");
-        return;
-      }
+      let itemsComercial = [];
+      let itemsTransp = [];
+      let itemsDisp = [];
 
-      const items = [];
-      let valid = true;
-      rows.forEach((row, idx) => {
-        const desc = row.querySelector('.item-desc').value.trim();
-        const unidad = row.querySelector('.item-unidad').value.trim();
-        let precio = row.querySelector('.item-precio').value.trim();
-
-        if (!desc || !precio) {
-          valid = false;
+      if (tipoServicio === 'COMERCIALIZACION') {
+        const rows = document.querySelectorAll('#itemsContainer .item-card');
+        if (rows.length === 0) {
+          alert("Agrega al menos 1 residuo a la cotización de Comercialización.");
+          return;
         }
-
-        if (precio && !precio.startsWith("S/")) {
-          precio = "S/." + precio.replace(/^[^\d]+/, '');
-        }
-
-        items.push({
-          item: String(idx + 1),
-          descripcion: desc,
-          unidad: unidad,
-          precio: precio
+        let valid = true;
+        rows.forEach((row, idx) => {
+          const desc = row.querySelector('.item-desc').value.trim();
+          const unidad = row.querySelector('.item-unidad').value.trim();
+          let precio = row.querySelector('.item-precio').value.trim();
+          if (!desc || !precio) valid = false;
+          if (precio && !precio.startsWith("S/")) precio = "S/." + precio.replace(/^[^\d]+/, '');
+          itemsComercial.push({ item: String(idx + 1), descripcion: desc, unidad: unidad, precio: precio });
         });
-      });
-
-      if (!valid) {
-        alert("Todos los ítems deben tener descripción y precio.");
-        return;
+        if (!valid) {
+          alert("Todos los residuos deben tener descripción y precio.");
+          return;
+        }
+      } else {
+        const rowsTransp = document.querySelectorAll('#itemsTransporteContainer .item-card');
+        const rowsDisp = document.querySelectorAll('#itemsDisposicionContainer .item-card');
+        if (rowsTransp.length === 0 && rowsDisp.length === 0) {
+          alert("Agrega al menos 1 ítem en Transporte o en Disposición Final.");
+          return;
+        }
+        let valid = true;
+        rowsTransp.forEach((row, idx) => {
+          const desc = row.querySelector('.it-desc').value.trim();
+          const cant = row.querySelector('.it-cant').value.trim();
+          const veh = row.querySelector('.it-veh').value.trim();
+          let precio = row.querySelector('.it-precio').value.trim();
+          if (!desc || !precio) valid = false;
+          if (precio && !precio.startsWith("S/")) precio = "S/." + precio.replace(/^[^\d]+/, '');
+          itemsTransp.push({ item: String(idx + 1), descripcion: desc, cantidad: cant, vehiculo: veh, precio: precio });
+        });
+        rowsDisp.forEach((row, idx) => {
+          const desc = row.querySelector('.id-desc').value.trim();
+          const cant = row.querySelector('.id-cant').value.trim();
+          let precio = row.querySelector('.id-precio').value.trim();
+          if (!desc || !precio) valid = false;
+          if (precio && !precio.startsWith("S/")) precio = "S/." + precio.replace(/^[^\d]+/, '');
+          itemsDisp.push({ item: String(idx + 1), descripcion: desc, cantidad: cant, precio: precio });
+        });
+        if (!valid) {
+          alert("Todos los ítems de Transporte y Disposición deben tener descripción y precio.");
+          return;
+        }
       }
 
       const payload = {
         tipo: "COTIZACION",
+        tipo_servicio: tipoServicio,
+        subtipo_final: subtipoFinal,
         correlativo: correlativo,
         fecha: fecha,
+        asunto: asunto,
         cliente: cliente,
         ruc: ruc,
         direccion: direccion,
+        personal: personal,
+        condicion_igv: condicionIgv,
+        validez: validez,
         responsable: responsable,
         cargo: cargo,
-        items: items
+        items: itemsComercial,
+        items_transporte: itemsTransp,
+        items_disposicion: itemsDisp
       };
 
       if (window.editingDocId) payload.doc_id = window.editingDocId;
@@ -762,7 +1082,6 @@
       btn.disabled = true;
       btn.innerText = "⏳ Generando documento y PDF en Drive...";
 
-      // Obtener user_id desde Telegram o parámetro URL
       const urlParams = new URLSearchParams(window.location.search);
       let userId = tg?.initDataUnsafe?.user?.id || urlParams.get('uid');
       payload.user_id = userId;

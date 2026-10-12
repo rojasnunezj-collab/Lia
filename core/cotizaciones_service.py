@@ -14,7 +14,45 @@ from config.settings import logger, SHEET_ID, DRIVE_FOLDER_ID
 from core.sheets_client import obtener_credenciales
 
 PET = timezone(timedelta(hours=-5))
-TEMPLATE_DOC_ID = os.getenv("TEMPLATE_COTIZACION_ID", "1-Umk538IEr1MCYvWHf2Pp7KmEPHNcTpxSvTxbDZk4oQ")
+PLANTILLAS_COTIZACION = {
+    "COMERCIALIZACION": {
+        "id": os.getenv("TEMPLATE_COTIZACION_ID", "1-Umk538IEr1MCYvWHf2Pp7KmEPHNcTpxSvTxbDZk4oQ"),
+        "nombre": "Comercialización",
+        "asunto_defecto": "Servicio de recolección, transporte y comercialización de residuos solidos",
+        "igv_defecto": "Los precios incluyen IGV.",
+        "personal_defecto": "El servicio incluye 01 conductor y 02 operarios.",
+        "validez_defecto": "Propuesta económica válida por 30 días calendario.",
+        "num_tablas": 1
+    },
+    "FINAL_PETRAMAS": {
+        "id": os.getenv("TEMPLATE_COTIZACION_PETRAMAS_ID", "1TJqmMv952814kX0PnFGBn6g6n51MCDpKtvyOPVS10Xg"),
+        "nombre": "Disposición Final - Petramas",
+        "asunto_defecto": "Servicio de recolección, transporte y disposición final de residuos solidos",
+        "igv_defecto": "Los precios no incluyen IGV.",
+        "personal_defecto": "El servicio incluye 01 conductor y 01 operarios.",
+        "validez_defecto": "Propuesta económica válida por 30 días calendario.",
+        "num_tablas": 2
+    },
+    "FINAL_ARE_YAKU": {
+        "id": os.getenv("TEMPLATE_COTIZACION_ARE_YAKU_ID", "1keT6UcYmjd8L5VUdc04qPTCLa6lkWX-mE20618bEyQw"),
+        "nombre": "Disposición Final - Are Yaku Pachas",
+        "asunto_defecto": "Servicio de recolección, transporte y disposición final de residuos solidos",
+        "igv_defecto": "Los precios no incluyen IGV.",
+        "personal_defecto": "El servicio incluye 01 conductor y 02 operarios.",
+        "validez_defecto": "Propuesta económica válida por 30 días calendario.",
+        "num_tablas": 2
+    },
+    "FINAL_LOS_OLIVOS": {
+        "id": os.getenv("TEMPLATE_COTIZACION_LOS_OLIVOS_ID", "1Mca2q0c4ioBvi_3Nq32yNLWjGMJhnkooDuQv1wCC7-Q"),
+        "nombre": "Disposición Final - Los Olivos",
+        "asunto_defecto": "Servicio de recolección, transporte y disposición final de residuos sólidos peligrosos",
+        "igv_defecto": "Los precios no incluyen IGV.",
+        "personal_defecto": "El servicio incluye 01 conductor y 02 operarios.",
+        "validez_defecto": "Propuesta económica válida por 30 días calendario.",
+        "num_tablas": 2
+    }
+}
+TEMPLATE_DOC_ID = PLANTILLAS_COTIZACION["COMERCIALIZACION"]["id"]
 DRIVE_FOLDER_COTIZACIONES = os.getenv("DRIVE_FOLDER_COTIZACIONES", "")
 
 MESES_ES = {
@@ -247,6 +285,115 @@ async def async_buscar_ruc_por_empresa(nombre_empresa: str):
 # ====================================================================
 # --- GENERACIÓN DE DOCUMENTO Y PDF ---
 # ====================================================================
+def poblar_tabla_en_doc(docs_service, doc_id, target_table_idx, items):
+    """Inserta filas en la tabla especificada de un documento Google Docs mapeando encabezados dinámicamente."""
+    if not items:
+        return
+    doc = docs_service.documents().get(documentId=doc_id).execute()
+    tables = [el for el in doc.get('body', {}).get('content', []) if 'table' in el]
+    if target_table_idx >= len(tables):
+        logger.warning(f"Tabla con índice {target_table_idx} no encontrada en documento {doc_id}")
+        return
+
+    tbl_element = tables[target_table_idx]
+    tbl = tbl_element['table']
+    table_start = tbl_element['startIndex']
+    num_cols = len(tbl['tableRows'][0]['tableCells'])
+
+    header_texts = []
+    for cell in tbl['tableRows'][0]['tableCells']:
+        txt = ""
+        for cp in cell.get('content', []):
+            for cpe in cp.get('paragraph', {}).get('elements', []):
+                txt += cpe.get('textRun', {}).get('content', '')
+        header_texts.append(txt.strip().upper())
+
+    # 1. Insertar filas vacías debajo del encabezado
+    insert_reqs = []
+    for _ in range(len(items)):
+        insert_reqs.append({
+            'insertTableRow': {
+                'tableCellLocation': {
+                    'tableStartLocation': {'index': table_start},
+                    'rowIndex': 0,
+                    'columnIndex': 0
+                },
+                'insertBelow': True
+            }
+        })
+    insert_reqs.append({
+        'updateTableCellStyle': {
+            'tableRange': {
+                'tableCellLocation': {
+                    'tableStartLocation': {'index': table_start},
+                    'rowIndex': 1,
+                    'columnIndex': 0
+                },
+                'rowSpan': len(items),
+                'columnSpan': num_cols
+            },
+            'tableCellStyle': {},
+            'fields': 'backgroundColor'
+        }
+    })
+    docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': insert_reqs}).execute()
+
+    # 2. Re-obtener el documento para conocer los nuevos índices de celdas
+    doc_updated = docs_service.documents().get(documentId=doc_id).execute()
+    tables_updated = [el for el in doc_updated.get('body', {}).get('content', []) if 'table' in el]
+    tbl_u = tables_updated[target_table_idx]['table']
+
+    cell_updates = []
+    for r_idx, itm in enumerate(items, start=1):
+        if r_idx >= len(tbl_u['tableRows']):
+            break
+        row = tbl_u['tableRows'][r_idx]
+        for c_idx, h in enumerate(header_texts):
+            if c_idx >= len(row['tableCells']):
+                continue
+            val = ""
+            if 'ITEM' in h:
+                val = str(itm.get("item", r_idx))
+            elif 'DESCRIP' in h:
+                val = str(itm.get("descripcion", "")).upper()
+            elif 'VEHIC' in h:
+                val = str(itm.get("vehiculo", "")).upper()
+            elif 'CANT' in h:
+                val = str(itm.get("cantidad", "")).upper()
+            elif 'UNIDAD' in h or 'MEDIDA' in h:
+                val = str(itm.get("unidad", itm.get("unidad_medida", "KG"))).upper()
+            elif 'PRECIO' in h:
+                p = str(itm.get("precio", "")).strip()
+                if p and not p.startswith("S/"):
+                    p = f"S/. {p}"
+                val = p
+            cell = row['tableCells'][c_idx]
+            cell_index = cell['startIndex'] + 1
+            cell_updates.append((cell_index, val))
+
+    cell_updates.sort(key=lambda x: x[0], reverse=True)
+    text_reqs = [{'insertText': {'location': {'index': idx}, 'text': text}} for idx, text in cell_updates]
+    docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': text_reqs}).execute()
+
+    # 3. Quitar negrita en filas de datos
+    try:
+        doc_after = docs_service.documents().get(documentId=doc_id).execute()
+        t_after = [el for el in doc_after.get('body', {}).get('content', []) if 'table' in el][target_table_idx]['table']
+        style_reqs = []
+        for r_idx in range(1, len(t_after['tableRows'])):
+            row = t_after['tableRows'][r_idx]
+            style_reqs.append({
+                'updateTextStyle': {
+                    'range': {'startIndex': row['startIndex'], 'endIndex': row['endIndex']},
+                    'textStyle': {'bold': False},
+                    'fields': 'bold'
+                }
+            })
+        if style_reqs:
+            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': style_reqs}).execute()
+    except Exception as e_st:
+        logger.warning(f"Aviso reseteando negrita en tabla {target_table_idx}: {e_st}")
+
 def procesar_generacion_cotizacion(datos):
     """
     datos: dict con:
@@ -255,12 +402,19 @@ def procesar_generacion_cotizacion(datos):
       - ruc: '20505688903'
       - cliente: 'AGRICOLA ANDREA S.A.C.'
       - direccion: 'PISCO - ICA'
+      - asunto: (opcional, personalizado)
+      - personal: (opcional, ej: '01 conductor y 02 operarios')
+      - condicion_igv: (opcional, ej: 'Los precios incluyen IGV.')
+      - validez: (opcional, ej: '30 días calendario')
       - responsable: 'Alexander Chamochumbi Chávez'
       - cargo: 'Responsable Técnico'
-      - items: [
-          {"item": "1", "descripcion": "CARTÓN", "unidad": "KG", "precio": "S/.0,10"}, ...
-        ]
-      - doc_id_existente: (opcional, si es para edición de documento previo)
+      - tipo_servicio: 'COMERCIALIZACION' o 'DISPOSICION_FINAL'
+      - subtipo_final: 'PETRAMAS', 'ARE_YAKU', 'LOS_OLIVOS'
+      - template_key: (opcional directo)
+      - items: [...] (para Comercialización)
+      - items_transporte: [...] (para Disposición Final Tabla 1)
+      - items_disposicion: [...] (para Disposición Final Tabla 2)
+      - doc_id / pdf_id: (opcional, si es para edición de documento previo)
     """
     creds = obtener_credenciales()
     drive = build('drive', 'v3', credentials=creds)
@@ -279,7 +433,50 @@ def procesar_generacion_cotizacion(datos):
     direccion = str(datos.get("direccion", "")).strip().upper()
     responsable = str(datos.get("responsable") or "Alexander Chamochumbi Chávez").strip()
     cargo = str(datos.get("cargo") or "Responsable Técnico").strip()
+
+    # Resolver plantilla
+    template_key = datos.get("template_key")
+    tipo_servicio = str(datos.get("tipo_servicio") or datos.get("tipo_cotizacion") or "COMERCIALIZACION").upper()
+    subtipo_final = str(datos.get("subtipo_final") or datos.get("subtipo") or "").upper()
+
+    if not template_key:
+        if "FINAL" in tipo_servicio or "DISPOSICION" in tipo_servicio:
+            tipo_servicio = "DISPOSICION_FINAL"
+            if "YAKU" in subtipo_final or "ARE" in subtipo_final:
+                subtipo_final = "ARE_YAKU"
+                template_key = "FINAL_ARE_YAKU"
+            elif "OLIVOS" in subtipo_final:
+                subtipo_final = "LOS_OLIVOS"
+                template_key = "FINAL_LOS_OLIVOS"
+            else:
+                subtipo_final = "PETRAMAS"
+                template_key = "FINAL_PETRAMAS"
+        else:
+            tipo_servicio = "COMERCIALIZACION"
+            subtipo_final = ""
+            template_key = "COMERCIALIZACION"
+
+    cfg_plantilla = PLANTILLAS_COTIZACION.get(template_key, PLANTILLAS_COTIZACION["COMERCIALIZACION"])
+    template_doc_id = cfg_plantilla["id"]
+
+    asunto = str(datos.get("asunto") or cfg_plantilla["asunto_defecto"]).strip()
+    personal = str(datos.get("personal") or cfg_plantilla["personal_defecto"]).strip()
+    condicion_igv = str(datos.get("condicion_igv") or cfg_plantilla["igv_defecto"]).strip()
+    validez = str(datos.get("validez") or cfg_plantilla["validez_defecto"]).strip()
+
     items = datos.get("items", [])
+    items_transporte = datos.get("items_transporte", [])
+    items_disposicion = datos.get("items_disposicion", [])
+
+    # Compatibilidad: si en disposición final enviaron solo 'items'
+    if template_key != "COMERCIALIZACION" and not items_transporte and not items_disposicion and items:
+        for it in items:
+            if it.get("vehiculo"):
+                items_transporte.append(it)
+            else:
+                items_disposicion.append(it)
+        if not items_transporte and not items_disposicion:
+            items_disposicion = items
 
     folder_id = obtener_o_crear_carpeta_cotizaciones(drive)
 
@@ -294,7 +491,7 @@ def procesar_generacion_cotizacion(datos):
         'name': nombre_doc,
         'parents': [folder_id]
     }
-    copy_file = drive.files().copy(fileId=TEMPLATE_DOC_ID, body=meta, supportsAllDrives=True).execute()
+    copy_file = drive.files().copy(fileId=template_doc_id, body=meta, supportsAllDrives=True).execute()
     doc_id = copy_file['id']
 
     try:
@@ -307,113 +504,60 @@ def procesar_generacion_cotizacion(datos):
             {'replaceAllText': {'containsText': {'text': '{{FECHA}}', 'matchCase': True}, 'replaceText': fecha}},
             {'replaceAllText': {'containsText': {'text': 'Alexander Chamochumbi Chávez', 'matchCase': True}, 'replaceText': responsable}},
             {'replaceAllText': {'containsText': {'text': 'Responsable Técnico', 'matchCase': True}, 'replaceText': cargo}},
-            {'updateDocumentStyle': {
+        ]
+
+        # Reemplazo de Asunto si fue editado
+        if asunto:
+            requests.append({
+                'replaceAllText': {'containsText': {'text': cfg_plantilla['asunto_defecto'], 'matchCase': False}, 'replaceText': asunto}
+            })
+            for k, o_cfg in PLANTILLAS_COTIZACION.items():
+                if o_cfg['asunto_defecto'] != cfg_plantilla['asunto_defecto']:
+                    requests.append({
+                        'replaceAllText': {'containsText': {'text': o_cfg['asunto_defecto'], 'matchCase': False}, 'replaceText': asunto}
+                    })
+
+        # Reemplazo de Personal / Operarios si fue editado
+        if personal and personal != cfg_plantilla['personal_defecto']:
+            texto_p = personal if personal.lower().startswith("el servicio incluye") else f"El servicio incluye {personal}."
+            requests.append({
+                'replaceAllText': {'containsText': {'text': cfg_plantilla['personal_defecto'], 'matchCase': False}, 'replaceText': texto_p}
+            })
+
+        # Reemplazo de Condición IGV si fue editada
+        if condicion_igv and condicion_igv != cfg_plantilla['igv_defecto']:
+            requests.append({
+                'replaceAllText': {'containsText': {'text': cfg_plantilla['igv_defecto'], 'matchCase': False}, 'replaceText': condicion_igv}
+            })
+
+        # Reemplazo de Validez si fue editada
+        if validez and validez != cfg_plantilla['validez_defecto']:
+            texto_v = validez if validez.lower().startswith("propuesta") else f"Propuesta económica válida por {validez}."
+            requests.append({
+                'replaceAllText': {'containsText': {'text': cfg_plantilla['validez_defecto'], 'matchCase': False}, 'replaceText': texto_v}
+            })
+
+        # Margen superior
+        requests.append({
+            'updateDocumentStyle': {
                 'documentStyle': {
                     'marginHeader': {'magnitude': 14.17, 'unit': 'PT'},
                     'marginTop': {'magnitude': 105, 'unit': 'PT'}
                 },
                 'fields': 'marginHeader,marginTop'
-            }}
-        ]
+            }
+        })
         docs.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute()
 
-        # 3. Llenado de tabla si hay ítems
-        if items:
-            doc = docs.documents().get(documentId=doc_id).execute()
-            table_element = None
-            for el in doc.get('body', {}).get('content', []):
-                if 'table' in el:
-                    table_element = el
-                    break
-
-            if table_element:
-                table_start = table_element['startIndex']
-                insert_rows_requests = []
-                for _ in range(len(items)):
-                    insert_rows_requests.append({
-                        'insertTableRow': {
-                            'tableCellLocation': {
-                                'tableStartLocation': {'index': table_start},
-                                'rowIndex': 0,
-                                'columnIndex': 0
-                            },
-                            'insertBelow': True
-                        }
-                    })
-                # Quitar el color verde heredado de los encabezados en las nuevas filas de ítems
-                insert_rows_requests.append({
-                    'updateTableCellStyle': {
-                        'tableRange': {
-                            'tableCellLocation': {
-                                'tableStartLocation': {'index': table_start},
-                                'rowIndex': 1,
-                                'columnIndex': 0
-                            },
-                            'rowSpan': len(items),
-                            'columnSpan': 4
-                        },
-                        'tableCellStyle': {},
-                        'fields': 'backgroundColor'
-                    }
-                })
-                docs.documents().batchUpdate(documentId=doc_id, body={'requests': insert_rows_requests}).execute()
-
-                # Re-leer documento para ubicar las posiciones exactas de las nuevas celdas
-                doc_updated = docs.documents().get(documentId=doc_id).execute()
-                for el in doc_updated.get('body', {}).get('content', []):
-                    if 'table' in el:
-                        table_element = el
-                        break
-
-                table = table_element['table']
-                cell_updates = []
-                for r_idx, itm in enumerate(items, start=1):
-                    if r_idx >= len(table['tableRows']):
-                        break
-                    row = table['tableRows'][r_idx]
-                    valores = [
-                        str(itm.get("item", r_idx)),
-                        str(itm.get("descripcion", "")).upper(),
-                        str(itm.get("unidad", "KG")).upper(),
-                        str(itm.get("precio", "S/.0.00"))
-                    ]
-                    for c_idx, val in enumerate(valores):
-                        cell = row['tableCells'][c_idx]
-                        cell_index = cell['startIndex'] + 1
-                        cell_updates.append((cell_index, val))
-
-                # Ordenar descendente para que la inserción de texto no altere índices precedentes
-                cell_updates.sort(key=lambda x: x[0], reverse=True)
-                text_requests = [
-                    {'insertText': {'location': {'index': idx}, 'text': text}}
-                    for idx, text in cell_updates
-                ]
-                docs.documents().batchUpdate(documentId=doc_id, body={'requests': text_requests}).execute()
-
-                # Quitar formato negrita en los ítems para que solo los encabezados queden en negrita
-                try:
-                    doc_after_text = docs.documents().get(documentId=doc_id).execute()
-                    for el in doc_after_text.get('body', {}).get('content', []):
-                        if 'table' in el:
-                            t_after = el['table']
-                            break
-                    style_requests = []
-                    for r_idx in range(1, len(t_after['tableRows'])):
-                        row = t_after['tableRows'][r_idx]
-                        style_requests.append({
-                            'updateTextStyle': {
-                                'range': {
-                                    'startIndex': row['startIndex'],
-                                    'endIndex': row['endIndex']
-                                },
-                                'textStyle': {'bold': False},
-                                'fields': 'bold'
-                            }
-                        })
-                    if style_requests:
-                        docs.documents().batchUpdate(documentId=doc_id, body={'requests': style_requests}).execute()
-                except Exception as e_style:
-                    logger.warning(f"No se pudo resetear negrita en ítems: {e_style}")
+        # 3. Llenado de tablas
+        if template_key == "COMERCIALIZACION":
+            if items:
+                poblar_tabla_en_doc(docs, doc_id, 0, items)
+        else:
+            if items_transporte:
+                poblar_tabla_en_doc(docs, doc_id, 0, items_transporte)
+            if items_disposicion:
+                poblar_tabla_en_doc(docs, doc_id, 1, items_disposicion)
 
         # 4. Exportar a PDF
         pdf_bytes = drive.files().export(fileId=doc_id, mimeType='application/pdf').execute()
@@ -462,20 +606,40 @@ def procesar_generacion_cotizacion(datos):
         doc_link = f"https://docs.google.com/document/d/{doc_id}/edit"
 
         # 6. Registrar o actualizar en Google Sheets
-        resumen_items = "; ".join([f"{it.get('descripcion')} ({it.get('precio')})" for it in items[:4]])
-        if len(items) > 4:
-            resumen_items += f" y {len(items)-4} más..."
+        if template_key == "COMERCIALIZACION":
+            resumen_items = "; ".join([f"{it.get('descripcion')} ({it.get('precio')})" for it in items[:4]])
+            if len(items) > 4:
+                resumen_items += f" y {len(items)-4} más..."
+        else:
+            partes = []
+            for it in items_transporte[:2]:
+                partes.append(f"Transp: {it.get('descripcion')} ({it.get('precio')})")
+            for it in items_disposicion[:2]:
+                partes.append(f"Disp: {it.get('descripcion')} ({it.get('precio')})")
+            resumen_items = "; ".join(partes)
+            total_it = len(items_transporte) + len(items_disposicion)
+            if total_it > 4:
+                resumen_items += f" y {total_it-4} más..."
 
         datos_completos = {
             "correlativo": correlativo,
             "codigo": codigo_cotizacion,
+            "tipo_servicio": tipo_servicio,
+            "subtipo_final": subtipo_final,
+            "template_key": template_key,
             "fecha": fecha,
             "cliente": cliente,
             "ruc": ruc,
             "direccion": direccion,
+            "asunto": asunto,
+            "personal": personal,
+            "condicion_igv": condicion_igv,
+            "validez": validez,
             "responsable": responsable,
             "cargo": cargo,
             "items": items,
+            "items_transporte": items_transporte,
+            "items_disposicion": items_disposicion,
             "doc_id": doc_id,
             "pdf_id": pdf_id
         }
@@ -543,6 +707,10 @@ def procesar_generacion_cotizacion(datos):
             "codigo": codigo_cotizacion,
             "cliente": cliente,
             "fecha": fecha,
+            "tipo_servicio": tipo_servicio,
+            "subtipo_final": subtipo_final,
+            "tipo_nombre": cfg_plantilla["nombre"],
+            "total_items": len(items) if template_key == "COMERCIALIZACION" else (len(items_transporte) + len(items_disposicion)),
             "pdf_bytes": pdf_bytes,
             "pdf_link": pdf_link,
             "doc_link": doc_link,

@@ -299,12 +299,15 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                     c_cliente = html.escape(str(res['cliente']))
                     c_codigo = html.escape(str(res['codigo']))
                     c_fecha = html.escape(str(res['fecha']))
+                    c_tipo = html.escape(str(res.get('tipo_nombre', 'Comercialización')))
+                    total_items = res.get('total_items', len(payload.get('items', [])))
                     caption = (
                         f"✅ <b>Cotización Generada Exitosamente</b>\n\n"
                         f"📌 <b>Código:</b> <code>COTIZACION N°{c_codigo}</code>\n"
+                        f"📋 <b>Plantilla:</b> <code>{c_tipo}</code>\n"
                         f"🏢 <b>Cliente:</b> <code>{c_cliente}</code>\n"
                         f"📅 <b>Fecha:</b> <code>{c_fecha}</code>\n"
-                        f"💰 <b>Ítems cotizados:</b> {len(payload.get('items', []))} residuos\n\n"
+                        f"💰 <b>Ítems cotizados:</b> {total_items} ítems\n\n"
                         f"💾 Guardada en Google Drive y registrada en Sheets."
                     )
                     files = {'document': (res['nombre_archivo'], res['pdf_bytes'], 'application/pdf')}
