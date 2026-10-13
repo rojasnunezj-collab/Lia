@@ -54,7 +54,8 @@ from core.bitacora_service import (
 )
 from core.pendientes_service import (
     async_obtener_pendientes, async_crear_pendiente,
-    async_actualizar_estado_pendiente, async_posponer_pendiente,
+    async_actualizar_estado_pendiente, async_actualizar_prioridad_pendiente,
+    async_posponer_pendiente,
     async_obtener_alertas_por_disparar, async_marcar_alerta_enviada,
     procesar_pendiente_ia, obtener_url_panel, obtener_url_webapp_pendientes
 )
@@ -371,6 +372,20 @@ async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAU
         user_states[user_id] = None
         await safe_edit_or_reply(query, "❌ Pendiente cancelado / descartado.", reply_markup=get_main_menu_keyboard(user_id))
 
+    elif data.startswith('pnd_prio|'):
+        nueva_prio = data.split('|')[1].upper()
+        if nueva_prio not in ["ALTA", "MEDIA", "BAJA"]:
+            nueva_prio = "MEDIA"
+        cache = user_data_cache.get(user_id, {})
+        draft = cache.get("pendiente_draft")
+        if not draft:
+            await query.answer("⚠️ No hay borrador de pendiente activo.", show_alert=True)
+            return
+        draft["prioridad"] = nueva_prio
+        card_text, kb_card = build_pendiente_draft_card(draft)
+        await safe_edit_or_reply(query, card_text, reply_markup=kb_card, parse_mode='HTML')
+        return
+
     elif data.startswith('pnd_done|'):
         pnd_id = data.split('|')[1]
         ok = await async_actualizar_estado_pendiente(pnd_id, 'COMPLETADO')
@@ -644,12 +659,14 @@ def build_bitacora_draft_card(draft):
     return msg_card, InlineKeyboardMarkup(kb)
 
 def build_pendiente_draft_card(draft):
-    """Construye la tarjeta de visualización de borrador de Pendiente con botones de confirmación."""
+    """Construye la tarjeta de visualización de borrador de Pendiente con botones de confirmación y selección de prioridad."""
     titulo = html.escape(str(draft.get("titulo", "Sin título")).strip())
     detalle = html.escape(str(draft.get("detalle", "")).strip())
     cliente = html.escape(str(draft.get("cliente_ref", "")).strip())
     fecha_alerta = html.escape(str(draft.get("fecha_alerta", "")).strip())
     prioridad = str(draft.get("prioridad", "MEDIA")).strip().upper()
+    if prioridad not in ["ALTA", "MEDIA", "BAJA"]:
+        prioridad = "MEDIA"
 
     p_badge = "🔴 ALTA" if prioridad == "ALTA" else ("🟢 BAJA" if prioridad == "BAJA" else "🟡 MEDIA")
 
@@ -667,8 +684,17 @@ def build_pendiente_draft_card(draft):
         f"❓ ¿Deseas confirmar y guardar este pendiente en Google Sheets?"
     )
 
+    btn_alta = f"🔴 Alta {'✓' if prioridad == 'ALTA' else ''}".strip()
+    btn_media = f"🟡 Media {'✓' if prioridad == 'MEDIA' else ''}".strip()
+    btn_baja = f"🟢 Baja {'✓' if prioridad == 'BAJA' else ''}".strip()
+
     kb = [
         [InlineKeyboardButton("✅ Confirmar y Guardar", callback_data='pnd_confirm')],
+        [
+            InlineKeyboardButton(btn_alta, callback_data='pnd_prio|ALTA'),
+            InlineKeyboardButton(btn_media, callback_data='pnd_prio|MEDIA'),
+            InlineKeyboardButton(btn_baja, callback_data='pnd_prio|BAJA')
+        ],
         [InlineKeyboardButton("❌ Cancelar / Descartar", callback_data='pnd_cancel')]
     ]
     return msg, InlineKeyboardMarkup(kb)

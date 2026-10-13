@@ -150,6 +150,27 @@ async def async_actualizar_estado_pendiente(pnd_id: str, nuevo_estado: str, fech
         logger.error(f"Error en async_actualizar_estado_pendiente: {e}")
         return False
 
+def actualizar_prioridad_pendiente_sync(pnd_id: str, nueva_prioridad: str):
+    """Actualiza la prioridad de un pendiente de forma síncrona en Sheets."""
+    ws = obtener_sheet_pendientes()
+    records = ws.get_all_records()
+    prio_norm = str(nueva_prioridad).strip().upper()
+    if prio_norm not in ["ALTA", "MEDIA", "BAJA"]:
+        prio_norm = "MEDIA"
+    for idx, r in enumerate(records, start=2):
+        if str(r.get("ID", "")).strip().upper() == str(pnd_id).strip().upper():
+            ws.update_cell(idx, 8, prio_norm) # Col H: PRIORIDAD
+            return True
+    return False
+
+async def async_actualizar_prioridad_pendiente(pnd_id: str, nueva_prioridad: str):
+    """Actualiza la prioridad de un pendiente."""
+    try:
+        return await asyncio.to_thread(actualizar_prioridad_pendiente_sync, pnd_id, nueva_prioridad)
+    except Exception as e:
+        logger.error(f"Error en async_actualizar_prioridad_pendiente: {e}")
+        return False
+
 def posponer_pendiente_sync(pnd_id: str, minutos: int):
     """Pospone la alerta de forma síncrona."""
     ws = obtener_sheet_pendientes()
