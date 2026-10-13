@@ -1981,9 +1981,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     fundo_val = str(r.get('Fundo', 'S/D'))
                     correlativo_val = str(r.get('Correlativo', 'S/D'))
                     certificado_val = str(r.get('Certificado', 'S/D'))
-                    guia_val = str(r.get('Guia', 'S/D'))
                     link_guia = str(r.get('Link Guia', '')).strip()
                     link_doc = str(r.get('Link Documento', '')).strip()
+                    link_pdf = str(r.get('Link pdf', r.get('Link PDF', ''))).strip()
+
+                    m_hl_guia = re.search(r'=HYPERLINK\(\s*"([^"]+)"', link_guia, re.IGNORECASE)
+                    if m_hl_guia:
+                        link_guia = m_hl_guia.group(1).strip()
+
+                    m_hl_doc = re.search(r'=HYPERLINK\(\s*"([^"]+)"', link_doc, re.IGNORECASE)
+                    if m_hl_doc:
+                        link_doc = m_hl_doc.group(1).strip()
+
+                    m_hl_pdf = re.search(r'=HYPERLINK\(\s*"([^"]+)"', link_pdf, re.IGNORECASE)
+                    if m_hl_pdf:
+                        link_pdf = m_hl_pdf.group(1).strip()
                     
                     reporte += f"📅 **Fecha:** `{fecha_val}`\n"
                     reporte += f"🏢 **Empresa:** `{empresa_val}`\n"
@@ -2004,13 +2016,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             
                     if link_doc:
                         if link_doc.startswith("http"):
-                            reporte += f"📎 [Abrir Certificado]({link_doc})\n"
+                            reporte += f"📄 [Abrir Word Certificado]({link_doc})\n"
                         else:
                             url_doc = await async_buscar_link_en_drive(link_doc)
                             if url_doc: 
-                                reporte += f"📎 [Abrir Certificado]({url_doc})\n"
+                                reporte += f"📄 [Abrir Word Certificado]({url_doc})\n"
                             else: 
-                                reporte += f"📎 _Certificado no encontrado en Drive_\n"
+                                reporte += f"📄 _Certificado no encontrado en Drive_\n"
+
+                    if link_pdf:
+                        if link_pdf.startswith("http"):
+                            reporte += f"📑 [Ver PDF Unificado]({link_pdf})\n"
+                        else:
+                            url_pdf = await async_buscar_link_en_drive(link_pdf)
+                            if url_pdf:
+                                reporte += f"📑 [Ver PDF Unificado]({url_pdf})\n"
                         
                     reporte += "➖➖➖➖➖➖➖➖➖➖\n"
                 

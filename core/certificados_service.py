@@ -196,8 +196,10 @@ def extraer_id_drive(valor: Any) -> Optional[str]:
     if not valor:
         return None
     val_str = str(valor).strip()
-    if re.match(r'^[a-zA-Z0-9_-]{25,65}$', val_str):
-        return val_str
+    # Si parece nombre de archivo o prefijo de certificado/guía, no es ID
+    if val_str.upper().startswith(('CERT-', 'TR', 'EG', 'GR', 'T0', 'F0', 'EPMI')) or any(val_str.lower().endswith(ext) for ext in ['.pdf', '.docx', '.xlsx', '.doc']):
+        return None
+
     patrones = [
         r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)',
         r'docs\.google\.com/document/d/([a-zA-Z0-9_-]+)',
@@ -208,7 +210,30 @@ def extraer_id_drive(valor: Any) -> Optional[str]:
         m = re.search(p, val_str)
         if m:
             return m.group(1)
+
+    if re.match(r'^[a-zA-Z0-9_-]{25,65}$', val_str) and not re.match(r'^[A-Z0-9_]+-[A-Z0-9_]+', val_str):
+        return val_str
+
     return None
+
+def parsear_celda_enlace_o_nombre(valor: Any) -> Tuple[str, str]:
+    """
+    Retorna (url, nombre_archivo) a partir de:
+    - =HYPERLINK("url", "nombre")
+    - URL cruda (https://...)
+    - Nombre de archivo plano (CERT-COM-...)
+    """
+    if not valor:
+        return "", ""
+    s = str(valor).strip()
+    m = re.search(r'=HYPERLINK\(\s*"([^"]+)"\s*(?:,\s*"([^"]+)")?\s*\)', s, re.IGNORECASE)
+    if m:
+        url = m.group(1).strip()
+        nombre = m.group(2).strip() if m.group(2) else ""
+        return url, nombre
+    if s.startswith(('http://', 'https://')):
+        return s, ""
+    return "", s
 
 def obtener_link_archivo_drive(servicio_drive, nombre_o_id: str) -> Optional[str]:
     """Obtiene webViewLink público/corporativo para un archivo por ID o nombre."""
@@ -217,10 +242,15 @@ def obtener_link_archivo_drive(servicio_drive, nombre_o_id: str) -> Optional[str
     try:
         f_id = extraer_id_drive(nombre_o_id)
         if f_id:
-            meta = servicio_drive.files().get(
-                fileId=f_id, fields='webViewLink', supportsAllDrives=True
-            ).execute()
-            return meta.get('webViewLink')
+            try:
+                meta = servicio_drive.files().get(
+                    fileId=f_id, fields='webViewLink', supportsAllDrives=True
+                ).execute()
+                if meta.get('webViewLink'):
+                    return meta.get('webViewLink')
+            except Exception:
+                pass
+
         query = f"name contains '{nombre_o_id}' and trashed = false"
         res = servicio_drive.files().list(
             q=query, spaces='drive', fields='files(id, webViewLink)', supportsAllDrives=True
@@ -984,6 +1014,11 @@ def sobrescribir_o_subir_pdf_drive(file_id_existente: Optional[str], contenido_b
     Actualiza in-place el archivo PDF consolidado en Google Drive para preservar su ID y URL pública.
     """
     drive_service, _ = obtener_servicios_google()
+    if nombre_archivo:
+        nombre_archivo = nombre_archivo.strip()
+        if not nombre_archivo.lower().endswith('.pdf') and not nombre_archivo.startswith(('http://', 'https://')):
+            nombre_archivo += '.pdf'
+
     if file_id_existente:
         try:
             media = MediaIoBaseUpload(io.BytesIO(contenido_bytes), mimetype='application/pdf', resumable=True)
@@ -1087,20 +1122,50 @@ def buscar_datos_certificado_en_historial(correlativo: str, sheets_service=None,
 
             if match:
                 raw_guia = str(row[6]).strip() if len(row) > 6 else ""
-                raw_doc = str(row[7]).strip() if len(row) > 7 else ""
-                raw_pdf = str(row[8]).strip() if len(row) > 8 else ""
+                raw_doc_val = str(row[7]).strip() if len(row) > 7 else ""
+                raw_pdf_val = str(row[8]).strip() if len(row) > 8 else ""
 
-                url_doc = raw_doc
-                if raw_doc and not raw_doc.startswith(('http://', 'https://')):
-                    link_d = obtener_link_archivo_drive(drive_service, raw_doc)
-                    if link_d:
-                        url_doc = link_d
+                url_doc, nom_doc = parsear_celda_enlace_o_nombre(raw_doc_val)
+                url_pdf, nom_pdf = parsear_celda_enlace_o_nombre(raw_pdf_val)
 
-                url_pdf = raw_pdf
-                if raw_pdf and not raw_pdf.startswith(('http://', 'https://')):
-                    link_p = obtener_link_archivo_drive(drive_service, raw_pdf)
-                    if link_p:
-                        url_pdf = link_p
+                # Resolver enlace y nombre para DOCX
+                if not url_doc and nom_doc:
+                    url_doc = obtener_link_archivo_drive(drive_service, nom_doc) or ""
+                elif url_doc and not nom_doc:
+                    doc_id = extraer_id_drive(url_doc)
+                    if doc_id:
+                        try:
+                            meta = drive_service.files().get(fileId=doc_id, fields='name', supportsAllDrives=True).execute()
+                            nom_doc = meta.get('name', '')
+                        except Exception:
+                            pass
+
+                # Resolver enlace y nombre para PDF
+                if not url_pdf and nom_pdf:
+                    url_pdf = obtener_link_archivo_drive(drive_service, nom_pdf) or ""
+                elif url_pdf and not nom_pdf:
+                    pdf_id = extraer_id_drive(url_pdf)
+                    if pdf_id:
+                        try:
+                            meta = drive_service.files().get(fileId=pdf_id, fields='name', supportsAllDrives=True).execute()
+                            nom_pdf = meta.get('name', '')
+                        except Exception:
+                            pass
+
+                # Fallbacks canónicos si faltan nombres limpios
+                tipo_c = str(row[4]).strip() if len(row) > 4 else "COM"
+                tipo_cod_b = "COM" if "comercial" in tipo_c.lower() else "SER"
+                dest_b = str(row[2]).strip() if len(row) > 2 else ""
+                if not dest_b:
+                    emp_raw = str(row[1]).strip() if len(row) > 1 else ""
+                    dest_b = emp_raw.split()[0] if emp_raw else "GENERAL"
+
+                if not nom_doc and corr_row:
+                    nom_doc = f"CERT-{tipo_cod_b}-{corr_row}-{dest_b}.docx"
+
+                if not nom_pdf and corr_row:
+                    tag_rem_b = "-REM-TRAN" if (len(row) > 5 and str(row[5]).strip()) else ""
+                    nom_pdf = f"CERT-{tipo_cod_b}-{corr_row}{tag_rem_b}-{dest_b}.pdf"
 
                 resultados.append({
                     "fila": num_fila,
@@ -1112,9 +1177,9 @@ def buscar_datos_certificado_en_historial(correlativo: str, sheets_service=None,
                     "guias": str(row[5]).strip() if len(row) > 5 else "",
                     "link_guia": raw_guia,
                     "link_doc": url_doc,
-                    "raw_doc": raw_doc,
+                    "raw_doc": nom_doc,
                     "link_pdf": url_pdf,
-                    "raw_pdf": raw_pdf,
+                    "raw_pdf": nom_pdf,
                     "observacion": str(row[9]).strip() if len(row) > 9 else ""
                 })
 
@@ -1322,7 +1387,8 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     cert_pdf_bytes = convertir_docx_a_pdf(docx_final_bytes, drive_service)
 
     # 5. Unificar con guías si existen
-    if remision_bytes or transporte_bytes:
+    tiene_guias = bool(remision_bytes or transporte_bytes)
+    if tiene_guias:
         pdf_unificado_bytes = unir_tres_documentos_pdf(cert_pdf_bytes, remision_bytes, transporte_bytes)
     else:
         pdf_unificado_bytes = cert_pdf_bytes
@@ -1342,7 +1408,10 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
 
     nombre_base = f"CERT-{tipo_cod}-{v_corr}-{destino_final}"
     nombre_docx = f"{nombre_base}.docx"
-    nombre_pdf = f"{nombre_base}.pdf"
+    if tiene_guias:
+        nombre_pdf = f"CERT-{tipo_cod}-{v_corr}-REM-TRAN-{destino_final}.pdf"
+    else:
+        nombre_pdf = f"{nombre_base}.pdf"
 
     # 7. Subir Word a Drive
     file_id_doc, link_doc = subir_a_drive_certificado(
@@ -1364,6 +1433,13 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     if es_modelo:
         val_cert = f"M-{val_cert[:3]}"
 
+    # Regla: cuando solo se tiene certificado va en columna H, y cuando se juntan certificado y guias va el PDF en columna I
+    val_col_h = f'=HYPERLINK("{link_doc}", "{nombre_docx}")' if link_doc else nombre_docx
+    if tiene_guias:
+        val_col_i = f'=HYPERLINK("{link_pdf}", "{nombre_pdf}")' if link_pdf else nombre_pdf
+    else:
+        val_col_i = ""
+
     fecha_registro = datetime.now(PET).strftime("%d/%m/%Y")
     datos_log = [
         fecha_registro,
@@ -1373,8 +1449,8 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
         val_cert,
         val_guia_completa,
         "",  # Link guía
-        link_doc or "",
-        link_pdf or "",
+        val_col_h,
+        val_col_i,
         f"Emitido desde Telegram Mini App ({payload.get('usuario_email', 'Bot')})"
     ]
 
@@ -1467,8 +1543,23 @@ def procesar_regeneracion_expediente(
         pdf_unificado_existente_bytes, nuevo_cert_pdf_bytes, num_paginas_reemplazar=1
     )
 
-    # 5. Nombre final
-    nombre_final = nombre_pdf_usuario.strip() if nombre_pdf_usuario else f"CERT-{correlativo}-ACTUALIZADO.pdf"
+    # 5. Nombre final canónico
+    tipo_cod = "COM" if "comercial" in str(cert_sel.get('tipo_cert', '')).lower() else "SER"
+    destino = str(cert_sel.get('fundo') or cert_sel.get('empresa') or '').strip().upper()
+    destino_raw = destino.split(' - ')[-1].strip()
+    destino_raw = re.sub(r'(?i)^(Av\.|Avenida|Calle|Jr\.|Jirón|Pasaje|Carretera|Panamericana)\s+', '', destino_raw).strip()
+    destino_limpio = re.sub(r'(?i)^(Planta|Fundo|Sede|Sucursal|Predio)\s+', '', destino_raw).strip().upper()
+    if not destino_limpio:
+        destino_limpio = str(cert_sel.get('empresa', '')).split()[0].upper() if cert_sel.get('empresa') else "GENERAL"
+
+    es_unificado = "REM-TRAN" in str(cert_sel.get('raw_pdf', '')).upper() or bool(cert_sel.get('guias'))
+    tag_rem = "-REM-TRAN" if es_unificado else ""
+
+    if nombre_pdf_usuario and not nombre_pdf_usuario.strip().startswith(('http://', 'https://')):
+        nombre_final = nombre_pdf_usuario.strip()
+    else:
+        nombre_final = f"CERT-{tipo_cod}-{correlativo}{tag_rem}-{destino_limpio}.pdf"
+
     if not nombre_final.lower().endswith('.pdf'):
         nombre_final += '.pdf'
 
@@ -1478,10 +1569,11 @@ def procesar_regeneracion_expediente(
         cert_sel.get('tipo_cert', 'Comercialización'), cert_sel.get('empresa', 'EPMI S.A.C.')
     )
 
-    # 7. Registrar auditoría en Sheets
+    # 7. Registrar auditoría en Sheets con fórmula HYPERLINK
     link_para_historial = nuevo_link_drive or link_pdf
+    val_col_i = f'=HYPERLINK("{link_para_historial}", "{nombre_final}")'
     registrar_edicion_en_historial(
-        num_fila, link_para_historial, usuario_editor=usuario_editor,
+        num_fila, val_col_i, usuario_editor=usuario_editor,
         obs_extra=obs_extra, sheets_service=sheets_service
     )
 
@@ -1893,26 +1985,52 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
 
     cert_sel = certificados[0]
     num_fila = cert_sel['fila']
-    link_pdf = cert_sel.get('link_pdf') or cert_sel.get('raw_pdf')
+    link_pdf = cert_sel.get('link_pdf') or cert_sel.get('raw_pdf') or ""
+    link_doc = cert_sel.get('link_doc') or cert_sel.get('raw_doc') or ""
     empresa = cert_sel.get('empresa', 'EPMI S.A.C.')
     tipo_cert = cert_sel.get('tipo_cert', 'Comercialización')
-    nombre_pdf = cert_sel.get('raw_pdf') or f"CERT-{correlativo}.pdf"
+    tipo_cod = "COM" if "comercial" in str(tipo_cert).lower() else "SER"
 
-    if not link_pdf:
-        raise ValueError(f"El certificado #{correlativo} no tiene un enlace a PDF en Historial.")
+    # Construir nombre corporativo oficial para expediente con guías (-REM-TRAN-)
+    destino = str(cert_sel.get('fundo') or cert_sel.get('empresa') or '').strip().upper()
+    destino_raw = destino.split(' - ')[-1].strip()
+    destino_raw = re.sub(r'(?i)^(Av\.|Avenida|Calle|Jr\.|Jirón|Pasaje|Carretera|Panamericana)\s+', '', destino_raw).strip()
+    destino_limpio = re.sub(r'(?i)^(Planta|Fundo|Sede|Sucursal|Predio)\s+', '', destino_raw).strip().upper()
+    if not destino_limpio:
+        destino_limpio = str(cert_sel.get('empresa', '')).split()[0].upper() if cert_sel.get('empresa') else "GENERAL"
 
-    pdf_id = extraer_id_drive(link_pdf)
-    if not pdf_id:
-        raise ValueError(f"No se pudo resolver el ID de Drive del PDF para #{correlativo}.")
+    nombre_pdf = f"CERT-{tipo_cod}-{correlativo}-REM-TRAN-{destino_limpio}.pdf"
+
+    pdf_id = extraer_id_drive(link_pdf) if link_pdf else None
+    cert_pdf_bytes = None
 
     # 2. Descargar PDF existente (carátula del certificado)
-    req = drive_service.files().get_media(fileId=pdf_id, supportsAllDrives=True)
-    fh = io.BytesIO()
-    dl = MediaIoBaseDownload(fh, req)
-    done = False
-    while not done:
-        _, done = dl.next_chunk()
-    cert_pdf_bytes = fh.getvalue()
+    if pdf_id:
+        try:
+            req = drive_service.files().get_media(fileId=pdf_id, supportsAllDrives=True)
+            fh = io.BytesIO()
+            dl = MediaIoBaseDownload(fh, req)
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
+            cert_pdf_bytes = fh.getvalue()
+        except Exception as e_dl:
+            logger.warning(f"No se pudo descargar PDF previo por ID {pdf_id}: {e_dl}")
+
+    # Si Col I estaba vacía (solo se tenía certificado emitido sin guías), buscar carátula en Drive o convertir desde Word
+    if not cert_pdf_bytes:
+        caratula_nom = f"CERT-{tipo_cod}-{correlativo}-{destino_limpio}.pdf"
+        b_caratula = descargar_archivo_drive_por_id_o_nombre(caratula_nom, drive_service)
+        if b_caratula:
+            cert_pdf_bytes = b_caratula
+        elif link_doc:
+            doc_id = extraer_id_drive(link_doc)
+            if doc_id:
+                doc_bytes = descargar_plantilla_docx(doc_id, drive_service)
+                cert_pdf_bytes = convertir_docx_a_pdf(doc_bytes, drive_service)
+
+    if not cert_pdf_bytes:
+        raise ValueError(f"No se pudo recuperar el PDF o Word base para el certificado #{correlativo}.")
 
     # 3. Determinar lista de guías a buscar
     if not guias_lista:
@@ -1970,16 +2088,24 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
     out_io.seek(0)
     pdf_unificado_bytes = out_io.getvalue()
 
-    # 6. Sobrescribir in-place en Drive
-    nuevo_link = sobrescribir_o_subir_pdf_drive(
-        pdf_id, pdf_unificado_bytes, nombre_pdf, tipo_cert, empresa
-    )
+    # 6. Sobrescribir in-place o subir nuevo a Drive
+    if pdf_id:
+        nuevo_link = sobrescribir_o_subir_pdf_drive(
+            pdf_id, pdf_unificado_bytes, nombre_pdf, tipo_cert, empresa
+        )
+    else:
+        file_id_subido, nuevo_link = subir_a_drive_certificado(
+            pdf_unificado_bytes, nombre_pdf, tipo_cert, empresa, mime_type='application/pdf'
+        )
+        pdf_id = file_id_subido
 
-    # 7. Registrar auditoría en Sheets
+    # 7. Registrar auditoría y fórmula HYPERLINK en Sheets (Columna I y J)
     ahora_pe = (datetime.now(PET)).strftime("%d/%m/%Y %H:%M")
     obs_unir = f"Expediente unificado ({ahora_pe}): {len(bytes_remision)} Guía(s) Remisión, {len(bytes_transporte)} Guía(s) Transporte"
+    link_final_hist = nuevo_link or link_pdf
+    val_col_i = f'=HYPERLINK("{link_final_hist}", "{nombre_pdf}")'
     registrar_edicion_en_historial(
-        num_fila, nuevo_link or link_pdf, usuario_editor=usuario_editor,
+        num_fila, val_col_i, usuario_editor=usuario_editor,
         obs_extra=obs_unir, sheets_service=sheets_service
     )
 
@@ -1987,7 +2113,7 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
         "status": "success",
         "correlativo": correlativo,
         "fila": num_fila,
-        "pdf_link": nuevo_link or link_pdf,
+        "pdf_link": link_final_hist,
         "nombre_archivo": nombre_pdf,
         "remisiones_unidas": len(bytes_remision),
         "transportes_unidos": len(bytes_transporte),

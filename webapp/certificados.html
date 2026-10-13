@@ -551,7 +551,7 @@
         </div>
         <div class="form-group">
           <label>Tipo de Certificado</label>
-          <select id="tipoFlujo" onchange="actualizarCamposPorTipo()">
+          <select id="tipoFlujo" onchange="actualizarCamposPorTipo(); actualizarCorrelativoSugerido();">
             <option value="Comercialización">Comercialización</option>
             <option value="Disposición Final 1">Disposición Final 1</option>
             <option value="Disposición Final 2">Disposición Final 2</option>
@@ -1312,7 +1312,7 @@
           actualizarCorrelativoSugerido();
           mostrarModalExito(d.res || {
             correlativo: correlativo,
-            nombre_archivo: `CERT-${correlativo}.pdf`,
+            nombre_archivo: (d.res && d.res.nombre_archivo) ? d.res.nombre_archivo : ('CERT-' + (document.getElementById('tipoFlujo').value.includes('Comercial') ? 'COM' : 'SER') + '-' + correlativo + '.pdf'),
             cliente: cliente,
             fecha: payload.fecha_emision,
             guias: window.guiasSeleccionadasLista || []
@@ -1780,7 +1780,14 @@
       document.getElementById('modFundo').innerText = c.fundo || '-';
       document.getElementById('modFecha').innerText = c.fecha || '-';
       document.getElementById('modGuias').innerText = c.guias || '-';
-      document.getElementById('modNombrePdf').value = c.raw_pdf || `CERT-${c.correlativo}.pdf`;
+      let nombreSugerido = c.raw_pdf || '';
+      if (!nombreSugerido || nombreSugerido.startsWith('http')) {
+        const tipoCod = (c.tipo_cert && c.tipo_cert.toLowerCase().includes('comercial')) ? 'COM' : 'SER';
+        const dest = c.fundo || (c.empresa ? c.empresa.split(' ')[0] : 'DESTINO');
+        const tagRem = (c.guias && c.guias !== '-') ? '-REM-TRAN' : '';
+        nombreSugerido = `CERT-${tipoCod}-${c.correlativo}${tagRem}-${dest}.pdf`;
+      }
+      document.getElementById('modNombrePdf').value = nombreSugerido;
 
       if (c.observacion) {
         document.getElementById('modObsBox').style.display = 'block';
