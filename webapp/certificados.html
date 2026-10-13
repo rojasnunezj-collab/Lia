@@ -847,6 +847,27 @@
         .replace(/'/g, '&#039;');
     }
 
+    function limpiarNumeroGuia(val) {
+      if (!val) return '';
+      let s = String(val).trim().toUpperCase();
+      if (['', 'NONE', 'NAN', 'S/D', 'S/G', 'SIN DATOS'].includes(s)) return '';
+      s = s.replace(/^(?:GU[IÍ]A(?:\s+DE\s+REMISI[OÓ]N)?\s*(?:ELECTR[OÓ]NICA)?\s*:?\s*)/i, '');
+      s = s.replace(/(?:N[°º\.]|NUMERO|NRO\.?)\s*/i, '');
+      const m = s.match(/([A-Z0-9]{1,6})\s*[-/ ]\s*([0-9]+)/);
+      if (m) {
+        const serie = m[1].trim();
+        const num = m[2].replace(/^0+/, '') || '0';
+        return `${serie}-${num}`;
+      }
+      const m2 = s.match(/^([A-Z0-9]{4})([0-9]{1,8})$/);
+      if (m2) {
+        const serie = m2[1].trim();
+        const num = m2[2].replace(/^0+/, '') || '0';
+        return `${serie}-${num}`;
+      }
+      return s;
+    }
+
     function poblarSelectConOpciones(selectEl, opciones, valorPorDefecto = '') {
       if (!selectEl) return;
       const valPrevio = selectEl.value;
@@ -1168,7 +1189,7 @@
           agregarFilaItem({
             fecha: d.fecha || document.getElementById('fechaEmision').value,
             placa: d.vehiculo || '',
-            guia: d.serie || '',
+            guia: limpiarNumeroGuia(d.serie || it.guia || ''),
             desc: it.desc || '',
             cant: it.cant || '1',
             um: (it.um || 'KG').toUpperCase(),
@@ -1191,7 +1212,7 @@
 
       const defFecha = data?.fecha || document.getElementById('fechaEmision').value;
       const defPlaca = data?.placa || document.getElementById('placa').value;
-      const defGuia = data?.guia || '';
+      const defGuia = limpiarNumeroGuia(data?.guia || '');
       const defDesc = data?.desc || '';
       const defCant = data?.cant || '1';
       const defUm = data?.um || 'KG';
@@ -1205,7 +1226,7 @@
         <div class="form-row">
           <div class="form-group" style="flex:1;">
             <label>Guía N°</label>
-            <input type="text" class="it-guia" value="${defGuia}" placeholder="T001-0001">
+            <input type="text" class="it-guia" value="${defGuia}" placeholder="T001-1" onblur="this.value = limpiarNumeroGuia(this.value)">
           </div>
           <div class="form-group" style="flex:1;">
             <label>Placa</label>
@@ -1548,7 +1569,7 @@
         item.innerHTML = `
           <input type="checkbox" class="repo-check" id="chk-${g.uid}" data-uid="${g.uid}" ${isChecked ? 'checked' : ''} onchange="toggleSeleccionGuia(${g.uid}, this.checked)">
           <label for="chk-${g.uid}" class="repo-info" style="cursor:pointer; flex:1; margin:0; user-select:none;">
-            <div class="repo-guia">🚛 Guía: <b>${escapeHtml(g.guia)}</b></div>
+            <div class="repo-guia">🚛 Guía: <b>${escapeHtml(limpiarNumeroGuia(g.guia))}</b></div>
             <div class="repo-meta">🏢 ${escapeHtml(g.empresa)} | 📅 ${escapeHtml(g.fecha)}</div>
             <div style="margin-top:4px; display:flex; gap:6px; flex-wrap:wrap;">
               <span class="badge-dest">🌱 ${escapeHtml(g.fundo || 'General')}</span>
@@ -1613,7 +1634,7 @@
 
       // Guardar referencias globales para la bitácora y unión de expediente
       window.filasRepositorioSeleccionadas = seleccionadas.map(g => g.fila).filter(Boolean);
-      window.guiasSeleccionadasLista = seleccionadas.map(g => g.guia).filter(Boolean);
+      window.guiasSeleccionadasLista = seleccionadas.map(g => limpiarNumeroGuia(g.guia)).filter(Boolean);
 
       // Ordenar cronológicamente si es posible
       seleccionadas.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
@@ -1676,7 +1697,7 @@
         const itemsACargar = (data.items && data.items.length > 0) ? data.items : seleccionadas.map(g => ({
           fecha_origen: g.fecha || '',
           placa_origen: '',
-          guia_origen: g.guia || '',
+          guia_origen: limpiarNumeroGuia(g.guia || ''),
           desc: 'RESIDUOS RECICLABLES Y APROVECHABLES',
           cant: '1',
           um: 'KG',
@@ -1687,7 +1708,7 @@
           agregarFilaItem({
             fecha: it.fecha_origen || primera.fecha || '',
             placa: it.placa_origen || data.placa || '',
-            guia: it.guia_origen || '',
+            guia: limpiarNumeroGuia(it.guia_origen || ''),
             desc: it.desc || '',
             cant: it.cant || '1',
             um: it.um || 'KG',

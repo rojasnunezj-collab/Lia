@@ -196,6 +196,44 @@ def formatear_titulo_oficial(titulo_raw: str, tipo_cod: str = "COM") -> str:
 
     return t
 
+def limpiar_numero_guia(val: Any) -> str:
+    """
+    Limpia y estandariza el número de guía para la Mini App y Certificados,
+    eliminando ceros a la izquierda del correlativo.
+    Ejemplos:
+      'tr16-00012'        -> 'TR16-12'
+      'TR16 - N° 0004452' -> 'TR16-4452'
+      'TR01-0000026'      -> 'TR01-26'
+      'EG07 - 00000074'   -> 'EG07-74'
+      'T002-0000707'      -> 'T002-707'
+      'TO01 - 0000893'    -> 'TO01-893'
+    """
+    if not val:
+        return ""
+    s = str(val).strip().upper()
+    if s in ["", "NONE", "NAN", "S/D", "S/G", "SIN DATOS"]:
+        return ""
+
+    # Remover prefijos como GUIA DE REMISION, N°, Nº, etc.
+    s = re.sub(r'^(?:GU[IÍ]A(?:\s+DE\s+REMISI[OÓ]N)?\s*(?:ELECTR[OÓ]NICA)?\s*:?\s*)', '', s)
+    s = re.sub(r'(?:N[°º\.]|NUMERO|NRO\.?)\s*', '', s)
+
+    # Caso 1: Separador guion, barra o espacio entre serie y correlativo
+    m = re.search(r'([A-Z0-9]{1,6})\s*[-/ ]\s*([0-9]+)', s)
+    if m:
+        serie = m.group(1).strip()
+        num = m.group(2).lstrip('0') or '0'
+        return f"{serie}-{num}"
+
+    # Caso 2: Serie con 4 caracteres y correlativo numérico pegados (ej. T00100045 o TR1600012)
+    m2 = re.search(r'^([A-Z0-9]{4})([0-9]{1,8})$', s)
+    if m2:
+        serie = m2.group(1).strip()
+        num = m2.group(2).lstrip('0') or '0'
+        return f"{serie}-{num}"
+
+    return s
+
 def es_formato_guia(valor: Any) -> bool:
     """Determina si un valor tiene formato característico de Guía de Remisión."""
     if not valor:
@@ -203,15 +241,13 @@ def es_formato_guia(valor: Any) -> bool:
     s = str(valor).strip().upper()
     if s in ['', 'NONE', 'NAN', 'S/N', 'SIN DATOS']:
         return False
+    s = re.sub(r'^(?:GU[IÍ]A(?:\s+DE\s+REMISI[OÓ]N)?\s*(?:ELECTR[OÓ]NICA)?\s*:?\s*)', '', s)
+    s = re.sub(r'(?:N[°º\.]|NUMERO|NRO\.?)\s*', '', s)
     if '-' in s:
         partes = s.split('-', 1)
         serie = partes[0].strip()
         correlativo = partes[1].strip()
-        if re.match(r'^(T\d{2,3}|EG\d{2}|E\d{3}|V\d{3}|GR\d{2}|[A-Z]\d{3})$', serie) and correlativo.isdigit():
-            return True
-        if re.match(r'^\d{3,4}$', serie) and correlativo.isdigit():
-            return True
-        if re.match(r'^[A-Z0-9]{3,4}$', serie) and correlativo.isdigit() and len(correlativo) >= 4:
+        if re.match(r'^(T\d{2,3}|EG\d{2}|E\d{3}|V\d{3}|GR\d{2}|TR\d{2}|TO\d{2}|[A-Z0-9]{2,6})$', serie) and correlativo.isdigit():
             return True
     return False
 
@@ -225,7 +261,7 @@ def es_formato_placa(valor: Any) -> bool:
     s_limpio = s.replace('-', '').replace(' ', '')
     if len(s_limpio) not in [5, 6]:
         return False
-    if re.match(r'^(T\d{3}|EG\d{2}|E\d{3}|V\d{3}|GR\d{2})$', s_limpio[:4]):
+    if re.match(r'^(T\d{3}|EG\d{2}|E\d{3}|V\d{3}|GR\d{2}|TR\d{2}|TO\d{2})$', s_limpio[:4]):
         return False
     if re.match(r'^[A-Z0-9]{3}[A-Z0-9]{3}$', s_limpio):
         tiene_letras = bool(re.search(r'[A-Z]', s_limpio))
@@ -597,7 +633,7 @@ def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]])
             vals = [
                 str(item.get('fecha_origen', '')),
                 str(item.get('placa_origen', '')),
-                str(item.get('guia_origen', '')),
+                limpiar_numero_guia(item.get('guia_origen', '')),
                 str(item.get('desc', '')),
                 str(item.get('cant', '')),
                 str(item.get('um', '')).upper(),
@@ -774,6 +810,8 @@ def procesar_guia_ia_vertex(pdf_bytes: bytes) -> Optional[Dict[str, Any]]:
                     )
                     datos = json.loads(response.text)
                     if datos.get("destinatario") or len(datos.get("vehiculo", "")) >= 3 or datos.get("cliente"):
+                        if datos.get("serie"):
+                            datos["serie"] = limpiar_numero_guia(datos["serie"])
                         return datos
                 except Exception as e:
                     if "404" not in str(e):
@@ -1483,8 +1521,8 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     )
 
     # 9. Extraer guías consolidadas para la bitácora
-    guias_lista = [str(it.get('guia_origen', '')).strip().upper() for it in items if str(it.get('guia_origen', '')).strip()]
-    val_guia_completa = ", ".join(sorted(list(set(guias_lista)))) if guias_lista else str(payload.get('guia', '')).strip().upper()
+    guias_lista = [limpiar_numero_guia(it.get('guia_origen', '')) for it in items if limpiar_numero_guia(it.get('guia_origen', ''))]
+    val_guia_completa = ", ".join(sorted(list(set(guias_lista)))) if guias_lista else limpiar_numero_guia(payload.get('guia', ''))
 
     val_cert = "COMERCIALIZACIÓN" if "comercializa" in str(tipo_flujo).lower() else "FINAL"
     if es_modelo:
@@ -1747,7 +1785,7 @@ def obtener_guias_pendientes_repositorio(sheets_service=None) -> List[Dict[str, 
                     "fecha": fecha_str,
                     "empresa": empresa,
                     "fundo": fundo,
-                    "guia": guia_num,
+                    "guia": limpiar_numero_guia(guia_num),
                     "tipo_guia": tipo_guia,
                     "ruc": ruc_resuelto,
                     "direccion_partida": dir_resuelta,
@@ -1778,7 +1816,7 @@ def consolidar_guias_repositorio_ocr(guias: List[Dict[str, Any]], drive_service=
 
     for g in guias:
         nombre_o_id = g.get('archivo') or g.get('link_guia') or ''
-        guia_num_fallback = g.get('guia') or g.get('numero_guia') or ''
+        guia_num_fallback = limpiar_numero_guia(g.get('guia') or g.get('numero_guia') or '')
         fecha_fallback = normalizar_fecha(g.get('fecha', ''))
 
         pdf_bytes = None
@@ -1793,7 +1831,7 @@ def consolidar_guias_repositorio_ocr(guias: List[Dict[str, Any]], drive_service=
                 logger.warning(f"Error OCR para guía '{guia_num_fallback}': {e}")
 
         if datos_ocr:
-            s = datos_ocr.get('serie') or guia_num_fallback
+            s = limpiar_numero_guia(datos_ocr.get('serie') or guia_num_fallback)
             f = normalizar_fecha(datos_ocr.get('fecha') or fecha_fallback)
             p = str(datos_ocr.get('vehiculo', '')).strip().upper()
 
