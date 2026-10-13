@@ -151,6 +151,51 @@ def limpiar_descripcion(texto: Any) -> str:
         return ""
     return re.sub(r'VEN\s*-\s*AMB\s*-\s*', '', str(texto).strip(), flags=re.IGNORECASE).strip().upper()
 
+def formatear_titulo_oficial(titulo_raw: str, tipo_cod: str = "COM") -> str:
+    """
+    Formatea el título del certificado con el salto de línea oficial (\n)
+    para que docxtpl inyecte <w:br/> y se renderice en Word/PDF en dos líneas
+    perfectamente balanceadas y centradas con la tipografía corporativa.
+    """
+    t = str(titulo_raw or "").strip()
+    if not t or t.upper() in ["S/D", "NONE", "CERTIFICADO DE OPERACIÓN", "CERTIFICADO DE OPERACION"]:
+        if tipo_cod == "COM":
+            return "CERTIFICADO DE RECOLECCIÓN, TRANSPORTE Y \nCOMERCIALIZACIÓN DE RESIDUOS SÓLIDOS"
+        else:
+            return "CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE \nDE RESIDUOS SÓLIDOS PELIGROSOS"
+
+    if "\n" in t:
+        return t.replace("\r", "").strip()
+
+    t_norm = normalizar_texto_sin_tildes(t).upper()
+
+    if "COMERCIALIZACION" in t_norm:
+        m = re.search(r'(CERTIFICADO DE RECOLECCI[OÓ]N,\s*TRANSPORTE\s+Y)\s+(COMERCIALIZACI[OÓ]N.*)', t, re.IGNORECASE)
+        if m:
+            return f"{m.group(1).strip()} \n{m.group(2).strip()}"
+        return "CERTIFICADO DE RECOLECCIÓN, TRANSPORTE Y \nCOMERCIALIZACIÓN DE RESIDUOS SÓLIDOS"
+
+    if "PELIGROSO" in t_norm and "NO PELIGROSO" not in t_norm:
+        m = re.search(r'(CERTIFICADO DE RECOLECCI[OÓ]N\s+Y\s+TRANSPORTE)\s+(DE\s+RESIDUOS.*)', t, re.IGNORECASE)
+        if m:
+            return f"{m.group(1).strip()} \n{m.group(2).strip()}"
+        return "CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE \nDE RESIDUOS SÓLIDOS PELIGROSOS"
+
+    if "NO PELIGROSO" in t_norm:
+        m = re.search(r'(CERTIFICADO DE RECOLECCI[OÓ]N\s+Y\s+TRANSPORTE)\s+(DE\s+RESIDUOS.*)', t, re.IGNORECASE)
+        if m:
+            return f"{m.group(1).strip()} \n{m.group(2).strip()}"
+        return "CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE \nDE RESIDUOS SÓLIDOS NO PELIGROSOS"
+
+    if "TRANSPORTE Y" in t.upper():
+        idx = t.upper().find("TRANSPORTE Y") + len("TRANSPORTE Y")
+        return f"{t[:idx].strip()} \n{t[idx:].strip()}"
+    elif "TRANSPORTE" in t.upper() and "DE RESIDUOS" in t.upper():
+        idx = t.upper().find("TRANSPORTE") + len("TRANSPORTE")
+        return f"{t[:idx].strip()} \n{t[idx:].strip()}"
+
+    return t
+
 def es_formato_guia(valor: Any) -> bool:
     """Determina si un valor tiene formato característico de Guía de Remisión."""
     if not valor:
@@ -814,12 +859,23 @@ def obtener_catalogo_servicios(sheets_service=None) -> Dict[str, Dict[str, List[
                 continue
 
             if seccion_actual in secciones:
-                if c0_clean and c0_clean not in secciones[seccion_actual]["titulos"]:
-                    secciones[seccion_actual]["titulos"].append(c0_clean)
+                if c0:
+                    tipo_sec = "COM" if seccion_actual == "COMERCIALIZACION" else "SER"
+                    c0_fmt = formatear_titulo_oficial(c0, tipo_cod=tipo_sec)
+                    if c0_fmt and c0_fmt not in secciones[seccion_actual]["titulos"]:
+                        secciones[seccion_actual]["titulos"].append(c0_fmt)
                 if c1_clean and c1_clean not in secciones[seccion_actual]["servicios"]:
                     secciones[seccion_actual]["servicios"].append(c1_clean)
                 if c2_clean and c2_clean not in secciones[seccion_actual]["residuos"]:
                     secciones[seccion_actual]["residuos"].append(c2_clean)
+
+        for sec, default_t in [
+            ("COMERCIALIZACION", "CERTIFICADO DE RECOLECCIÓN, TRANSPORTE Y \nCOMERCIALIZACIÓN DE RESIDUOS SÓLIDOS"),
+            ("SERVICIOS", "CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE \nDE RESIDUOS SÓLIDOS PELIGROSOS")
+        ]:
+            if not secciones[sec]["titulos"]:
+                secciones[sec]["titulos"].append(default_t)
+
         return secciones
     except Exception as e:
         logger.error(f"Error leyendo pestaña SERVICIOS: {e}")
@@ -1291,8 +1347,8 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     def_residuos = cat_servicios.get(sec_key, {}).get("residuos", [])
 
     fallback_tit = def_titulos[0] if def_titulos else (
-        "CERTIFICADO DE RECOLECCIÓN, TRANSPORTE Y COMERCIALIZACIÓN DE RESIDUOS SÓLIDOS" if tipo_cod == "COM" 
-        else "CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE DE RESIDUOS SÓLIDOS PELIGROSOS"
+        "CERTIFICADO DE RECOLECCIÓN, TRANSPORTE Y \nCOMERCIALIZACIÓN DE RESIDUOS SÓLIDOS" if tipo_cod == "COM" 
+        else "CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE \nDE RESIDUOS SÓLIDOS PELIGROSOS"
     )
     fallback_serv = def_servicios[0] if def_servicios else (
         "RECOLECCIÓN, TRANSPORTE Y COMERCIALIZACIÓN DE RESIDUOS SÓLIDOS" if tipo_cod == "COM"
@@ -1307,10 +1363,11 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     v_corr = str(payload.get("correlativo", "")).strip()
 
     v_tit_raw = str(payload.get("titulo", "")).strip()
-    if not v_tit_raw or v_tit_raw.upper() in ["S/D", "NONE", "CERTIFICADO DE OPERACIÓN"]:
+    if not v_tit_raw or v_tit_raw.upper() in ["S/D", "NONE", "CERTIFICADO DE OPERACIÓN", "CERTIFICADO DE OPERACION"]:
         v_tit = fallback_tit
     else:
         v_tit = v_tit_raw
+    v_tit = formatear_titulo_oficial(v_tit, tipo_cod=tipo_cod)
 
     v_cli = str(payload.get("cliente", "")).strip()
     v_ruc_c = str(payload.get("ruc_cliente", "")).strip()

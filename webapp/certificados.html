@@ -886,8 +886,8 @@
       const optsRes = actualRes.concat(otroRes.filter(x => !actualRes.includes(x)));
 
       const defTit = optsTit[0] || (esCom 
-        ? 'CERTIFICADO DE RECOLECCIÓN, TRANSPORTE Y COMERCIALIZACIÓN DE RESIDUOS SÓLIDOS' 
-        : 'CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE DE RESIDUOS SÓLIDOS PELIGROSOS');
+        ? 'CERTIFICADO DE RECOLECCIÓN, TRANSPORTE Y \nCOMERCIALIZACIÓN DE RESIDUOS SÓLIDOS' 
+        : 'CERTIFICADO DE RECOLECCIÓN Y TRANSPORTE \nDE RESIDUOS SÓLIDOS PELIGROSOS');
 
       const defServ = optsServ[0] || (esCom 
         ? 'RECOLECCIÓN, TRANSPORTE Y COMERCIALIZACIÓN DE RESIDUOS SÓLIDOS' 
@@ -1158,6 +1158,7 @@
       const elLlegada = document.getElementById('puntoLlegada');
       if (elLlegada && d.punto_llegada) elLlegada.value = d.punto_llegada;
       if (d.fecha) document.getElementById('fechaEmision').value = d.fecha;
+      if (d.titulo && document.getElementById('tituloCert')) document.getElementById('tituloCert').value = d.titulo;
 
       // Cargar ítems
       const container = document.getElementById('itemsContainer');
