@@ -314,14 +314,16 @@ def extraer_id_drive(valor: Any) -> Optional[str]:
 def parsear_celda_enlace_o_nombre(valor: Any) -> Tuple[str, str]:
     """
     Retorna (url, nombre_archivo) a partir de:
-    - =HYPERLINK("url", "nombre")
+    - =HYPERLINK("url"; "nombre") o =HYPERLINK("url", "nombre")
     - URL cruda (https://...)
     - Nombre de archivo plano (CERT-COM-...)
     """
     if not valor:
         return "", ""
     s = str(valor).strip()
-    m = re.search(r'=HYPERLINK\(\s*"([^"]+)"\s*(?:,\s*"([^"]+)")?\s*\)', s, re.IGNORECASE)
+    if s.startswith('#'):
+        return "", ""
+    m = re.search(r'=HYPERLINK\(\s*"([^"]+)"\s*(?:[;,]\s*"([^"]+)")?\s*\)', s, re.IGNORECASE)
     if m:
         url = m.group(1).strip()
         nombre = m.group(2).strip() if m.group(2) else ""
@@ -334,8 +336,11 @@ def obtener_link_archivo_drive(servicio_drive, nombre_o_id: str) -> Optional[str
     """Obtiene webViewLink público/corporativo para un archivo por ID o nombre."""
     if not servicio_drive or not nombre_o_id:
         return None
+    s_nom = str(nombre_o_id).strip()
+    if s_nom.startswith('#') or s_nom.upper() in ['#ERROR!', '#REF!', '#VALUE!', '#N/A']:
+        return None
     try:
-        f_id = extraer_id_drive(nombre_o_id)
+        f_id = extraer_id_drive(s_nom)
         if f_id:
             try:
                 meta = servicio_drive.files().get(
@@ -346,14 +351,14 @@ def obtener_link_archivo_drive(servicio_drive, nombre_o_id: str) -> Optional[str
             except Exception:
                 pass
 
-        query = f"name contains '{nombre_o_id}' and trashed = false"
+        query = f"name contains '{s_nom}' and trashed = false"
         res = servicio_drive.files().list(
             q=query, spaces='drive', fields='files(id, webViewLink)', supportsAllDrives=True
         ).execute()
         files = res.get('files', [])
         return files[0].get('webViewLink') if files else None
     except Exception as e:
-        logger.error(f"Error resolviendo link en Drive para '{nombre_o_id}': {e}")
+        logger.error(f"Error resolviendo link en Drive para '{s_nom}': {e}")
         return None
 
 def descargar_archivo_drive_por_id_o_nombre(nombre_o_id: str, drive_service=None) -> Optional[bytes]:
@@ -361,6 +366,11 @@ def descargar_archivo_drive_por_id_o_nombre(nombre_o_id: str, drive_service=None
     Descarga el contenido binario de un archivo de Google Drive
     identificado por ID, URL o nombre de archivo.
     """
+    if not nombre_o_id:
+        return None
+    s_id = str(nombre_o_id).strip()
+    if s_id.startswith('#') or s_id.upper() in ['#ERROR!', '#REF!', '#VALUE!', '#N/A']:
+        return None
     if not drive_service:
         drive_service, _ = obtener_servicios_google()
     if not nombre_o_id:
@@ -467,11 +477,11 @@ def _set_table_margins(table, top=72, bottom=72, left=30, right=30):
 
 def ajustar_posicion_y_tamano_firmas(doc: Document, num_items: int) -> None:
     """
-    Ajusta dinámicamente las firmas en la plantilla Word (.docx) para que se acomoden
-    de forma limpia entre el último párrafo y el pie de página, evitando que se bajen
-    y se sobrepongan al pie de página. Si el espacio físico no fuera suficiente
-    (por una tabla inusualmente extensa), se mantiene una escala legible mínima
-    para permitir edición manual.
+    Ajusta las firmas en la plantilla Word (.docx) basándose en la calibración exacta
+    del Certificado 219 (1 sola página, espacio limpio entre texto final y firmas,
+    sin sobreponerse al pie de página).
+    - Firma 1 (Izquierda / EPMI / Gerente Operaciones): cx=1317021 (~3.66 cm), cy=881554 (~2.45 cm), posH=1695450, posV=400050 (~31.5 pt)
+    - Firma 2 (Derecha / INECOVE / Resp. Técnico):     cx=1529258 (~4.25 cm), cy=953304 (~2.65 cm), posH=3409950, posV=361187 (~28.4 pt)
     """
     try:
         # 1. Localizar el párrafo de firmas (buscando desde el final hacia arriba)
@@ -530,63 +540,106 @@ def ajustar_posicion_y_tamano_firmas(doc: Document, num_items: int) -> None:
             except Exception:
                 pass
 
-        # 4. Compactar espaciado del párrafo de firmas
+        # 4. Ajustar párrafo de texto final inmediatamente anterior ("Se realizó la RECOLECCIÓN...")
+        # Calibración Certificado 219: espacio posterior = 0 pt, interlineado = 1.15
+        p_prev = None
+        for i in range(sig_idx - 1, -1, -1):
+            p = doc.paragraphs[i]
+            if p.text.strip():
+                p_prev = p
+                break
+        if p_prev is not None:
+            p_prev.paragraph_format.space_after = Pt(0)
+            p_prev.paragraph_format.line_spacing = 1.15
+
+        # 5. Compactar espaciado del párrafo contenedor de firmas
+        # Calibración Certificado 219: space_before = 0 pt, space_after = 0 pt, line_spacing = 1.0
         sig_p.paragraph_format.space_before = Pt(0)
         sig_p.paragraph_format.space_after = Pt(0)
         sig_p.paragraph_format.line_spacing = 1.0
 
-        # Si hay varios ítems (>= 4), compactar párrafos vacíos intermedios anteriores
-        if num_items >= 4:
+        # Si hay muchos ítems (>= 6), compactar párrafos vacíos intermedios
+        if num_items >= 6:
             for p in doc.paragraphs:
                 if not p.text.strip() and not p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing'):
                     p.paragraph_format.space_before = Pt(0)
                     p.paragraph_format.space_after = Pt(0)
-                    p.paragraph_format.line_spacing = Pt(3)
+                    p.paragraph_format.line_spacing = Pt(2)
 
-        # 5. Escala y desplazamiento vertical adaptativo según el número de filas
-        if num_items <= 1:
+        # 6. Calibración exacta de dimensiones y posiciones de firmas basada en Certificado 219:
+        # Firma 1 (Izquierda / EPMI): cx=1317021, cy=881554, posH=1695450, posV=400050
+        # Firma 2 (Derecha / INECOVE): cx=1529258, cy=953304, posH=3409950, posV=361187
+        F1_CX, F1_CY, F1_POS_H, F1_POS_V = 1317021, 881554, 1695450, 400050
+        F2_CX, F2_CY, F2_POS_H, F2_POS_V = 1529258, 953304, 3409950, 361187
+
+        # Escalamiento suave solo si la tabla tiene más de 5 ítems para garantizar 1 página
+        if num_items <= 5:
             scale = 1.0
-            offset_v = 100000  # ~7.8 pt
-        elif num_items == 2:
-            scale = 0.90
-            offset_v = 70000   # ~5.5 pt
-        elif num_items <= 4:
-            scale = 0.82
-            offset_v = 50000   # ~3.9 pt
-        elif num_items <= 6:
-            scale = 0.74
-            offset_v = 30000   # ~2.3 pt
+        elif num_items == 6:
+            scale = 0.95
         else:
-            # 7 o más ítems: escala mínima 0.68 para no comprometer legibilidad
-            scale = 0.68
-            offset_v = 15000   # ~1.2 pt
+            scale = max(0.72, 1.0 - (num_items - 5) * 0.05)
 
-        # 6. Aplicar ajustes en el XML de las firmas
+        # 7. Obtener dibujos válidos de firma en el párrafo y ordenarlos de izquierda a derecha (posH)
         drawings = sig_p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
+        valid_drawings = []
         for d in drawings:
+            ext = d.find('.//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent')
+            if ext is not None:
+                try:
+                    cy = int(ext.get('cy', 0))
+                    if 254000 < cy < 4000000:
+                        valid_drawings.append(d)
+                except (ValueError, TypeError):
+                    pass
+
+        def _get_pos_h_val(d_elem) -> int:
+            posH_elem = d_elem.find('.//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}positionH')
+            if posH_elem is not None:
+                posOff = posH_elem.find('{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}posOffset')
+                if posOff is not None:
+                    try:
+                        return int(posOff.text)
+                    except (ValueError, TypeError):
+                        pass
+            return 0
+
+        valid_drawings.sort(key=_get_pos_h_val)
+
+        specs = [
+            {'cx': int(F1_CX * scale), 'cy': int(F1_CY * scale), 'posH': F1_POS_H, 'posV': int(F1_POS_V * scale)},
+            {'cx': int(F2_CX * scale), 'cy': int(F2_CY * scale), 'posH': F2_POS_H, 'posV': int(F2_POS_V * scale)}
+        ]
+
+        for idx_d, d in enumerate(valid_drawings):
+            spec = specs[idx_d] if idx_d < len(specs) else specs[-1]
+
             # Eliminar márgenes de envoltura en anchor
             for anchor in d.findall('.//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}anchor'):
                 anchor.set('distT', '0')
                 anchor.set('distB', '0')
+                anchor.set('distL', '114300')
+                anchor.set('distR', '114300')
 
-            # Ajustar posición vertical respecto al párrafo
+            # Posición horizontal fija calibrada
+            posH = d.find('.//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}positionH')
+            if posH is not None:
+                posOffsetH = posH.find('{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}posOffset')
+                if posOffsetH is not None:
+                    posOffsetH.text = str(spec['posH'])
+
+            # Posición vertical fija respecto al párrafo
             posV = d.find('.//{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}positionV')
             if posV is not None:
-                posOffset = posV.find('{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}posOffset')
-                if posOffset is not None:
-                    posOffset.text = str(offset_v)
+                posOffsetV = posV.find('{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}posOffset')
+                if posOffsetV is not None:
+                    posOffsetV.text = str(spec['posV'])
 
-            # Escalar dimensiones manteniendo la relación de aspecto
-            if scale < 1.0:
-                for el in d.iter():
-                    if 'cx' in el.attrib and 'cy' in el.attrib:
-                        try:
-                            cx = int(el.attrib['cx'])
-                            cy = int(el.attrib['cy'])
-                            el.attrib['cx'] = str(int(cx * scale))
-                            el.attrib['cy'] = str(int(cy * scale))
-                        except (ValueError, TypeError):
-                            pass
+            # Ajustar dimensiones exactas en todos los elementos con cx y cy
+            for el in d.iter():
+                if 'cx' in el.attrib and 'cy' in el.attrib:
+                    el.attrib['cx'] = str(spec['cx'])
+                    el.attrib['cy'] = str(spec['cy'])
 
     except Exception as e:
         logger.warning(f"Aviso en ajuste de firmas: {e}")
@@ -1283,7 +1336,8 @@ def buscar_datos_certificado_en_historial(correlativo: str, sheets_service=None,
 
     try:
         res = sheets_service.spreadsheets().values().get(
-            spreadsheetId=ID_SHEET_CONTROL, range="'historial'!A:J"
+            spreadsheetId=ID_SHEET_CONTROL, range="'historial'!A:J",
+            valueRenderOption="FORMULA"
         ).execute()
         filas = res.get('values', [])
         if len(filas) < 2:
@@ -1295,7 +1349,7 @@ def buscar_datos_certificado_en_historial(correlativo: str, sheets_service=None,
 
         for idx, row in enumerate(filas[1:]):
             num_fila = idx + 2
-            corr_row = str(row[3]).strip().upper() if len(row) > 3 else ""
+            corr_row = str(row[3]).strip().upper().replace('=', '').replace('"', '') if len(row) > 3 else ""
 
             match = False
             if corr_row and corr_row == corr_query:
@@ -1620,9 +1674,9 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
         val_cert = f"M-{val_cert[:3]}"
 
     # Regla: cuando solo se tiene certificado va en columna H, y cuando se juntan certificado y guias va el PDF en columna I
-    val_col_h = f'=HYPERLINK("{link_doc}", "{nombre_docx}")' if link_doc else nombre_docx
+    val_col_h = f'=HYPERLINK("{link_doc}"; "{nombre_docx}")' if link_doc else nombre_docx
     if tiene_guias:
-        val_col_i = f'=HYPERLINK("{link_pdf}", "{nombre_pdf}")' if link_pdf else nombre_pdf
+        val_col_i = f'=HYPERLINK("{link_pdf}"; "{nombre_pdf}")' if link_pdf else nombre_pdf
     else:
         val_col_i = ""
 
@@ -1776,7 +1830,7 @@ def procesar_regeneracion_expediente(
 
     # 7. Registrar auditoría en Sheets con fórmula HYPERLINK
     link_para_historial = nuevo_link_drive or link_pdf
-    val_col_i = f'=HYPERLINK("{link_para_historial}", "{nombre_final}")'
+    val_col_i = f'=HYPERLINK("{link_para_historial}"; "{nombre_final}")'
     registrar_edicion_en_historial(
         num_fila, val_col_i, usuario_editor=usuario_editor,
         obs_extra=obs_extra, sheets_service=sheets_service
@@ -2209,9 +2263,25 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
 
     pdf_id = extraer_id_drive(link_pdf) if link_pdf else None
     cert_pdf_bytes = None
+    es_desde_docx = False
 
-    # 2. Descargar PDF existente (carátula del certificado)
-    if pdf_id:
+    # 2. Descargar y preparar carátula del certificado:
+    # Prioridad 1: Si existe link_doc (Word en Google Drive), descargar el Word editado y convertirlo a PDF.
+    # Esto asegura que cualquier modificación realizada al certificado en Drive se refleje fielmente en el expediente final.
+    if link_doc:
+        doc_id = extraer_id_drive(link_doc)
+        if doc_id:
+            try:
+                doc_bytes = descargar_plantilla_docx(doc_id, drive_service)
+                if doc_bytes:
+                    cert_pdf_bytes = convertir_docx_a_pdf(doc_bytes, drive_service)
+                    if cert_pdf_bytes:
+                        es_desde_docx = True
+            except Exception as e_docx:
+                logger.warning(f"No se pudo convertir Word editado {doc_id} a PDF: {e_docx}")
+
+    # Prioridad 2: Si no se pudo obtener desde Word, descargar el PDF existente de Drive
+    if not cert_pdf_bytes and pdf_id:
         try:
             req = drive_service.files().get_media(fileId=pdf_id, supportsAllDrives=True)
             fh = io.BytesIO()
@@ -2223,17 +2293,12 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
         except Exception as e_dl:
             logger.warning(f"No se pudo descargar PDF previo por ID {pdf_id}: {e_dl}")
 
-    # Si Col I estaba vacía (solo se tenía certificado emitido sin guías), buscar carátula en Drive o convertir desde Word
+    # Prioridad 3: Buscar carátula por nombre estándar en Drive
     if not cert_pdf_bytes:
         caratula_nom = f"CERT-{tipo_cod}-{correlativo}-{destino_limpio}.pdf"
         b_caratula = descargar_archivo_drive_por_id_o_nombre(caratula_nom, drive_service)
         if b_caratula:
             cert_pdf_bytes = b_caratula
-        elif link_doc:
-            doc_id = extraer_id_drive(link_doc)
-            if doc_id:
-                doc_bytes = descargar_plantilla_docx(doc_id, drive_service)
-                cert_pdf_bytes = convertir_docx_a_pdf(doc_bytes, drive_service)
 
     if not cert_pdf_bytes:
         raise ValueError(f"No se pudo recuperar el PDF o Word base para el certificado #{correlativo}.")
@@ -2265,12 +2330,15 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
         raise ValueError(f"No se encontraron archivos PDF de guías asociados en Drive para las guías: {', '.join(guias_lista)}")
 
     # 5. Unir con PdfWriter:
-    # Página 1: Carátula del Certificado
+    # Carátula del Certificado (si provino de Word editado incluye todas sus páginas; si provino de PDF previo se toma la página 1)
     # Páginas intermedias: Guías de Remisión
     # Páginas finales: Guías de Transporte
     writer = PdfWriter()
     reader_cert = PdfReader(io.BytesIO(cert_pdf_bytes))
-    if len(reader_cert.pages) > 0:
+    if es_desde_docx:
+        for p in reader_cert.pages:
+            writer.add_page(p)
+    elif len(reader_cert.pages) > 0:
         writer.add_page(reader_cert.pages[0])
 
     for b_rem in bytes_remision:
@@ -2308,7 +2376,7 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
     # 7. Registrar auditoría y fórmula HYPERLINK en Sheets (Columna I y J)
     obs_unir = f"Expediente unificado: {len(bytes_remision)} Guía(s) Remisión, {len(bytes_transporte)} Guía(s) Transporte"
     link_final_hist = nuevo_link or link_pdf
-    val_col_i = f'=HYPERLINK("{link_final_hist}", "{nombre_pdf}")'
+    val_col_i = f'=HYPERLINK("{link_final_hist}"; "{nombre_pdf}")'
     registrar_edicion_en_historial(
         num_fila, val_col_i, usuario_editor=usuario_editor,
         obs_extra=obs_unir, sheets_service=sheets_service
