@@ -1795,7 +1795,7 @@ def procesar_regeneracion_expediente(
     done = False
     while not done:
         _, done = dl.next_chunk()
-    pdf_unido_existente_bytes = fh.getvalue()
+    pdf_unificado_existente_bytes = fh.getvalue()
 
     # 4. Sustitución quirúrgica de la carátula
     pdf_actualizado_bytes = sustituir_certificado_en_pdf(
