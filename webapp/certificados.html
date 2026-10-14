@@ -865,13 +865,28 @@
       if (['', 'NONE', 'NAN', 'S/D', 'S/G', 'SIN DATOS'].includes(s)) return '';
       s = s.replace(/^(?:GU[IÍ]A(?:\s+DE\s+REMISI[OÓ]N)?\s*(?:ELECTR[OÓ]NICA)?\s*:?\s*)/i, '');
       s = s.replace(/(?:N[°º\.]|NUMERO|NRO\.?)\s*/i, '');
-      const m = s.match(/([A-Z0-9]{1,6})\s*[-/ ]\s*([0-9]+)/);
-      if (m) {
-        const serie = m[1].trim();
-        const num = m[2].replace(/^0+/, '') || '0';
-        return `${serie}-${num}`;
+
+      // Si no tiene dígitos (ej. 'SIN GUIA', 'NO TIENE', 'BALANZA'), conservar texto
+      if (!/\d/.test(s)) {
+        return s;
       }
-      const m2 = s.match(/^([A-Z0-9]{4})([0-9]{1,8})$/);
+
+      // Si son exclusivamente dígitos
+      if (/^\d+$/.test(s)) {
+        return s.replace(/^0+/, '') || '0';
+      }
+
+      // Normalizar separadores (- o /) y espacios entre serie y correlativo
+      let sNorm = s.replace(/\s*[-/]\s*/g, '-');
+      sNorm = sNorm.replace(/([A-Z0-9]+)\s+([0-9]+)/g, '$1-$2');
+      if (sNorm.includes('-')) {
+        const partes = sNorm.split('-');
+        const partesNorm = partes.map(p => p.replace(/^0+/, '') || '0');
+        return partesNorm.join('-');
+      }
+
+      // Caso serie de 4 caracteres alfanumérica con letras al inicio y correlativo pegado
+      const m2 = s.match(/^([A-Z][A-Z0-9]{3})([0-9]+)$/);
       if (m2) {
         const serie = m2[1].trim();
         const num = m2[2].replace(/^0+/, '') || '0';
@@ -1286,7 +1301,7 @@
         <div class="form-row">
           <div class="form-group" style="flex:1;">
             <label>Guía N°</label>
-            <input type="text" class="it-guia" value="${defGuia}" placeholder="T001-1" onblur="this.value = limpiarNumeroGuia(this.value)">
+            <input type="text" class="it-guia" value="${defGuia}" placeholder="T001-1" onblur="this.value = limpiarNumeroGuia(this.value)" onchange="this.value = limpiarNumeroGuia(this.value)">
           </div>
           <div class="form-group" style="flex:1;">
             <label>Placa</label>
@@ -1363,7 +1378,7 @@
           items.push({
             fecha_origen: document.getElementById('fechaEmision').value,
             placa_origen: c.querySelector('.it-placa')?.value || '',
-            guia_origen: c.querySelector('.it-guia')?.value || '',
+            guia_origen: limpiarNumeroGuia(c.querySelector('.it-guia')?.value || ''),
             desc: c.querySelector('.it-desc')?.value || '',
             cant: c.querySelector('.it-cant')?.value || '1',
             um: c.querySelector('.it-um')?.value || 'KG',

@@ -199,7 +199,7 @@ def formatear_titulo_oficial(titulo_raw: str, tipo_cod: str = "COM") -> str:
 def limpiar_numero_guia(val: Any) -> str:
     """
     Limpia y estandariza el número de guía para la Mini App y Certificados,
-    eliminando ceros a la izquierda del correlativo.
+    eliminando ceros a la izquierda del correlativo y de la serie si aplica.
     Ejemplos:
       'tr16-00012'        -> 'TR16-12'
       'TR16 - N° 0004452' -> 'TR16-4452'
@@ -207,6 +207,10 @@ def limpiar_numero_guia(val: Any) -> str:
       'EG07 - 00000074'   -> 'EG07-74'
       'T002-0000707'      -> 'T002-707'
       'TO01 - 0000893'    -> 'TO01-893'
+      '016-5809'          -> '16-5809'
+      '001-2607-0005'     -> '1-2607-5'
+      '0005530'           -> '5530'
+      'TR1600012'         -> 'TR16-12'
     """
     if not val:
         return ""
@@ -218,15 +222,25 @@ def limpiar_numero_guia(val: Any) -> str:
     s = re.sub(r'^(?:GU[IÍ]A(?:\s+DE\s+REMISI[OÓ]N)?\s*(?:ELECTR[OÓ]NICA)?\s*:?\s*)', '', s)
     s = re.sub(r'(?:N[°º\.]|NUMERO|NRO\.?)\s*', '', s)
 
-    # Caso 1: Separador guion, barra o espacio entre serie y correlativo
-    m = re.search(r'([A-Z0-9]{1,6})\s*[-/ ]\s*([0-9]+)', s)
-    if m:
-        serie = m.group(1).strip()
-        num = m.group(2).lstrip('0') or '0'
-        return f"{serie}-{num}"
+    # Si no tiene dígitos (ej. 'SIN GUIA', 'NO TIENE', 'BALANZA'), conservar texto
+    if not any(c.isdigit() for c in s):
+        return s
 
-    # Caso 2: Serie con 4 caracteres y correlativo numérico pegados (ej. T00100045 o TR1600012)
-    m2 = re.search(r'^([A-Z0-9]{4})([0-9]{1,8})$', s)
+    # Si son exclusivamente dígitos
+    if s.isdigit():
+        return s.lstrip('0') or '0'
+
+    # Normalizar separadores (- o /) y espacios entre serie y correlativo
+    s_norm = re.sub(r'\s*[-/]\s*', '-', s)
+    s_norm = re.sub(r'([A-Z0-9]+)\s+([0-9]+)', r'\1-\2', s_norm)
+
+    if '-' in s_norm:
+        partes = s_norm.split('-')
+        partes_norm = [p.lstrip('0') or '0' for p in partes]
+        return "-".join(partes_norm)
+
+    # Caso: Serie alfanumérica de 4 caracteres con letras iniciales y correlativo pegado (ej. TR1600012 o T00100045)
+    m2 = re.match(r'^([A-Z][A-Z0-9]{3})([0-9]+)$', s)
     if m2:
         serie = m2.group(1).strip()
         num = m2.group(2).lstrip('0') or '0'
@@ -1934,6 +1948,7 @@ def consolidar_guias_repositorio_ocr(guias: List[Dict[str, Any]], drive_service=
             # Auto-corrección si Vertex invirtió serie y placa
             if es_formato_placa(s) and es_formato_guia(p):
                 s, p = p, s
+                s = limpiar_numero_guia(s)
 
             if p and p not in placas:
                 placas.append(p)
