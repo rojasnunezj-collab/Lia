@@ -27,6 +27,9 @@ from config.settings import (
     MODO_COTIZACION_BUSCAR, MODO_COTIZACION_IA,
     MODO_FACTURAS_REGISTRAR, MODO_FACTURAS_BUSCAR,
     MODO_PENDIENTE_ADD, MODO_CREDENCIAL_BUSCAR,
+    MODO_FLOTA_CAMION_ADD, MODO_FLOTA_CAMION_BUSCAR,
+    MODO_FLOTA_CONDUCTOR_ADD, MODO_FLOTA_CONDUCTOR_BUSCAR,
+    WEBAPP_FLOTA_URL,
     DRIVE_FOLDER_LEER, DRIVE_FOLDER_FACTURAS
 )
 from utils.helpers import clean_json_response, async_log_action, load_memoria_vinculacion, save_memoria_vinculacion, match_company_flexible
@@ -62,6 +65,11 @@ from core.pendientes_service import (
 from core.credenciales_service import (
     async_obtener_credenciales, async_guardar_credencial,
     obtener_url_webapp_credenciales
+)
+from core.flota_service import (
+    listar_camiones, obtener_camion, guardar_camion, eliminar_camion,
+    listar_conductores, obtener_conductor, guardar_conductor, eliminar_conductor,
+    normalizar_placa, obtener_url_webapp_flota
 )
 
 def normalize_guide_number(val):
@@ -545,7 +553,10 @@ def get_main_menu_keyboard(user_id=None):
             InlineKeyboardButton("📓 Bitácora Libre", callback_data='modo_bitacora')
         ],
         [
-            InlineKeyboardButton("🔐 Credenciales", callback_data='menu_credenciales'),
+            InlineKeyboardButton("🚛 Flota & Choferes", callback_data='menu_flota'),
+            InlineKeyboardButton("🔐 Credenciales", callback_data='menu_credenciales')
+        ],
+        [
             InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')
         ]
     ]
@@ -698,6 +709,620 @@ def build_pendiente_draft_card(draft):
         [InlineKeyboardButton("❌ Cancelar / Descartar", callback_data='pnd_cancel')]
     ]
     return msg, InlineKeyboardMarkup(kb)
+
+# ====================================================================
+# --- MÓDULO FLOTA & CONDUCTORES: FUNCIONES Y BUILDERS ---
+# ====================================================================
+def parse_camion_texto(texto: str, base_draft: dict = None) -> dict:
+    draft = dict(base_draft or {})
+    lines = texto.strip().split("\n")
+    for line in lines:
+        if ":" in line:
+            k, v = line.split(":", 1)
+            k_clean = k.strip().lower()
+            v_clean = v.strip()
+            if "placa" in k_clean:
+                draft["placa"] = normalizar_placa(v_clean)
+            elif "marca" in k_clean:
+                draft["marca"] = v_clean.upper()
+            elif "modelo" in k_clean:
+                draft["modelo"] = v_clean.upper()
+            elif "tipo" in k_clean:
+                draft["tipo"] = v_clean.capitalize()
+            elif "capacidad" in k_clean:
+                draft["capacidad"] = v_clean
+            elif "empresa" in k_clean:
+                draft["empresa"] = v_clean.upper()
+            elif "soat" in k_clean:
+                draft["soat_vence"] = v_clean
+            elif "rev" in k_clean or "tecnica" in k_clean:
+                draft["rev_tecnica_vence"] = v_clean
+            elif "estado" in k_clean:
+                draft["estado"] = v_clean.capitalize()
+            elif "obs" in k_clean or "comentario" in k_clean:
+                draft["observaciones"] = v_clean
+
+    if not draft.get("placa"):
+        m_placa = re.search(r'\b[A-Z0-9]{3}[-\s]?[A-Z0-9]{3}\b', texto.upper())
+        if m_placa:
+            draft["placa"] = normalizar_placa(m_placa.group(0))
+
+    if not draft.get("empresa"):
+        draft["empresa"] = "INECOVE S.A.C." if "INECOVE" in texto.upper() else "EPMI S.A.C."
+    if not draft.get("estado"):
+        draft["estado"] = "Activo"
+    if not draft.get("tipo"):
+        draft["tipo"] = "Furgón"
+
+    return draft
+
+def parse_conductor_texto(texto: str, base_draft: dict = None) -> dict:
+    draft = dict(base_draft or {})
+    lines = texto.strip().split("\n")
+    for line in lines:
+        if ":" in line:
+            k, v = line.split(":", 1)
+            k_clean = k.strip().lower()
+            v_clean = v.strip()
+            if "nombre" in k_clean or "chofer" in k_clean or "conductor" in k_clean:
+                draft["nombre"] = v_clean.title()
+            elif "dni" in k_clean:
+                draft["dni"] = re.sub(r'\D', '', v_clean)
+            elif "licencia" in k_clean and "vence" not in k_clean:
+                draft["licencia"] = v_clean.upper()
+            elif "cat" in k_clean:
+                draft["categoria"] = v_clean.upper()
+            elif "vence" in k_clean or "vencimiento" in k_clean:
+                draft["licencia_vence"] = v_clean
+            elif "tel" in k_clean or "cel" in k_clean or "fono" in k_clean:
+                draft["telefono"] = v_clean
+            elif "empresa" in k_clean:
+                draft["empresa"] = v_clean.upper()
+            elif "estado" in k_clean:
+                draft["estado"] = v_clean.capitalize()
+            elif "obs" in k_clean or "comentario" in k_clean:
+                draft["observaciones"] = v_clean
+
+    if not draft.get("dni"):
+        m_dni = re.search(r'\b\d{8}\b', texto)
+        if m_dni:
+            draft["dni"] = m_dni.group(0)
+
+    if not draft.get("nombre"):
+        first_line = lines[0].strip()
+        if ":" not in first_line and len(first_line) > 3:
+            draft["nombre"] = first_line.title()
+
+    if not draft.get("empresa"):
+        draft["empresa"] = "INECOVE S.A.C." if "INECOVE" in texto.upper() else "EPMI S.A.C."
+    if not draft.get("estado"):
+        draft["estado"] = "Activo"
+    if not draft.get("categoria"):
+        draft["categoria"] = "A-IIIc"
+
+    return draft
+
+def build_camion_card(c: dict, user_id=None):
+    cid = html.escape(str(c.get('id', '')))
+    placa = html.escape(str(c.get('placa', '')))
+    marca = html.escape(str(c.get('marca', '')))
+    modelo = html.escape(str(c.get('modelo', '')))
+    tipo = html.escape(str(c.get('tipo', 'Furgón')))
+    capacidad = html.escape(str(c.get('capacidad', '')))
+    empresa = html.escape(str(c.get('empresa', 'EPMI S.A.C.')))
+    soat = html.escape(str(c.get('soat_vence', '')))
+    rev = html.escape(str(c.get('rev_tecnica_vence', '')))
+    estado = html.escape(str(c.get('estado', 'Activo')))
+    obs = html.escape(str(c.get('observaciones', '')))
+
+    badge_est = "🟢" if estado == "Activo" else ("🟡" if estado == "Mantenimiento" else "🔴")
+
+    msg = (
+        f"🚛 <b>Ficha de Camión: <code>{placa}</code></b>\n\n"
+        f"🆔 <b>Código:</b> <code>{cid}</code>\n"
+        f"🏢 <b>Empresa:</b> <code>{empresa}</code>\n"
+        f"🏷️ <b>Marca / Modelo:</b> <b>{marca} {modelo}</b>\n"
+        f"📦 <b>Tipo / Capacidad:</b> {tipo} • {capacidad}\n"
+        f"📋 <b>SOAT Vence:</b> <code>{soat or 'No registrado'}</code>\n"
+        f"🔧 <b>Rev. Técnica Vence:</b> <code>{rev or 'No registrado'}</code>\n"
+        f"🚦 <b>Estado:</b> {badge_est} <b>{estado}</b>\n"
+    )
+    if obs:
+        msg += f"💡 <b>Observaciones:</b> <i>{obs}</i>\n"
+
+    kb = [
+        [InlineKeyboardButton("✏️ Editar Datos", callback_data=f"flota_edit_camion|{cid}"),
+         InlineKeyboardButton("🗑️ Eliminar Camión", callback_data=f"flota_del_camion_ask|{cid}")],
+        [InlineKeyboardButton("🔙 Volver a Lista de Camiones", callback_data="flota_list_camiones|0")]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_conductor_card(c: dict, user_id=None):
+    cid = html.escape(str(c.get('id', '')))
+    nombre = html.escape(str(c.get('nombre', '')))
+    dni = html.escape(str(c.get('dni', '')))
+    licencia = html.escape(str(c.get('licencia', '')))
+    categoria = html.escape(str(c.get('categoria', 'A-IIIc')))
+    lic_vence = html.escape(str(c.get('licencia_vence', '')))
+    telefono = html.escape(str(c.get('telefono', '')))
+    empresa = html.escape(str(c.get('empresa', 'EPMI S.A.C.')))
+    estado = html.escape(str(c.get('estado', 'Activo')))
+    obs = html.escape(str(c.get('observaciones', '')))
+
+    badge_est = "🟢" if estado == "Activo" else ("⚪" if estado == "Descanso" else "🔴")
+
+    msg = (
+        f"👨‍✈️ <b>Ficha de Conductor: {nombre}</b>\n\n"
+        f"🆔 <b>Código:</b> <code>{cid}</code>\n"
+        f"🏢 <b>Empresa:</b> <code>{empresa}</code>\n"
+        f"🪪 <b>DNI:</b> <code>{dni or 'S/D'}</code>\n"
+        f"📜 <b>Licencia:</b> <code>{licencia or 'S/D'}</code> (Cat. <b>{categoria}</b>)\n"
+        f"📅 <b>Vencimiento Licencia:</b> <code>{lic_vence or 'No registrado'}</code>\n"
+        f"📞 <b>Teléfono:</b> <code>{telefono or 'No registrado'}</code>\n"
+        f"🚦 <b>Estado:</b> {badge_est} <b>{estado}</b>\n"
+    )
+    if obs:
+        msg += f"💡 <b>Observaciones:</b> <i>{obs}</i>\n"
+
+    kb = [
+        [InlineKeyboardButton("✏️ Editar Datos", callback_data=f"flota_edit_cond|{cid}"),
+         InlineKeyboardButton("🗑️ Eliminar Conductor", callback_data=f"flota_del_cond_ask|{cid}")],
+        [InlineKeyboardButton("🔙 Volver a Lista de Conductores", callback_data="flota_list_cond|0")]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_camion_draft_card(draft: dict):
+    placa = html.escape(str(draft.get('placa', 'POR DEFINIR')))
+    marca = html.escape(str(draft.get('marca', '')))
+    modelo = html.escape(str(draft.get('modelo', '')))
+    tipo = html.escape(str(draft.get('tipo', 'Furgón')))
+    capacidad = html.escape(str(draft.get('capacidad', '')))
+    empresa = html.escape(str(draft.get('empresa', 'EPMI S.A.C.')))
+    soat = html.escape(str(draft.get('soat_vence', '')))
+    rev = html.escape(str(draft.get('rev_tecnica_vence', '')))
+    estado = html.escape(str(draft.get('estado', 'Activo')))
+    obs = html.escape(str(draft.get('observaciones', '')))
+    cid = draft.get('id')
+    titulo = f"✏️ <b>Modificación de Camión [{placa}]</b>" if cid else f"🚛 <b>Nuevo Camión a Registrar [{placa}]</b>"
+
+    msg = (
+        f"{titulo}\n\n"
+        f"🏢 <b>Empresa:</b> <code>{empresa}</code>\n"
+        f"🏷️ <b>Marca / Modelo:</b> <b>{marca} {modelo}</b>\n"
+        f"📦 <b>Tipo / Capacidad:</b> {tipo} • {capacidad}\n"
+        f"📋 <b>SOAT:</b> <code>{soat or 'S/D'}</code>\n"
+        f"🔧 <b>Rev. Técnica:</b> <code>{rev or 'S/D'}</code>\n"
+        f"🚦 <b>Estado:</b> <code>{estado}</code>\n"
+    )
+    if obs:
+        msg += f"💡 <b>Observaciones:</b> <i>{obs}</i>\n"
+    msg += "\n¿Deseas guardar estos datos en la pestaña <b>CAMIONES</b> de Google Sheets?"
+
+    kb = [
+        [InlineKeyboardButton("✅ Guardar en Sheets", callback_data="flota_save_camion_confirm")],
+        [InlineKeyboardButton("✏️ Volver a Escribir", callback_data="flota_add_camion"),
+         InlineKeyboardButton("❌ Cancelar", callback_data="menu_flota")]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+def build_conductor_draft_card(draft: dict):
+    nombre = html.escape(str(draft.get('nombre', 'POR DEFINIR')))
+    dni = html.escape(str(draft.get('dni', '')))
+    licencia = html.escape(str(draft.get('licencia', '')))
+    categoria = html.escape(str(draft.get('categoria', 'A-IIIc')))
+    lic_vence = html.escape(str(draft.get('licencia_vence', '')))
+    telefono = html.escape(str(draft.get('telefono', '')))
+    empresa = html.escape(str(draft.get('empresa', 'EPMI S.A.C.')))
+    estado = html.escape(str(draft.get('estado', 'Activo')))
+    obs = html.escape(str(draft.get('observaciones', '')))
+    cid = draft.get('id')
+    titulo = f"✏️ <b>Modificación de Conductor [{nombre}]</b>" if cid else f"👨‍✈️ <b>Nuevo Conductor a Registrar [{nombre}]</b>"
+
+    msg = (
+        f"{titulo}\n\n"
+        f"🏢 <b>Empresa:</b> <code>{empresa}</code>\n"
+        f"🪪 <b>DNI:</b> <code>{dni or 'S/D'}</code>\n"
+        f"📜 <b>Licencia:</b> <code>{licencia or 'S/D'}</code> (Cat. <b>{categoria}</b>)\n"
+        f"📅 <b>Vencimiento:</b> <code>{lic_vence or 'S/D'}</code>\n"
+        f"📞 <b>Teléfono:</b> <code>{telefono or 'S/D'}</code>\n"
+        f"🚦 <b>Estado:</b> <code>{estado}</code>\n"
+    )
+    if obs:
+        msg += f"💡 <b>Observaciones:</b> <i>{obs}</i>\n"
+    msg += "\n¿Deseas guardar estos datos en la pestaña <b>CONDUCTORES</b> de Google Sheets?"
+
+    kb = [
+        [InlineKeyboardButton("✅ Guardar en Sheets", callback_data="flota_save_cond_confirm")],
+        [InlineKeyboardButton("✏️ Volver a Escribir", callback_data="flota_add_cond"),
+         InlineKeyboardButton("❌ Cancelar", callback_data="menu_flota")]
+    ]
+    return msg, InlineKeyboardMarkup(kb)
+
+async def flota_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando directo /flota, /camiones, /conductores."""
+    user_id = update.effective_user.id if update.effective_user else None
+    url_app_flota = obtener_url_webapp_flota('camiones', user_id=user_id)
+    
+    def _fetch():
+        cams = listar_camiones()
+        conds = listar_conductores()
+        return cams, conds
+
+    msg_wait = await update.message.reply_text("⏳ Consultando datos de flota...")
+    try:
+        camiones, conductores = await asyncio.to_thread(_fetch)
+        kb = [
+            [InlineKeyboardButton("🚀 Abrir Gestor de Flota (Mini App)", web_app=WebAppInfo(url=url_app_flota))],
+            [InlineKeyboardButton(f"🚛 Camiones ({len(camiones)})", callback_data='flota_list_camiones|0'),
+             InlineKeyboardButton(f"👨‍✈️ Choferes ({len(conductores)})", callback_data='flota_list_cond|0')],
+            [InlineKeyboardButton("➕ Agregar Camión", callback_data='flota_add_camion'),
+             InlineKeyboardButton("➕ Agregar Conductor", callback_data='flota_add_cond')],
+            [InlineKeyboardButton("🔙 Menú Principal", callback_data='volver_inicio')]
+        ]
+        msg = (
+            "🚛 <b>Gestión de Flota & Conductores</b>\n\n"
+            "Módulo integral para administrar camiones y conductores como catálogos independientes:\n\n"
+            f"• 🚛 <b>Camiones registrados:</b> <code>{len(camiones)}</code>\n"
+            f"• 👨‍✈️ <b>Conductores registrados:</b> <code>{len(conductores)}</code>\n\n"
+            "💡 <i>Selecciona una opción o abre la Mini App para interactuar con la interfaz gráfica:</i>"
+        )
+        await msg_wait.edit_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+    except Exception as e:
+        logger.error(f"Error en flota_command: {e}")
+        await msg_wait.edit_text(f"❌ Error al consultar flota: {html.escape(str(e))}")
+
+async def handle_callback_flota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler dedicado para todas las interacciones de flota y conductores."""
+    query = update.callback_query
+    if not (query.data.startswith('flota_') or query.data == 'menu_flota'):
+        return
+    try:
+        await query.answer()
+    except Exception:
+        pass
+    user_id = query.from_user.id
+    data = query.data
+
+    if data == 'menu_flota':
+        user_states[user_id] = None
+        url_app_flota = obtener_url_webapp_flota('camiones', user_id=user_id)
+        
+        def _fetch():
+            return listar_camiones(), listar_conductores()
+        
+        camiones, conductores = await asyncio.to_thread(_fetch)
+        kb = [
+            [InlineKeyboardButton("🚀 Abrir Gestor de Flota (Mini App)", web_app=WebAppInfo(url=url_app_flota))],
+            [InlineKeyboardButton(f"🚛 Camiones ({len(camiones)})", callback_data='flota_list_camiones|0'),
+             InlineKeyboardButton(f"👨‍✈️ Choferes ({len(conductores)})", callback_data='flota_list_cond|0')],
+            [InlineKeyboardButton("➕ Agregar Camión", callback_data='flota_add_camion'),
+             InlineKeyboardButton("➕ Agregar Conductor", callback_data='flota_add_cond')],
+            [InlineKeyboardButton("🔙 Volver al Inicio", callback_data='volver_inicio')]
+        ]
+        texto = (
+            "🚛 <b>Gestión de Flota & Conductores</b>\n\n"
+            "Administra los camiones y choferes por separado en Google Sheets:\n\n"
+            f"• 🚛 <b>Camiones registrados:</b> <code>{len(camiones)}</code>\n"
+            f"• 👨‍✈️ <b>Conductores registrados:</b> <code>{len(conductores)}</code>\n\n"
+            "💡 <i>Los conductores rotan entre camiones. Puedes ver, agregar, editar o eliminar registros desde aquí o desde la Mini App.</i>"
+        )
+        await safe_edit_or_reply(query, texto, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        return
+
+    elif data.startswith('flota_list_camiones|'):
+        page = int(data.split('|')[1])
+        camiones = await asyncio.to_thread(listar_camiones)
+        PAGE_SIZE = 5
+        total_pags = max(1, (len(camiones) + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(0, min(page, total_pags - 1))
+        chunk = camiones[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
+
+        texto = f"🚛 <b>Catálogo de Camiones (Pág. {page + 1}/{total_pags} - {len(camiones)} total):</b>\n\n"
+        kb_items = []
+        for c in chunk:
+            est_icon = "🟢" if c.get('estado') == 'Activo' else ("🟡" if c.get('estado') == 'Mantenimiento' else "🔴")
+            marca_mod = f"{c.get('marca', '')} {c.get('modelo', '')}".strip()
+            texto += f"{est_icon} <b>{html.escape(c['placa'])}</b> • <i>{html.escape(marca_mod or c.get('tipo', 'Camión'))}</i>\n"
+            texto += f"   Empresa: <code>{html.escape(c.get('empresa', 'EPMI'))}</code> | Cap: {html.escape(c.get('capacidad', '-'))}\n\n"
+            kb_items.append([InlineKeyboardButton(f"🚛 {c['placa']} ({c.get('tipo', 'Camión')})", callback_data=f"flota_ver_camion|{c['id']}")])
+
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"flota_list_camiones|{page - 1}"))
+        if page < total_pags - 1:
+            nav_row.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"flota_list_camiones|{page + 1}"))
+        if nav_row:
+            kb_items.append(nav_row)
+
+        url_app_cams = obtener_url_webapp_flota('camiones', user_id=user_id)
+        kb_items.append([InlineKeyboardButton("➕ Agregar Camión", callback_data='flota_add_camion'),
+                         InlineKeyboardButton("📱 Abrir en Mini App", web_app=WebAppInfo(url=url_app_cams))])
+        kb_items.append([InlineKeyboardButton("🔙 Menú Flota", callback_data='menu_flota')])
+
+        await safe_edit_or_reply(query, texto, reply_markup=InlineKeyboardMarkup(kb_items), parse_mode='HTML')
+        return
+
+    elif data.startswith('flota_list_cond|'):
+        page = int(data.split('|')[1])
+        conductores = await asyncio.to_thread(listar_conductores)
+        PAGE_SIZE = 5
+        total_pags = max(1, (len(conductores) + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(0, min(page, total_pags - 1))
+        chunk = conductores[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
+
+        texto = f"👨‍✈️ <b>Catálogo de Conductores (Pág. {page + 1}/{total_pags} - {len(conductores)} total):</b>\n\n"
+        kb_items = []
+        for c in chunk:
+            est_icon = "🟢" if c.get('estado') == 'Activo' else ("⚪" if c.get('estado') == 'Descanso' else "🔴")
+            texto += f"{est_icon} <b>{html.escape(c['nombre'])}</b>\n"
+            texto += f"   DNI: <code>{html.escape(c.get('dni', 'S/D'))}</code> | Lic: <code>{html.escape(c.get('licencia', 'S/D'))}</code> [{html.escape(c.get('categoria', 'A-IIIc'))}]\n\n"
+            kb_items.append([InlineKeyboardButton(f"👨‍✈️ {c['nombre'][:25]}", callback_data=f"flota_ver_cond|{c['id']}")])
+
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"flota_list_cond|{page - 1}"))
+        if page < total_pags - 1:
+            nav_row.append(InlineKeyboardButton("Siguiente ➡️", callback_data=f"flota_list_cond|{page + 1}"))
+        if nav_row:
+            kb_items.append(nav_row)
+
+        url_app_conds = obtener_url_webapp_flota('conductores', user_id=user_id)
+        kb_items.append([InlineKeyboardButton("➕ Agregar Conductor", callback_data='flota_add_cond'),
+                         InlineKeyboardButton("📱 Abrir en Mini App", web_app=WebAppInfo(url=url_app_conds))])
+        kb_items.append([InlineKeyboardButton("🔙 Menú Flota", callback_data='menu_flota')])
+
+        await safe_edit_or_reply(query, texto, reply_markup=InlineKeyboardMarkup(kb_items), parse_mode='HTML')
+        return
+
+    elif data.startswith('flota_ver_camion|'):
+        cid = data.split('|')[1]
+        camion = await asyncio.to_thread(obtener_camion, cid)
+        if not camion:
+            await query.answer("❌ No se encontró el camión especificado.", show_alert=True)
+            return
+        msg, kb = build_camion_card(camion, user_id=user_id)
+        await safe_edit_or_reply(query, msg, reply_markup=kb, parse_mode='HTML')
+        return
+
+    elif data.startswith('flota_ver_cond|'):
+        cid = data.split('|')[1]
+        conductor = await asyncio.to_thread(obtener_conductor, cid)
+        if not conductor:
+            await query.answer("❌ No se encontró el conductor especificado.", show_alert=True)
+            return
+        msg, kb = build_conductor_card(conductor, user_id=user_id)
+        await safe_edit_or_reply(query, msg, reply_markup=kb, parse_mode='HTML')
+        return
+
+    elif data.startswith('flota_del_camion_ask|'):
+        cid = data.split('|')[1]
+        camion = await asyncio.to_thread(obtener_camion, cid)
+        if not camion:
+            await query.answer("❌ No se encontró el camión.", show_alert=True)
+            return
+        placa = html.escape(str(camion.get('placa', '')))
+        kb = [
+            [InlineKeyboardButton("✅ Sí, Eliminar Definitivamente", callback_data=f"flota_del_camion_confirm|{cid}")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data=f"flota_ver_camion|{cid}")]
+        ]
+        msg = (
+            f"⚠️ <b>¿Estás seguro de que deseas eliminar permanentemente el camión con placa <code>{placa}</code>?</b>\n\n"
+            f"Esta acción borrará la fila correspondiente de la pestaña <b>CAMIONES</b> de Google Sheets."
+        )
+        await safe_edit_or_reply(query, msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        return
+
+    elif data.startswith('flota_del_camion_confirm|'):
+        cid = data.split('|')[1]
+        camion = await asyncio.to_thread(obtener_camion, cid)
+        placa_txt = camion.get('placa', cid) if camion else cid
+        ok = await asyncio.to_thread(eliminar_camion, cid)
+        if ok:
+            kb = [[InlineKeyboardButton("🔙 Volver a Camiones", callback_data="flota_list_camiones|0")]]
+            await safe_edit_or_reply(query, f"🗑️ <b>Camión <code>{html.escape(placa_txt)}</code> eliminado exitosamente de Google Sheets.</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        else:
+            await query.answer("❌ No se pudo eliminar el camión.", show_alert=True)
+        return
+
+    elif data.startswith('flota_del_cond_ask|'):
+        cid = data.split('|')[1]
+        conductor = await asyncio.to_thread(obtener_conductor, cid)
+        if not conductor:
+            await query.answer("❌ No se encontró el conductor.", show_alert=True)
+            return
+        nombre = html.escape(str(conductor.get('nombre', '')))
+        kb = [
+            [InlineKeyboardButton("✅ Sí, Eliminar Definitivamente", callback_data=f"flota_del_cond_confirm|{cid}")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data=f"flota_ver_cond|{cid}")]
+        ]
+        msg = (
+            f"⚠️ <b>¿Estás seguro de que deseas eliminar al conductor <code>{nombre}</code>?</b>\n\n"
+            f"Esta acción borrará la fila correspondiente de la pestaña <b>CONDUCTORES</b> de Google Sheets."
+        )
+        await safe_edit_or_reply(query, msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        return
+
+    elif data.startswith('flota_del_cond_confirm|'):
+        cid = data.split('|')[1]
+        conductor = await asyncio.to_thread(obtener_conductor, cid)
+        nombre_txt = conductor.get('nombre', cid) if conductor else cid
+        ok = await asyncio.to_thread(eliminar_conductor, cid)
+        if ok:
+            kb = [[InlineKeyboardButton("🔙 Volver a Conductores", callback_data="flota_list_cond|0")]]
+            await safe_edit_or_reply(query, f"🗑️ <b>Conductor <code>{html.escape(nombre_txt)}</code> eliminado exitosamente de Google Sheets.</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        else:
+            await query.answer("❌ No se pudo eliminar el conductor.", show_alert=True)
+        return
+
+    elif data == 'flota_add_camion':
+        user_states[user_id] = MODO_FLOTA_CAMION_ADD
+        user_data_cache[user_id] = {"flota_camion_draft": {}}
+        url_app_cams = obtener_url_webapp_flota('camiones', user_id=user_id)
+        kb = [
+            [InlineKeyboardButton("📱 Llenar en Mini App (Formulario)", web_app=WebAppInfo(url=url_app_cams))],
+            [InlineKeyboardButton("🔙 Volver", callback_data="menu_flota"),
+             InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_start")]
+        ]
+        texto = (
+            "🚛 <b>Registrar Nuevo Camión</b>\n\n"
+            "Envía un mensaje con los datos del camión. Puedes copiar y completar la siguiente plantilla:\n\n"
+            "<code>Placa: ABC-123\n"
+            "Marca: VOLVO\n"
+            "Modelo: FMX\n"
+            "Tipo: Baranda\n"
+            "Capacidad: 15 TM\n"
+            "Empresa: EPMI S.A.C.\n"
+            "SOAT: 31/12/2026\n"
+            "Rev: 30/11/2026\n"
+            "Estado: Activo\n"
+            "Observaciones: Operativo</code>\n\n"
+            "💡 <i>También puedes enviarlo en lenguaje natural o pulsar el botón de Mini App para usar el formulario táctil.</i>"
+        )
+        await safe_edit_or_reply(query, texto, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        return
+
+    elif data.startswith('flota_edit_camion|'):
+        cid = data.split('|')[1]
+        camion = await asyncio.to_thread(obtener_camion, cid)
+        if not camion:
+            await query.answer("❌ No se encontró el camión.", show_alert=True)
+            return
+        user_states[user_id] = MODO_FLOTA_CAMION_ADD
+        user_data_cache[user_id] = {"flota_camion_draft": camion}
+        url_app_cams = obtener_url_webapp_flota('camiones', user_id=user_id)
+        kb = [
+            [InlineKeyboardButton("📱 Editar en Mini App", web_app=WebAppInfo(url=url_app_cams))],
+            [InlineKeyboardButton("🔙 Volver", callback_data=f"flota_ver_camion|{cid}")]
+        ]
+        texto = (
+            f"✏️ <b>Editando Camión: <code>{html.escape(camion['placa'])}</code> (ID {html.escape(cid)})</b>\n\n"
+            "Envía los datos actualizados que deseas cambiar. Puedes copiar y editar la plantilla:\n\n"
+            f"<code>Placa: {camion['placa']}\n"
+            f"Marca: {camion.get('marca', '')}\n"
+            f"Modelo: {camion.get('modelo', '')}\n"
+            f"Tipo: {camion.get('tipo', 'Furgón')}\n"
+            f"Capacidad: {camion.get('capacidad', '')}\n"
+            f"Empresa: {camion.get('empresa', 'EPMI S.A.C.')}\n"
+            f"SOAT: {camion.get('soat_vence', '')}\n"
+            f"Rev: {camion.get('rev_tecnica_vence', '')}\n"
+            f"Estado: {camion.get('estado', 'Activo')}\n"
+            f"Observaciones: {camion.get('observaciones', '')}</code>"
+        )
+        await safe_edit_or_reply(query, texto, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        return
+
+    elif data == 'flota_save_camion_confirm':
+        cache = user_data_cache.get(user_id, {})
+        draft = cache.get("flota_camion_draft")
+        if not draft:
+            await query.answer("⚠️ No hay borrador de camión activo.", show_alert=True)
+            return
+        msg_wait = await query.message.reply_text("⏳ Guardando datos en pestaña CAMIONES de Google Sheets...")
+        try:
+            res = await asyncio.to_thread(guardar_camion, draft)
+            user_states[user_id] = None
+            user_data_cache[user_id] = {}
+            kb = [
+                [InlineKeyboardButton("🚛 Ver Ficha del Camión", callback_data=f"flota_ver_camion|{res['id']}")],
+                [InlineKeyboardButton("📋 Lista de Camiones", callback_data="flota_list_camiones|0"),
+                 InlineKeyboardButton("🔙 Menú Flota", callback_data="menu_flota")]
+            ]
+            await msg_wait.edit_text(
+                f"✅ <b>¡Camión <code>{html.escape(res['placa'])}</code> guardado con éxito!</b>\n\n"
+                f"🆔 Código asignado: <code>{html.escape(res['id'])}</code>\n"
+                f"🏢 Empresa: <code>{html.escape(res.get('empresa', ''))}</code>\n"
+                f"📦 Tipo: <code>{html.escape(res.get('tipo', ''))}</code> ({html.escape(res.get('capacidad', ''))})",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logger.error(f"Error guardando camión: {e}")
+            await msg_wait.edit_text(f"❌ Error al guardar camión: {html.escape(str(e))}")
+        return
+
+    elif data == 'flota_add_cond':
+        user_states[user_id] = MODO_FLOTA_CONDUCTOR_ADD
+        user_data_cache[user_id] = {"flota_cond_draft": {}}
+        url_app_conds = obtener_url_webapp_flota('conductores', user_id=user_id)
+        kb = [
+            [InlineKeyboardButton("📱 Llenar en Mini App (Formulario)", web_app=WebAppInfo(url=url_app_conds))],
+            [InlineKeyboardButton("🔙 Volver", callback_data="menu_flota"),
+             InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_start")]
+        ]
+        texto = (
+            "👨‍✈️ <b>Registrar Nuevo Conductor</b>\n\n"
+            "Envía un mensaje con los datos del conductor. Puedes copiar y completar la siguiente plantilla:\n\n"
+            "<code>Nombre: Carlos Mendoza Rivas\n"
+            "DNI: 42109876\n"
+            "Licencia: Q42109876\n"
+            "Categoria: A-IIIb\n"
+            "Vence: 20/11/2026\n"
+            "Telefono: 991234567\n"
+            "Empresa: EPMI S.A.C.\n"
+            "Estado: Activo\n"
+            "Observaciones: Conductor Titular</code>\n\n"
+            "💡 <i>O usa el botón de Mini App para llenarlo de forma interactiva.</i>"
+        )
+        await safe_edit_or_reply(query, texto, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        return
+
+    elif data.startswith('flota_edit_cond|'):
+        cid = data.split('|')[1]
+        conductor = await asyncio.to_thread(obtener_conductor, cid)
+        if not conductor:
+            await query.answer("❌ No se encontró el conductor.", show_alert=True)
+            return
+        user_states[user_id] = MODO_FLOTA_CONDUCTOR_ADD
+        user_data_cache[user_id] = {"flota_cond_draft": conductor}
+        url_app_conds = obtener_url_webapp_flota('conductores', user_id=user_id)
+        kb = [
+            [InlineKeyboardButton("📱 Editar en Mini App", web_app=WebAppInfo(url=url_app_conds))],
+            [InlineKeyboardButton("🔙 Volver", callback_data=f"flota_ver_cond|{cid}")]
+        ]
+        texto = (
+            f"✏️ <b>Editando Conductor: <code>{html.escape(conductor['nombre'])}</code> (ID {html.escape(cid)})</b>\n\n"
+            "Envía los datos actualizados que deseas cambiar. Puedes copiar y editar la plantilla:\n\n"
+            f"<code>Nombre: {conductor['nombre']}\n"
+            f"DNI: {conductor.get('dni', '')}\n"
+            f"Licencia: {conductor.get('licencia', '')}\n"
+            f"Categoria: {conductor.get('categoria', 'A-IIIc')}\n"
+            f"Vence: {conductor.get('licencia_vence', '')}\n"
+            f"Telefono: {conductor.get('telefono', '')}\n"
+            f"Empresa: {conductor.get('empresa', 'EPMI S.A.C.')}\n"
+            f"Estado: {conductor.get('estado', 'Activo')}\n"
+            f"Observaciones: {conductor.get('observaciones', '')}</code>"
+        )
+        await safe_edit_or_reply(query, texto, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+        return
+
+    elif data == 'flota_save_cond_confirm':
+        cache = user_data_cache.get(user_id, {})
+        draft = cache.get("flota_cond_draft")
+        if not draft:
+            await query.answer("⚠️ No hay borrador de conductor activo.", show_alert=True)
+            return
+        msg_wait = await query.message.reply_text("⏳ Guardando datos en pestaña CONDUCTORES de Google Sheets...")
+        try:
+            res = await asyncio.to_thread(guardar_conductor, draft)
+            user_states[user_id] = None
+            user_data_cache[user_id] = {}
+            kb = [
+                [InlineKeyboardButton("👨‍✈️ Ver Ficha del Conductor", callback_data=f"flota_ver_cond|{res['id']}")],
+                [InlineKeyboardButton("📋 Lista de Conductores", callback_data="flota_list_cond|0"),
+                 InlineKeyboardButton("🔙 Menú Flota", callback_data="menu_flota")]
+            ]
+            await msg_wait.edit_text(
+                f"✅ <b>¡Conductor <code>{html.escape(res['nombre'])}</code> guardado con éxito!</b>\n\n"
+                f"🆔 Código asignado: <code>{html.escape(res['id'])}</code>\n"
+                f"🪪 DNI: <code>{html.escape(res.get('dni', 'S/D'))}</code>\n"
+                f"📜 Licencia: <code>{html.escape(res.get('licencia', 'S/D'))}</code> ({html.escape(res.get('categoria', 'A-IIIc'))})",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logger.error(f"Error guardando conductor: {e}")
+            await msg_wait.edit_text(f"❌ Error al guardar conductor: {html.escape(str(e))}")
+        return
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1579,6 +2204,44 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error procesando pendiente IA: {e}")
             await msg.edit_text(f"❌ Error al procesar pendiente: {html.escape(str(e))}")
+        return
+
+    elif modo == MODO_FLOTA_CAMION_ADD:
+        cache = user_data_cache.get(user_id, {})
+        base_draft = cache.get("flota_camion_draft", {})
+        draft = parse_camion_texto(text, base_draft)
+
+        if not draft.get("placa"):
+            await update.message.reply_text(
+                "⚠️ <b>No pude identificar la placa del camión en tu mensaje.</b>\n\n"
+                "Por favor incluye la placa (ej: <code>Placa: ABC-123</code> o <code>AZU-781</code>).",
+                parse_mode='HTML'
+            )
+            return
+
+        user_states[user_id] = None
+        user_data_cache[user_id] = {"flota_camion_draft": draft}
+        msg_card, kb_card = build_camion_draft_card(draft)
+        await update.message.reply_text(msg_card, reply_markup=kb_card, parse_mode='HTML')
+        return
+
+    elif modo == MODO_FLOTA_CONDUCTOR_ADD:
+        cache = user_data_cache.get(user_id, {})
+        base_draft = cache.get("flota_cond_draft", {})
+        draft = parse_conductor_texto(text, base_draft)
+
+        if not draft.get("nombre"):
+            await update.message.reply_text(
+                "⚠️ <b>No pude identificar el nombre del conductor en tu mensaje.</b>\n\n"
+                "Por favor incluye el nombre completo (ej: <code>Nombre: Juan Pérez Gómez</code>).",
+                parse_mode='HTML'
+            )
+            return
+
+        user_states[user_id] = None
+        user_data_cache[user_id] = {"flota_cond_draft": draft}
+        msg_card, kb_card = build_conductor_draft_card(draft)
+        await update.message.reply_text(msg_card, reply_markup=kb_card, parse_mode='HTML')
         return
 
     elif modo == MODO_CREDENCIAL_BUSCAR:

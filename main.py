@@ -21,7 +21,8 @@ from bot.handlers import (
     handle_callback_pregunta_ligar, handle_callback_destino_manual,
     handle_web_app_data,
     handle_callback_pendientes, job_verificar_alertas_pendientes,
-    certificados_command
+    certificados_command,
+    flota_command, handle_callback_flota
 )
 
 # ====================================================================
@@ -106,10 +107,12 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler(["certificados", "certificado", "cert"], certificados_command))
+    app.add_handler(CommandHandler(["flota", "camiones", "camion", "conductores", "conductor", "choferes", "chofer"], flota_command))
     app.add_handler(CallbackQueryHandler(handle_callback_vinculacion, pattern=r"^vinc\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_observacion, pattern=r"^obs\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_reminder, pattern=r"^rem\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_pendientes, pattern=r"^pnd_"))
+    app.add_handler(CallbackQueryHandler(handle_callback_flota, pattern=r"^(flota_|menu_flota)"))
     app.add_handler(CallbackQueryHandler(handle_callback_direct_action, pattern=r"^direct_action\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_pregunta_registro, pattern=r"^preg_reg\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_pregunta_ligar, pattern=r"^preg_ligar\|"))

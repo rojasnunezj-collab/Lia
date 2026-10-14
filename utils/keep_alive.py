@@ -136,6 +136,68 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error(f"Error sirviendo /certificados: {e}")
 
+        elif path in ['/flota', '/flota.html']:
+            try:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                html_path = os.path.join(base_dir, 'webapp', 'flota.html')
+                if os.path.exists(html_path):
+                    with open(html_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                    self.send_header('Pragma', 'no-cache')
+                    self.send_header('Expires', '0')
+                    self.end_headers()
+                    self.wfile.write(content.encode('utf-8'))
+                    return
+                else:
+                    self.send_response(404)
+                    self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                    self.end_headers()
+                    self.wfile.write(b"Vista /flota aun no creada.")
+                    return
+            except Exception as e:
+                logger.error(f"Error sirviendo /flota: {e}")
+
+        elif path == '/api/flota/camiones':
+            try:
+                from core.flota_service import listar_camiones
+                camiones = listar_camiones()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'camiones': camiones}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/flota/camiones: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/flota/conductores':
+            try:
+                from core.flota_service import listar_conductores
+                conductores = listar_conductores()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'conductores': conductores}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/flota/conductores: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
         elif path == '/api/certificados/catalogos':
             try:
                 from core.certificados_service import (
@@ -806,6 +868,104 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 return
             finally:
                 liberar_candado_certificado(candado_key)
+
+        elif path == '/api/flota/camiones/guardar':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                from core.flota_service import guardar_camion
+                camion = guardar_camion(payload)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'camion': camion}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/flota/camiones/guardar: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/flota/camiones/eliminar':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                from core.flota_service import eliminar_camion
+                criterio = payload.get('id') or payload.get('placa')
+                ok = eliminar_camion(criterio)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': ok}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/flota/camiones/eliminar: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/flota/conductores/guardar':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                from core.flota_service import guardar_conductor
+                conductor = guardar_conductor(payload)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': True, 'conductor': conductor}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/flota/conductores/guardar: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/flota/conductores/eliminar':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                from core.flota_service import eliminar_conductor
+                criterio = payload.get('id') or payload.get('dni') or payload.get('licencia')
+                ok = eliminar_conductor(criterio)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': ok}).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/flota/conductores/eliminar: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
 
     def do_HEAD(self):
         self.send_response(200)
