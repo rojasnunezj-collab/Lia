@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -7,6 +8,32 @@ from config.settings import logger
 
 _clientes_cache = None
 _clientes_cache_time = 0
+
+_certificados_lock = threading.Lock()
+_operaciones_activas = {}
+TIEMPO_EXPIRACION_LOCK_SEG = 60
+
+def adquirir_candado_certificado(clave: str) -> bool:
+    """
+    Intenta adquirir un candado para una operación (ej. 'emitir:218', 'juntar:218').
+    Retorna True si se adquirió con éxito, False si ya hay una operación en curso.
+    Limpia automáticamente candados antiguos que excedan TIEMPO_EXPIRACION_LOCK_SEG.
+    """
+    ahora = time.time()
+    with _certificados_lock:
+        expirados = [k for k, t in _operaciones_activas.items() if ahora - t > TIEMPO_EXPIRACION_LOCK_SEG]
+        for k in expirados:
+            _operaciones_activas.pop(k, None)
+
+        if clave in _operaciones_activas:
+            return False
+        _operaciones_activas[clave] = ahora
+        return True
+
+def liberar_candado_certificado(clave: str):
+    """Libera el candado de la operación especificada."""
+    with _certificados_lock:
+        _operaciones_activas.pop(clave, None)
 
 class KeepAliveHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -495,11 +522,26 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 return
 
         elif path == '/api/certificados/emitir':
-            try:
-                content_len = int(self.headers.get('Content-Length', 0))
-                post_body = self.rfile.read(content_len)
-                payload = json.loads(post_body.decode('utf-8'))
+            content_len = int(self.headers.get('Content-Length', 0))
+            post_body = self.rfile.read(content_len)
+            payload = json.loads(post_body.decode('utf-8'))
 
+            corr = str(payload.get('correlativo', '')).strip()
+            flujo = str(payload.get('tipo_flujo', '')).strip()
+            candado_key = f"emitir:{flujo}:{corr}" if corr else f"emitir:{time.time()}"
+            if not adquirir_candado_certificado(candado_key):
+                logger.warning(f"Intento de emisión concurrente duplicada bloqueado: {candado_key}")
+                self.send_response(409)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'success': False,
+                    'error': f"⏳ Ya hay una emisión en curso para el certificado #{corr}. Por favor espera unos momentos."
+                }).encode('utf-8'))
+                return
+
+            try:
                 import base64
                 remision_bytes = None
                 transporte_bytes = None
@@ -574,17 +616,37 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
                 return
+            finally:
+                liberar_candado_certificado(candado_key)
 
         elif path == '/api/certificados/regenerar':
+            content_len = int(self.headers.get('Content-Length', 0))
+            post_body = self.rfile.read(content_len)
+            payload = json.loads(post_body.decode('utf-8'))
+
+            corr = payload.get('correlativo')
+            if not corr:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': "Falta 'correlativo' en la solicitud."}).encode('utf-8'))
+                return
+
+            candado_key = f"regenerar:{corr}"
+            if not adquirir_candado_certificado(candado_key):
+                logger.warning(f"Intento de regeneración concurrente duplicada bloqueado: {candado_key}")
+                self.send_response(409)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'success': False,
+                    'error': f"⏳ Ya hay una regeneración en curso para el certificado #{corr}. Por favor espera unos momentos."
+                }).encode('utf-8'))
+                return
+
             try:
-                content_len = int(self.headers.get('Content-Length', 0))
-                post_body = self.rfile.read(content_len)
-                payload = json.loads(post_body.decode('utf-8'))
-
-                corr = payload.get('correlativo')
-                if not corr:
-                    raise ValueError("Falta 'correlativo' en la solicitud.")
-
                 import base64
                 nuevo_doc_bytes = None
                 nuevo_pdf_bytes = None
@@ -653,17 +715,37 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
                 return
+            finally:
+                liberar_candado_certificado(candado_key)
 
         elif path == '/api/certificados/juntar_expediente':
+            content_len = int(self.headers.get('Content-Length', 0))
+            post_body = self.rfile.read(content_len)
+            payload = json.loads(post_body.decode('utf-8'))
+
+            corr = payload.get('correlativo')
+            if not corr:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': "Falta 'correlativo' en la solicitud."}).encode('utf-8'))
+                return
+
+            candado_key = f"juntar:{corr}"
+            if not adquirir_candado_certificado(candado_key):
+                logger.warning(f"Intento de unificación concurrente duplicada bloqueado: {candado_key}")
+                self.send_response(409)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'success': False,
+                    'error': f"⏳ Ya hay una unificación de expediente en curso para el certificado #{corr}. Por favor espera unos momentos."
+                }).encode('utf-8'))
+                return
+
             try:
-                content_len = int(self.headers.get('Content-Length', 0))
-                post_body = self.rfile.read(content_len)
-                payload = json.loads(post_body.decode('utf-8'))
-
-                corr = payload.get('correlativo')
-                if not corr:
-                    raise ValueError("Falta 'correlativo' en la solicitud.")
-
                 guias = payload.get('guias') or []
                 usuario_email = payload.get('usuario_email') or payload.get('usuario') or 'Usuario MiniApp'
 
@@ -722,6 +804,8 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
                 return
+            finally:
+                liberar_candado_certificado(candado_key)
 
     def do_HEAD(self):
         self.send_response(200)

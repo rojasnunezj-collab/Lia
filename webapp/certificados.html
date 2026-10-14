@@ -400,6 +400,18 @@
       padding: 16px;
     }
 
+    #modalLoading {
+      z-index: 9999 !important;
+      pointer-events: all !important;
+    }
+
+    .btn-action:disabled, .btn-action.btn-disabled {
+      opacity: 0.65 !important;
+      cursor: not-allowed !important;
+      pointer-events: none !important;
+      filter: grayscale(0.25);
+    }
+
     .modal-card {
       background: white;
       border-radius: 14px;
@@ -790,7 +802,7 @@
   </div>
 
   <!-- MODAL DE PROCESO / SPINNER -->
-  <div id="modalLoading" class="modal-overlay" style="display:none;">
+  <div id="modalLoading" class="modal-overlay" style="display:none; z-index:9999;">
     <div class="modal-card">
       <div class="spinner"></div>
       <h3 id="modalLoadingTitle" style="font-size:15px; font-weight:700; color:var(--primary-dark); margin-bottom:6px;">Procesando...</h3>
@@ -940,14 +952,44 @@
       return path;
     }
 
+    let operacionEnCurso = false;
+
+    function bloquearBoton(btn, textoEspera = "⏳ Esperando...") {
+      if (!btn) return null;
+      const originalHtml = btn.innerHTML;
+      btn.dataset.originalHtml = originalHtml;
+      btn.disabled = true;
+      btn.classList.add('btn-disabled');
+      btn.innerHTML = textoEspera;
+      return originalHtml;
+    }
+
+    function desbloquearBoton(btn) {
+      if (!btn) return;
+      btn.disabled = false;
+      btn.classList.remove('btn-disabled');
+      if (btn.dataset.originalHtml) {
+        btn.innerHTML = btn.dataset.originalHtml;
+      }
+    }
+
     function showLoading(title, msg) {
+      // Ocultar modal de éxito si estuviera abierto para que no tape el loader
+      const modalExito = document.getElementById('modalExito');
+      if (modalExito) modalExito.style.display = 'none';
+
       document.getElementById('modalLoadingTitle').innerText = title;
       document.getElementById('modalLoadingMsg').innerText = msg;
-      document.getElementById('modalLoading').style.display = 'flex';
+      const modal = document.getElementById('modalLoading');
+      if (modal) {
+        modal.style.zIndex = '9999';
+        modal.style.display = 'flex';
+      }
     }
 
     function hideLoading() {
-      document.getElementById('modalLoading').style.display = 'none';
+      const modal = document.getElementById('modalLoading');
+      if (modal) modal.style.display = 'none';
     }
 
     function haptic(type = 'medium') {
@@ -1149,11 +1191,16 @@
 
     // Ejecutar OCR con Vertex AI Gemini
     async function ejecutarOcr() {
+      if (operacionEnCurso) return;
+
       if (!base64OcrPdf) {
         alert("Por favor selecciona primero un archivo PDF de guía.");
         return;
       }
 
+      const btnOcr = document.getElementById('btnProcesarOcr');
+      operacionEnCurso = true;
+      bloquearBoton(btnOcr, "⏳ Esperando... Analizando con IA...");
       showLoading("Analizando Documento con IA", "Vertex AI Gemini 2.5 Flash está procesando la guía...");
       haptic('medium');
 
@@ -1178,6 +1225,9 @@
         hideLoading();
         haptic('error');
         alert("Error de conexión al procesar OCR: " + e.message);
+      } finally {
+        desbloquearBoton(btnOcr);
+        operacionEnCurso = false;
       }
     }
 
@@ -1280,57 +1330,71 @@
 
     // Emisión Completa del Certificado
     async function ejecutarEmisionCertificado() {
+      if (operacionEnCurso) return;
+
       const correlativo = document.getElementById('correlativo').value.trim();
       const cliente = document.getElementById('cliente').value.trim();
 
       if (!correlativo || !cliente) {
+        haptic('error');
         alert("Por favor completa al menos el Correlativo y la Razón Social del Cliente.");
         return;
       }
 
-      // Extraer ítems
-      const itemCards = document.querySelectorAll('#itemsContainer .item-card');
-      const items = [];
-      itemCards.forEach(c => {
-        items.push({
-          fecha_origen: document.getElementById('fechaEmision').value,
-          placa_origen: c.querySelector('.it-placa')?.value || '',
-          guia_origen: c.querySelector('.it-guia')?.value || '',
-          desc: c.querySelector('.it-desc')?.value || '',
-          cant: c.querySelector('.it-cant')?.value || '1',
-          um: c.querySelector('.it-um')?.value || 'KG',
-          peso: c.querySelector('.it-peso')?.value || '0.00'
-        });
-      });
-
-      const payload = {
-        empresa_firma: document.getElementById('empresaFirma').value,
-        tipo_flujo: document.getElementById('tipoFlujo').value,
-        es_modelo: document.getElementById('esModelo').checked,
-        correlativo: correlativo,
-        titulo: document.getElementById('tituloCert')?.value?.trim() || '',
-        fecha_emision: document.getElementById('fechaEmision').value,
-        cliente: cliente,
-        ruc_cliente: document.getElementById('rucCliente').value.trim(),
-        punto_partida: document.getElementById('puntoPartida').value.trim(),
-        punto_llegada: document.getElementById('puntoLlegada')?.value?.trim() || '',
-        servicio: document.getElementById('servicio')?.value?.trim() || '',
-        tipo_residuo: document.getElementById('tipoResiduo')?.value?.trim() || '',
-        items: items,
-        user_id: tg?.initDataUnsafe?.user?.id || null,
-        usuario_email: obtenerUsuarioMiniApp(),
-        filas_repositorio: window.filasRepositorioSeleccionadas || []
-      };
-
-      // Si hay archivo cargado en OCR o en anexos, convertir a Base64
-      if (base64OcrPdf) {
-        payload.remision_base64 = base64OcrPdf;
+      // Validar ítems
+      const itemPlacas = document.querySelectorAll('#itemsContainer .it-placa');
+      if (itemPlacas.length === 0) {
+        haptic('error');
+        alert("Debes agregar al menos una fila en la matriz de residuos.");
+        return;
       }
 
+      const btnEmitir = document.getElementById('btnEmitirCert');
+      operacionEnCurso = true;
+      bloquearBoton(btnEmitir, "⏳ Esperando... Generando certificado...");
       showLoading("Emitiendo Certificado", "Generando Word, convirtiendo a PDF y registrando en Google Drive...");
       haptic('medium');
 
       try {
+        // Extraer ítems
+        const itemCards = document.querySelectorAll('#itemsContainer .item-card');
+        const items = [];
+        itemCards.forEach(c => {
+          items.push({
+            fecha_origen: document.getElementById('fechaEmision').value,
+            placa_origen: c.querySelector('.it-placa')?.value || '',
+            guia_origen: c.querySelector('.it-guia')?.value || '',
+            desc: c.querySelector('.it-desc')?.value || '',
+            cant: c.querySelector('.it-cant')?.value || '1',
+            um: c.querySelector('.it-um')?.value || 'KG',
+            peso: c.querySelector('.it-peso')?.value || '0.00'
+          });
+        });
+
+        const payload = {
+          empresa_firma: document.getElementById('empresaFirma').value,
+          tipo_flujo: document.getElementById('tipoFlujo').value,
+          es_modelo: document.getElementById('esModelo').checked,
+          correlativo: correlativo,
+          titulo: document.getElementById('tituloCert')?.value?.trim() || '',
+          fecha_emision: document.getElementById('fechaEmision').value,
+          cliente: cliente,
+          ruc_cliente: document.getElementById('rucCliente').value.trim(),
+          punto_partida: document.getElementById('puntoPartida').value.trim(),
+          punto_llegada: document.getElementById('puntoLlegada')?.value?.trim() || '',
+          servicio: document.getElementById('servicio')?.value?.trim() || '',
+          tipo_residuo: document.getElementById('tipoResiduo')?.value?.trim() || '',
+          items: items,
+          user_id: tg?.initDataUnsafe?.user?.id || null,
+          usuario_email: obtenerUsuarioMiniApp(),
+          filas_repositorio: window.filasRepositorioSeleccionadas || []
+        };
+
+        // Si hay archivo cargado en OCR o en anexos, convertir a Base64
+        if (base64OcrPdf) {
+          payload.remision_base64 = base64OcrPdf;
+        }
+
         const res = await fetch(getApiUrl('/api/certificados/emitir'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1357,6 +1421,9 @@
         hideLoading();
         haptic('error');
         alert("Error de red: " + e.message);
+      } finally {
+        desbloquearBoton(btnEmitir);
+        operacionEnCurso = false;
       }
     }
 
@@ -1400,18 +1467,30 @@
     }
 
     async function ejecutarJuntarTrasEmision() {
+      if (operacionEnCurso) return;
       if (!ultimoCertificadoEmitido) return;
+      const modalExito = document.getElementById('modalExito');
+      if (modalExito) modalExito.style.display = 'none';
       await juntarExpediente(ultimoCertificadoEmitido.correlativo, ultimoCertificadoEmitido.guias || window.guiasSeleccionadasLista);
     }
 
     async function juntarExpedienteDesdeModificar() {
+      if (operacionEnCurso) return;
       if (!certificadoEncontrado) return;
       const guiasArray = certificadoEncontrado.guias ? certificadoEncontrado.guias.split(',').map(s => s.trim()).filter(Boolean) : [];
       await juntarExpediente(certificadoEncontrado.correlativo, guiasArray);
     }
 
     async function juntarExpediente(correlativo, guias = null) {
+      if (operacionEnCurso) return;
       if (!correlativo) return;
+
+      operacionEnCurso = true;
+      const btnModalJuntar = document.getElementById('btnModalJuntar');
+      const btnModUnir = document.getElementById('btnModUnirGuias');
+      bloquearBoton(btnModalJuntar, "⏳ Esperando... Uniendo expediente...");
+      bloquearBoton(btnModUnir, "⏳ Esperando... Uniendo expediente...");
+
       showLoading("Uniendo Expediente", "Buscando Guías de Remisión y Transporte en Drive y consolidando en un solo PDF...");
       haptic('medium');
 
@@ -1446,6 +1525,10 @@
         hideLoading();
         haptic('error');
         alert("Error de red: " + e.message);
+      } finally {
+        desbloquearBoton(btnModalJuntar);
+        desbloquearBoton(btnModUnir);
+        operacionEnCurso = false;
       }
     }
 
@@ -1625,6 +1708,8 @@
     }
 
     async function consolidarGuiasSeleccionadas() {
+      if (operacionEnCurso) return;
+
       if (guiasSeleccionadasSet.size === 0) {
         alert("Selecciona al menos una guía de la lista marcando la casilla.");
         return;
@@ -1641,6 +1726,10 @@
         alert("No se pudieron cargar las guías seleccionadas.");
         return;
       }
+
+      const btnConsolidar = document.querySelector('#tab-repo button.btn-primary');
+      operacionEnCurso = true;
+      bloquearBoton(btnConsolidar, "⏳ Esperando... Procesando guías...");
 
       // Guardar referencias globales para la bitácora y unión de expediente
       window.filasRepositorioSeleccionadas = seleccionadas.map(g => g.fila).filter(Boolean);
@@ -1735,6 +1824,9 @@
         haptic('error');
         console.error("Error consolidando guías con OCR:", e);
         alert("Error de procesamiento al consolidar guías: " + e.message);
+      } finally {
+        desbloquearBoton(btnConsolidar);
+        operacionEnCurso = false;
       }
     }
 
@@ -1848,7 +1940,12 @@
     }
 
     async function ejecutarRegeneracionQuirurgica() {
+      if (operacionEnCurso) return;
       if (!certificadoEncontrado) return;
+
+      operacionEnCurso = true;
+      const btnRegenerar = document.getElementById('btnModRegenerar');
+      bloquearBoton(btnRegenerar, "⏳ Esperando... Regenerando expediente...");
 
       const payload = {
         correlativo: certificadoEncontrado.correlativo,
@@ -1871,6 +1968,12 @@
           }
           await enviarRegeneracion(payload);
         };
+        reader.onerror = () => {
+          hideLoading();
+          desbloquearBoton(btnRegenerar);
+          operacionEnCurso = false;
+          alert("Error leyendo el archivo.");
+        };
         reader.readAsDataURL(file);
       } else {
         await enviarRegeneracion(payload);
@@ -1880,6 +1983,7 @@
     async function enviarRegeneracion(payload) {
       showLoading("Regenerando Expediente Quirúrgico", "Sustituyendo carátula en Google Drive y preservando guías...");
       haptic('medium');
+      const btnRegenerar = document.getElementById('btnModRegenerar');
 
       try {
         const res = await fetch(getApiUrl('/api/certificados/regenerar'), {
@@ -1901,6 +2005,9 @@
         hideLoading();
         haptic('error');
         alert("Error de red: " + e.message);
+      } finally {
+        desbloquearBoton(btnRegenerar);
+        operacionEnCurso = false;
       }
     }
   </script>
