@@ -266,8 +266,8 @@ CONTEXTO TEMPORAL ACTUAL (ZONA HORARIA PERÚ UTC-5):
 
 REGLAS DE INTERPRETACIÓN:
 1. Extrae:
-   - "titulo": Título claro y conciso de la tarea (máx. 10 palabras).
-   - "detalle": Datos específicos (números de guía, placas, observaciones, nombres).
+   - "titulo": Título claro, descriptivo y completo de la tarea (no lo recortes artificialmente, debe entenderse por sí mismo).
+   - "detalle": Contexto completo, instrucciones adicionales, números de guía, placas, observaciones o nombres. Preserva toda la información que el usuario haya indicado sin omitir ningún dato.
    - "cliente_ref": Nombre del cliente, empresa, proveedor o fundo mencionado (ej. "PROSEMBRA", "LOS OLIVOS", "CERRO PRIETO"). Si no hay, dejar cadena vacía.
    - "fecha_alerta": Formato estricto "DD/MM/YYYY HH:MM".
      * Si dice "en 30 minutos", suma 30 minutos a la hora actual.
@@ -313,11 +313,11 @@ RESPONDE ÚNICAMENTE CON UN OBJETO JSON VÁLIDO CON ESTA ESTRUCTURA:
         return data
     except Exception as e:
         logger.error(f"Error procesando pendiente con IA: {e}")
-        # Fallback básico si falla la IA
+        # Fallback básico si falla la IA (preserva el texto completo del usuario)
         alerta_def = (now_pet + timedelta(hours=2)).strftime("%d/%m/%Y %H:%M")
         return {
-            "titulo": (texto or "Nuevo pendiente")[:50],
-            "detalle": texto or "",
+            "titulo": str(texto).strip() if texto else "Nuevo pendiente",
+            "detalle": str(texto).strip() if texto else "",
             "cliente_ref": "",
             "fecha_alerta": alerta_def,
             "prioridad": "MEDIA"

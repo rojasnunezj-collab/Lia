@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 
 from google.genai import types
 from google.oauth2 import service_account  # <--- Agregado para las llaves
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, CopyTextButton
 from telegram.ext import ContextTypes
 import gspread
 
@@ -314,17 +314,34 @@ async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAU
                 ]
                 await msg_wait.edit_text("🎉 <b>¡Excelente! No tienes pendientes activos por el momento.</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
             else:
-                texto_lista = f"📌 <b>Pendientes Activos ({len(pendientes)}):</b>\n\n"
+                texto_lista = f"📌 <b>Pendientes Activos ({len(pendientes)}):</b>\n"
+                texto_lista += "<i>💡 Toca el botón '📋 Copiar' de cualquier tarea para copiarla completa en 1 clic:</i>\n\n"
                 kb_items = []
                 for p in pendientes[:8]:
                     p_id = html.escape(str(p.get('ID', '')))
                     tit = html.escape(str(p.get('TITULO_TAREA', 'Sin título')))
+                    cli = html.escape(str(p.get('CLIENTE_REF', '')))
+                    det = html.escape(str(p.get('DETALLE', '')))
                     fec = html.escape(str(p.get('FECHA_ALERTA', '')))
                     prio = str(p.get('PRIORIDAD', 'MEDIA')).upper()
                     p_badge = "🔴" if prio == "ALTA" else ("🟢" if prio == "BAJA" else "🟡")
-                    texto_lista += f"{p_badge} <code>[{p_id}]</code> <b>{tit}</b>\n⏰ <i>{fec}</i>\n\n"
+
+                    texto_copia_item = formatear_texto_copia_pendiente(
+                        p_id=p.get('ID', ''), titulo=p.get('TITULO_TAREA', ''),
+                        cliente=p.get('CLIENTE_REF', ''), detalle=p.get('DETALLE', ''),
+                        fecha_alerta=p.get('FECHA_ALERTA', ''), prioridad=prio
+                    )
+
+                    texto_lista += f"{p_badge} <code>[{p_id}]</code> <b>{tit}</b>\n"
+                    if cli:
+                        texto_lista += f"   🏢 <code>{cli}</code>\n"
+                    if det:
+                        texto_lista += f"   📝 <i>{det}</i>\n"
+                    texto_lista += f"   ⏰ <code>{fec}</code>\n\n"
+
                     kb_items.append([
-                        InlineKeyboardButton(f"✅ Listo {p_id}", callback_data=f"pnd_done|{p_id}"),
+                        InlineKeyboardButton(f"📋 Copiar {p_id}", copy_text=CopyTextButton(text=texto_copia_item)),
+                        InlineKeyboardButton(f"✅ Listo", callback_data=f"pnd_done|{p_id}"),
                         InlineKeyboardButton(f"⏰ +1h", callback_data=f"pnd_snooze|{p_id}|60")
                     ])
 
@@ -352,21 +369,27 @@ async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAU
             user_data_cache[user_id] = {}
             user_states[user_id] = None
 
+            t_pnd = str(pnd_id)
+            t_tit = str(draft.get('titulo', ''))
+            t_cli = str(draft.get('cliente_ref', ''))
+            t_det = str(draft.get('detalle', ''))
+            t_fec = str(draft.get('fecha_alerta', ''))
+            t_prio = str(draft.get('prioridad', 'MEDIA'))
+            texto_copia = formatear_texto_copia_pendiente(
+                p_id=t_pnd, titulo=t_tit, cliente=t_cli, detalle=t_det, fecha_alerta=t_fec, prioridad=t_prio
+            )
+
             url_panel = obtener_url_webapp_pendientes(user_id=user_id)
             kb = [
+                [InlineKeyboardButton("📋 Copiar Pendiente Completo", copy_text=CopyTextButton(text=texto_copia))],
                 [InlineKeyboardButton("📱 Ver en WebApp", web_app=WebAppInfo(url=url_panel))],
                 [InlineKeyboardButton("➕ Nuevo Pendiente", callback_data='pnd_add')],
                 [InlineKeyboardButton("🔙 Menú Pendientes", callback_data='menu_pendientes')]
             ]
-            t_pnd = html.escape(str(pnd_id))
-            t_tit = html.escape(str(draft.get('titulo', '')))
-            t_fec = html.escape(str(draft.get('fecha_alerta', '')))
-            t_prio = html.escape(str(draft.get('prioridad', '')))
             await msg_save.edit_text(
-                f"✅ <b>¡Pendiente <code>{t_pnd}</code> guardado exitosamente!</b>\n\n"
-                f"📌 <b>Tarea:</b> {t_tit}\n"
-                f"⏰ <b>Alerta:</b> <code>{t_fec}</code>\n"
-                f"🎯 <b>Prioridad:</b> <code>{t_prio}</code>\n\n"
+                f"✅ <b>¡Pendiente <code>{html.escape(t_pnd)}</code> guardado exitosamente!</b>\n"
+                f"<i>💡 Toca el recuadro o el botón para copiarlo en 1 clic:</i>\n\n"
+                f"<pre><code>{html.escape(texto_copia)}</code></pre>\n\n"
                 f"🔔 Te notificaré automáticamente por este chat cuando venza el plazo.",
                 reply_markup=InlineKeyboardMarkup(kb),
                 parse_mode='HTML'
@@ -503,21 +526,19 @@ async def job_verificar_alertas_pendientes(context: ContextTypes.DEFAULT_TYPE):
             t_detalle = html.escape(detalle)
             t_fecha = html.escape(fecha_alerta)
 
-            msg = (
-                f"🔔 <b>ALERTA DE PENDIENTE</b> <code>[{t_id}]</code>\n\n"
-                f"📌 <b>Tarea:</b> <b>{t_titulo}</b>\n"
+            texto_copia_alerta = formatear_texto_copia_pendiente(
+                p_id=pnd_id, titulo=titulo, cliente=cliente, detalle=detalle, fecha_alerta=fecha_alerta, prioridad=prioridad
             )
-            if cliente:
-                msg += f"🏢 <b>Referencia:</b> <code>{t_cliente}</code>\n"
-            if detalle:
-                msg += f"📝 <b>Detalle:</b> <i>{t_detalle}</i>\n"
-            msg += (
-                f"⏰ <b>Programado:</b> <code>{t_fecha}</code>\n"
-                f"🎯 <b>Prioridad:</b> <code>{p_badge}</code>\n\n"
+
+            msg = (
+                f"🔔 <b>ALERTA DE PENDIENTE</b> <code>[{t_id}]</code>\n"
+                f"<i>💡 Toca el recuadro o el botón para copiar todo en 1 clic:</i>\n\n"
+                f"<pre><code>{html.escape(texto_copia_alerta)}</code></pre>\n\n"
                 f"¿Qué deseas hacer con este pendiente?"
             )
 
             kb = [
+                [InlineKeyboardButton("📋 Copiar Pendiente Completo", copy_text=CopyTextButton(text=texto_copia_alerta))],
                 [InlineKeyboardButton("✅ Marcar Listo", callback_data=f"pnd_done|{pnd_id}")],
                 [InlineKeyboardButton("⏰ +30 min", callback_data=f"pnd_snooze|{pnd_id}|30"),
                  InlineKeyboardButton("⏰ +2 horas", callback_data=f"pnd_snooze|{pnd_id}|120")],
@@ -669,28 +690,53 @@ def build_bitacora_draft_card(draft):
     ]
     return msg_card, InlineKeyboardMarkup(kb)
 
+def formatear_texto_copia_pendiente(p_id=None, titulo="", cliente="", detalle="", fecha_alerta="", prioridad="MEDIA"):
+    """Genera el texto limpio para copiar al portapapeles en 1 solo clic o toque."""
+    partes = []
+    id_str = f"[{p_id}] " if p_id else ""
+    partes.append(f"📌 {id_str}{str(titulo).strip()}")
+    if cliente and str(cliente).strip():
+        partes.append(f"🏢 Cliente/Ref: {str(cliente).strip()}")
+    if detalle and str(detalle).strip():
+        partes.append(f"📝 Detalle: {str(detalle).strip()}")
+    if fecha_alerta and str(fecha_alerta).strip():
+        partes.append(f"⏰ Alerta: {str(fecha_alerta).strip()}")
+    if prioridad and str(prioridad).strip():
+        partes.append(f"🎯 Prioridad: {str(prioridad).strip().upper()}")
+    return "\n".join(partes)
+
 def build_pendiente_draft_card(draft):
-    """Construye la tarjeta de visualización de borrador de Pendiente con botones de confirmación y selección de prioridad."""
-    titulo = html.escape(str(draft.get("titulo", "Sin título")).strip())
-    detalle = html.escape(str(draft.get("detalle", "")).strip())
-    cliente = html.escape(str(draft.get("cliente_ref", "")).strip())
-    fecha_alerta = html.escape(str(draft.get("fecha_alerta", "")).strip())
+    """Construye la tarjeta de visualización de borrador de Pendiente con texto completo y botón de copiado en 1 clic."""
+    titulo_raw = str(draft.get("titulo", "Sin título")).strip()
+    detalle_raw = str(draft.get("detalle", "")).strip()
+    cliente_raw = str(draft.get("cliente_ref", "")).strip()
+    fecha_alerta_raw = str(draft.get("fecha_alerta", "")).strip()
     prioridad = str(draft.get("prioridad", "MEDIA")).strip().upper()
     if prioridad not in ["ALTA", "MEDIA", "BAJA"]:
         prioridad = "MEDIA"
 
     p_badge = "🔴 ALTA" if prioridad == "ALTA" else ("🟢 BAJA" if prioridad == "BAJA" else "🟡 MEDIA")
+    texto_copia = formatear_texto_copia_pendiente(
+        titulo=titulo_raw, cliente=cliente_raw, detalle=detalle_raw, fecha_alerta=fecha_alerta_raw, prioridad=prioridad
+    )
+
+    t_esc = html.escape(titulo_raw)
+    d_esc = html.escape(detalle_raw)
+    c_esc = html.escape(cliente_raw)
+    f_esc = html.escape(fecha_alerta_raw)
 
     msg = (
-        "📌 <b>Borrador de Pendiente Detectado</b>\n\n"
-        f"📝 <b>Tarea:</b> <b>{titulo}</b>\n"
+        "📌 <b>Borrador de Pendiente Detectado</b>\n"
+        "<i>💡 Toca el recuadro o pulsa '📋 Copiar' para copiar todo en 1 clic:</i>\n\n"
+        f"<pre><code>{html.escape(texto_copia)}</code></pre>\n\n"
+        f"📝 <b>Tarea:</b> <b>{t_esc}</b>\n"
     )
-    if cliente:
-        msg += f"🏢 <b>Referencia / Cliente:</b> <code>{cliente}</code>\n"
-    if detalle:
-        msg += f"📋 <b>Detalle:</b> <i>{detalle}</i>\n"
+    if cliente_raw:
+        msg += f"🏢 <b>Referencia / Cliente:</b> <code>{c_esc}</code>\n"
+    if detalle_raw:
+        msg += f"📋 <b>Detalle Completo:</b> <i>{d_esc}</i>\n"
     msg += (
-        f"⏰ <b>Alerta Programada:</b> <code>{fecha_alerta}</code>\n"
+        f"⏰ <b>Alerta Programada:</b> <code>{f_esc}</code>\n"
         f"🎯 <b>Prioridad:</b> <code>{p_badge}</code>\n\n"
         f"❓ ¿Deseas confirmar y guardar este pendiente en Google Sheets?"
     )
@@ -701,6 +747,7 @@ def build_pendiente_draft_card(draft):
 
     kb = [
         [InlineKeyboardButton("✅ Confirmar y Guardar", callback_data='pnd_confirm')],
+        [InlineKeyboardButton("📋 Copiar Pendiente Completo", copy_text=CopyTextButton(text=texto_copia))],
         [
             InlineKeyboardButton(btn_alta, callback_data='pnd_prio|ALTA'),
             InlineKeyboardButton(btn_media, callback_data='pnd_prio|MEDIA'),
@@ -2191,12 +2238,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text("🧠 Analizando tarea con IA...")
         try:
             info = await procesar_pendiente_ia(texto=texto_input)
+            tit_val = str(info.get("titulo") or texto_input).strip()
+            det_val = str(info.get("detalle") or "").strip()
+            if not det_val and tit_val != texto_input:
+                det_val = texto_input
             draft = {
-                "titulo": info.get("titulo", texto_input[:50]),
-                "detalle": info.get("detalle", ""),
-                "cliente_ref": info.get("cliente_ref", ""),
-                "fecha_alerta": info.get("fecha_alerta", ""),
-                "prioridad": info.get("prioridad", "MEDIA")
+                "titulo": tit_val,
+                "detalle": det_val,
+                "cliente_ref": str(info.get("cliente_ref", "")).strip(),
+                "fecha_alerta": str(info.get("fecha_alerta", "")).strip(),
+                "prioridad": str(info.get("prioridad", "MEDIA")).strip().upper()
             }
             user_data_cache[user_id] = {"pendiente_draft": draft}
             card_text, kb_card = build_pendiente_draft_card(draft)
