@@ -989,6 +989,16 @@
       }
     }
 
+    function obtenerUsuarioMiniApp() {
+      const user = tg?.initDataUnsafe?.user;
+      if (!user) return "MiniApp";
+      if (user.username) return user.username;
+      if (user.first_name) {
+        return user.last_name ? `${user.first_name} ${user.last_name}` : user.first_name;
+      }
+      return "MiniApp";
+    }
+
     // Inicialización al cargar la página
     window.addEventListener('DOMContentLoaded', () => {
       // Usuario Telegram
@@ -1308,7 +1318,7 @@
         tipo_residuo: document.getElementById('tipoResiduo')?.value?.trim() || '',
         items: items,
         user_id: tg?.initDataUnsafe?.user?.id || null,
-        usuario_email: tg?.initDataUnsafe?.user?.username || "MiniApp",
+        usuario_email: obtenerUsuarioMiniApp(),
         filas_repositorio: window.filasRepositorioSeleccionadas || []
       };
 
@@ -1413,7 +1423,7 @@
             correlativo: correlativo,
             guias: guias || window.guiasSeleccionadasLista || [],
             user_id: tg?.initDataUnsafe?.user?.id || null,
-            usuario_email: tg?.initDataUnsafe?.user?.username || "MiniApp"
+            usuario_email: obtenerUsuarioMiniApp()
           })
         });
         const d = await res.json();
@@ -1845,7 +1855,7 @@
         nombre_pdf: document.getElementById('modNombrePdf').value.trim(),
         obs: document.getElementById('modMotivo').value.trim(),
         user_id: tg?.initDataUnsafe?.user?.id || null,
-        usuario_email: tg?.initDataUnsafe?.user?.username || "Usuario MiniApp"
+        usuario_email: obtenerUsuarioMiniApp()
       };
 
       const fileInput = document.getElementById('modArchivoCorregido');

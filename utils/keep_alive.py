@@ -604,7 +604,7 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                     nuevo_pdf_bytes=nuevo_pdf_bytes,
                     nombre_pdf_usuario=payload.get('nombre_pdf', ''),
                     obs_extra=payload.get('obs', ''),
-                    usuario_editor=payload.get('usuario_email', 'Usuario MiniApp')
+                    usuario_editor=payload.get('usuario_email') or payload.get('usuario') or 'Usuario MiniApp'
                 )
 
                 # Si hay usuario o admin, notificar por Telegram
@@ -665,7 +665,7 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                     raise ValueError("Falta 'correlativo' en la solicitud.")
 
                 guias = payload.get('guias') or []
-                usuario_email = payload.get('usuario_email', 'Usuario MiniApp')
+                usuario_email = payload.get('usuario_email') or payload.get('usuario') or 'Usuario MiniApp'
 
                 from core.certificados_service import juntar_expediente_completo
                 res = juntar_expediente_completo(

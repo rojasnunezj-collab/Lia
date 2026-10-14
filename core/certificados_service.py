@@ -1133,6 +1133,80 @@ def sobrescribir_o_subir_pdf_drive(file_id_existente: Optional[str], contenido_b
     _, link_nuevo = subir_a_drive_certificado(contenido_bytes, nombre_archivo, tipo_flujo, empresa_firma, mime_type='application/pdf')
     return link_nuevo
 
+def buscar_fila_certificado_existente(correlativo: str, tipo_cod: str = "COM", sheets_service=None) -> Optional[int]:
+    """
+    Busca si ya existe una fila para el correlativo y tipo especificado en la pestaña 'historial'.
+    Retorna el número de fila (1-based) o None si no existe.
+    Escanea desde las filas más recientes hacia atrás.
+    """
+    if not correlativo:
+        return None
+    if not sheets_service:
+        _, sheets_service = obtener_servicios_google()
+    try:
+        res = sheets_service.spreadsheets().values().get(
+            spreadsheetId=ID_SHEET_CONTROL, range="'historial'!A2:E"
+        ).execute()
+        filas = res.get('values', [])
+        if not filas:
+            return None
+
+        corr_query = str(correlativo).strip().upper()
+        corr_num = int(corr_query) if corr_query.isdigit() else None
+        tipo_query = str(tipo_cod or "").strip().upper()
+
+        # Recorrer de abajo hacia arriba (los más recientes primero)
+        for idx in range(len(filas) - 1, -1, -1):
+            row = filas[idx]
+            num_fila = idx + 2
+            corr_row = str(row[3]).strip().upper() if len(row) > 3 else ""
+            if not corr_row:
+                continue
+
+            match_corr = False
+            if corr_row == corr_query:
+                match_corr = True
+            elif corr_num is not None and corr_row.isdigit() and int(corr_row) == corr_num:
+                match_corr = True
+
+            if match_corr:
+                tipo_row = str(row[4]).strip().upper() if len(row) > 4 else ""
+                if not tipo_query:
+                    return num_fila
+
+                if tipo_query == "COM":
+                    if "COM" in tipo_row:
+                        return num_fila
+                else:  # "SER"
+                    if any(k in tipo_row for k in ["FIN", "SER", "DISPOSIC"]):
+                        return num_fila
+
+        return None
+    except Exception as e:
+        logger.error(f"Error buscando fila existente en historial: {e}")
+        return None
+
+def actualizar_fila_historial_sheets(num_fila: int, datos_fila: List[Any], sheets_service=None) -> bool:
+    """
+    Actualiza completamente una fila existente en la pestaña 'historial' (A{num_fila}:J{num_fila}).
+    Sobrescribe todos los campos incluyendo la auditoría en la columna J.
+    """
+    if not num_fila or num_fila < 2:
+        return False
+    if not sheets_service:
+        _, sheets_service = obtener_servicios_google()
+    try:
+        sheets_service.spreadsheets().values().update(
+            spreadsheetId=ID_SHEET_CONTROL,
+            range=f"'historial'!A{num_fila}:J{num_fila}",
+            valueInputOption="USER_ENTERED",
+            body={"values": [datos_fila]}
+        ).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error actualizando fila {num_fila} en 'historial': {e}")
+        return False
+
 def registrar_en_historial_sheets(datos_fila: List[Any], sheets_service=None) -> Optional[int]:
     """Inserta una fila en la pestaña 'historial' (A:J)."""
     if not sheets_service:
@@ -1154,16 +1228,19 @@ def registrar_en_historial_sheets(datos_fila: List[Any], sheets_service=None) ->
         return None
 
 def registrar_edicion_en_historial(num_fila: int, link_pdf: str, usuario_editor: str = "Usuario", obs_extra: str = "", sheets_service=None) -> bool:
-    """Actualiza columnas I y J de 'historial' tras una edición quirúrgica."""
+    """Actualiza columnas I y J de 'historial' tras una edición quirúrgica o unificación."""
     if not sheets_service:
         _, sheets_service = obtener_servicios_google()
     if not num_fila or num_fila < 2:
         return False
     try:
         ahora_pe = (datetime.now(PET)).strftime("%d/%m/%Y %H:%M")
-        nota_audit = f"Actualizado el {ahora_pe} por {usuario_editor}"
+        u_clean = str(usuario_editor or "Usuario").strip()
+        if u_clean.startswith('@'):
+            u_clean = u_clean[1:]
+        nota_audit = f"Modificado por Mini App ({ahora_pe} - {u_clean})"
         if obs_extra:
-            nota_audit += f" | {obs_extra}"
+            nota_audit += f" | {obs_extra.strip()}"
         body = {"values": [[link_pdf, nota_audit]]}
         sheets_service.spreadsheets().values().update(
             spreadsheetId=ID_SHEET_CONTROL,
@@ -1535,6 +1612,19 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     else:
         val_col_i = ""
 
+    u_raw = payload.get('usuario_email') or payload.get('usuario') or 'Usuario'
+    u_clean = str(u_raw).strip()
+    if u_clean.startswith('@'):
+        u_clean = u_clean[1:]
+
+    fila_existente = buscar_fila_certificado_existente(v_corr, tipo_cod=tipo_cod, sheets_service=sheets_service)
+    ahora_pe = datetime.now(PET).strftime("%d/%m/%Y %H:%M")
+
+    if fila_existente:
+        obs_col_j = f"Modificado por Mini App ({ahora_pe} - {u_clean})"
+    else:
+        obs_col_j = f"Emitido por Mini App ({ahora_pe} - {u_clean})"
+
     fecha_registro = datetime.now(PET).strftime("%d/%m/%Y")
     datos_log = [
         fecha_registro,
@@ -1546,10 +1636,16 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
         "",  # Link guía
         val_col_h,
         val_col_i,
-        f"Emitido desde Telegram Mini App ({payload.get('usuario_email', 'Bot')})"
+        obs_col_j
     ]
 
-    fila_historial = registrar_en_historial_sheets(datos_log, sheets_service)
+    if fila_existente:
+        actualizar_fila_historial_sheets(fila_existente, datos_log, sheets_service=sheets_service)
+        fila_historial = fila_existente
+        logger.info(f"Fila {fila_existente} de 'historial' sobrescrita para certificado {tipo_cod}-{v_corr}")
+    else:
+        fila_historial = registrar_en_historial_sheets(datos_log, sheets_service)
+        logger.info(f"Nueva fila {fila_historial} insertada en 'historial' para certificado {tipo_cod}-{v_corr}")
 
     # 10. Actualizar bitácora en Guias_recibidas (Columna H)
     filas_repo = payload.get('filas_repositorio') or []
@@ -2195,8 +2291,7 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
         pdf_id = file_id_subido
 
     # 7. Registrar auditoría y fórmula HYPERLINK en Sheets (Columna I y J)
-    ahora_pe = (datetime.now(PET)).strftime("%d/%m/%Y %H:%M")
-    obs_unir = f"Expediente unificado ({ahora_pe}): {len(bytes_remision)} Guía(s) Remisión, {len(bytes_transporte)} Guía(s) Transporte"
+    obs_unir = f"Expediente unificado: {len(bytes_remision)} Guía(s) Remisión, {len(bytes_transporte)} Guía(s) Transporte"
     link_final_hist = nuevo_link or link_pdf
     val_col_i = f'=HYPERLINK("{link_final_hist}", "{nombre_pdf}")'
     registrar_edicion_en_historial(
