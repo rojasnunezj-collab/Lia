@@ -27,6 +27,7 @@ from google.genai import types
 
 from config.settings import logger, SHEET_ID, DRIVE_FOLDER_ID, PROJECT_ID, REGION_ESTABLE, MODEL_NAME, FALLBACK_MODELS
 from core.sheets_client import obtener_credenciales
+from utils.helpers import liberar_memoria_proceso
 
 # Zona horaria Perú (UTC-5)
 PET = timezone(timedelta(hours=-5))
@@ -95,14 +96,24 @@ except Exception as _e:
 # ====================================================================
 # --- BLOQUE 3: CONEXIÓN A SERVICIOS GOOGLE WORKSPACE ---
 # ====================================================================
-def obtener_servicios_google():
-    """Retorna clientes autenticados de Drive y Sheets."""
+_cached_drive_service = None
+_cached_sheets_service = None
+
+def obtener_servicios_google(forzar_refresco: bool = False):
+    """
+    Retorna clientes autenticados de Drive y Sheets usando un patrón Singleton reutilizable.
+    Evita instanciar decenas de veces los metadatos de discovery de Google en memoria.
+    """
+    global _cached_drive_service, _cached_sheets_service
+    if not forzar_refresco and _cached_drive_service is not None and _cached_sheets_service is not None:
+        return _cached_drive_service, _cached_sheets_service
+
     creds = obtener_credenciales()
     if not creds:
         raise ValueError("No se pudieron obtener credenciales válidas de Google.")
-    drive = build('drive', 'v3', credentials=creds)
-    sheets = build('sheets', 'v4', credentials=creds)
-    return drive, sheets
+    _cached_drive_service = build('drive', 'v3', credentials=creds, cache_discovery=False)
+    _cached_sheets_service = build('sheets', 'v4', credentials=creds, cache_discovery=False)
+    return _cached_drive_service, _cached_sheets_service
 
 # ====================================================================
 # --- BLOQUE 4: UTILIDADES DE FORMATEO Y CADENAS ---
@@ -353,7 +364,8 @@ def obtener_link_archivo_drive(servicio_drive, nombre_o_id: str) -> Optional[str
 
         query = f"name contains '{s_nom}' and trashed = false"
         res = servicio_drive.files().list(
-            q=query, spaces='drive', fields='files(id, webViewLink)', supportsAllDrives=True
+            q=query, spaces='drive', fields='files(id, webViewLink)', supportsAllDrives=True,
+            orderBy='modifiedTime desc'
         ).execute()
         files = res.get('files', [])
         return files[0].get('webViewLink') if files else None
@@ -364,7 +376,7 @@ def obtener_link_archivo_drive(servicio_drive, nombre_o_id: str) -> Optional[str
 def descargar_archivo_drive_por_id_o_nombre(nombre_o_id: str, drive_service=None) -> Optional[bytes]:
     """
     Descarga el contenido binario de un archivo de Google Drive
-    identificado por ID, URL o nombre de archivo.
+    identificado por ID, URL o nombre de archivo asegurando la última revisión.
     """
     if not nombre_o_id:
         return None
@@ -389,7 +401,22 @@ def descargar_archivo_drive_por_id_o_nombre(nombre_o_id: str, drive_service=None
             if mime_type == 'application/vnd.google-apps.document':
                 req = drive_service.files().export_media(fileId=file_id_final, mimeType='application/pdf')
             else:
-                req = drive_service.files().get_media(fileId=file_id_final, supportsAllDrives=True)
+                try:
+                    rev_res = drive_service.revisions().list(
+                        fileId=file_id_final, fields='revisions(id, modifiedTime)'
+                    ).execute()
+                    revs = rev_res.get('revisions', [])
+                    if revs:
+                        latest_rev = sorted(revs, key=lambda r: r.get('modifiedTime', ''))[-1]
+                        logger.info(f"Descargando última revisión {latest_rev.get('id')} ({latest_rev.get('modifiedTime')}) para {file_id_final}")
+                        req = drive_service.revisions().get_media(
+                            fileId=file_id_final, revisionId=latest_rev['id']
+                        )
+                    else:
+                        req = drive_service.files().get_media(fileId=file_id_final, supportsAllDrives=True)
+                except Exception as e_rev:
+                    logger.warning(f"Error consultando revisiones de {file_id_final} ({e_rev}), usando get_media estándar.")
+                    req = drive_service.files().get_media(fileId=file_id_final, supportsAllDrives=True)
             fh = io.BytesIO()
             dl = MediaIoBaseDownload(fh, req)
             done = False
@@ -406,6 +433,7 @@ def descargar_archivo_drive_por_id_o_nombre(nombre_o_id: str, drive_service=None
                 corpora='allDrives',
                 includeItemsFromAllDrives=True,
                 supportsAllDrives=True,
+                orderBy='modifiedTime desc',
                 fields='files(id, name, mimeType)'
             ).execute()
             files = res.get('files', [])
@@ -419,6 +447,7 @@ def descargar_archivo_drive_por_id_o_nombre(nombre_o_id: str, drive_service=None
                     corpora='allDrives',
                     includeItemsFromAllDrives=True,
                     supportsAllDrives=True,
+                    orderBy='modifiedTime desc',
                     fields='files(id, name, mimeType)'
                 ).execute()
                 files = res2.get('files', [])
@@ -429,7 +458,22 @@ def descargar_archivo_drive_por_id_o_nombre(nombre_o_id: str, drive_service=None
                 if m_type == 'application/vnd.google-apps.document':
                     req = drive_service.files().export_media(fileId=f_id, mimeType='application/pdf')
                 else:
-                    req = drive_service.files().get_media(fileId=f_id, supportsAllDrives=True)
+                    try:
+                        rev_res = drive_service.revisions().list(
+                            fileId=f_id, fields='revisions(id, modifiedTime)'
+                        ).execute()
+                        revs = rev_res.get('revisions', [])
+                        if revs:
+                            latest_rev = sorted(revs, key=lambda r: r.get('modifiedTime', ''))[-1]
+                            logger.info(f"Descargando última revisión {latest_rev.get('id')} ({latest_rev.get('modifiedTime')}) para {f_id}")
+                            req = drive_service.revisions().get_media(
+                                fileId=f_id, revisionId=latest_rev['id']
+                            )
+                        else:
+                            req = drive_service.files().get_media(fileId=f_id, supportsAllDrives=True)
+                    except Exception as e_rev:
+                        logger.warning(f"Error consultando revisiones de {f_id} ({e_rev}), usando get_media estándar.")
+                        req = drive_service.files().get_media(fileId=f_id, supportsAllDrives=True)
                 fh = io.BytesIO()
                 dl = MediaIoBaseDownload(fh, req)
                 done = False
@@ -728,7 +772,10 @@ def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]])
 
     new_buffer = io.BytesIO()
     doc.save(new_buffer)
-    return new_buffer.getvalue()
+    docx_bytes_result = new_buffer.getvalue()
+    new_buffer.close()
+    del doc
+    return docx_bytes_result
 
 def convertir_docx_a_pdf(docx_bytes: bytes, drive_service=None) -> bytes:
     """
@@ -738,9 +785,10 @@ def convertir_docx_a_pdf(docx_bytes: bytes, drive_service=None) -> bytes:
     if not drive_service:
         drive_service, _ = obtener_servicios_google()
 
+    upload_io = io.BytesIO(docx_bytes)
     try:
         media = MediaIoBaseUpload(
-            io.BytesIO(docx_bytes),
+            upload_io,
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             resumable=False
         )
@@ -764,10 +812,14 @@ def convertir_docx_a_pdf(docx_bytes: bytes, drive_service=None) -> bytes:
         except Exception:
             pass
 
-        return fh.getvalue()
+        pdf_result = fh.getvalue()
+        fh.close()
+        return pdf_result
     except Exception as e:
         logger.error(f"Error convirtiendo DOCX a PDF vía Drive API: {e}")
         raise RuntimeError(f"Falla convirtiendo Word a PDF: {e}")
+    finally:
+        upload_io.close()
 
 def unir_tres_documentos_pdf(cert_pdf_bytes: bytes, remision_bytes: Optional[bytes] = None, transporte_bytes: Optional[bytes] = None) -> bytes:
     """
@@ -777,21 +829,26 @@ def unir_tres_documentos_pdf(cert_pdf_bytes: bytes, remision_bytes: Optional[byt
     3. Guía de Transporte (Opcional)
     """
     writer = PdfWriter()
-    reader_cert = PdfReader(io.BytesIO(cert_pdf_bytes))
+    io_cert = io.BytesIO(cert_pdf_bytes)
+    reader_cert = PdfReader(io_cert)
     for page in reader_cert.pages:
         writer.add_page(page)
 
+    io_rem = None
     if remision_bytes:
         try:
-            reader_rem = PdfReader(io.BytesIO(remision_bytes))
+            io_rem = io.BytesIO(remision_bytes)
+            reader_rem = PdfReader(io_rem)
             for page in reader_rem.pages:
                 writer.add_page(page)
         except Exception as e:
             logger.warning(f"No se pudo unir remisión como PDF: {e}")
 
+    io_trans = None
     if transporte_bytes:
         try:
-            reader_trans = PdfReader(io.BytesIO(transporte_bytes))
+            io_trans = io.BytesIO(transporte_bytes)
+            reader_trans = PdfReader(io_trans)
             for page in reader_trans.pages:
                 writer.add_page(page)
         except Exception as e:
@@ -799,16 +856,28 @@ def unir_tres_documentos_pdf(cert_pdf_bytes: bytes, remision_bytes: Optional[byt
 
     output = io.BytesIO()
     writer.write(output)
-    output.seek(0)
-    return output.getvalue()
+    result = output.getvalue()
+
+    # Cerrar buffers y liberar memoria explícitamente
+    output.close()
+    io_cert.close()
+    if io_rem:
+        io_rem.close()
+    if io_trans:
+        io_trans.close()
+    del writer, reader_cert
+    liberar_memoria_proceso()
+    return result
 
 def sustituir_certificado_en_pdf(pdf_unificado_bytes: bytes, nuevo_cert_pdf_bytes: bytes, num_paginas_reemplazar: int = 1) -> bytes:
     """
     Sustituye quirúrgicamente la(s) primera(s) página(s) de un PDF consolidado
     conservando intactas todas las páginas de guías originales posteriores.
     """
-    reader_unido = PdfReader(io.BytesIO(pdf_unificado_bytes))
-    reader_nuevo = PdfReader(io.BytesIO(nuevo_cert_pdf_bytes))
+    io_unido = io.BytesIO(pdf_unificado_bytes)
+    io_nuevo = io.BytesIO(nuevo_cert_pdf_bytes)
+    reader_unido = PdfReader(io_unido)
+    reader_nuevo = PdfReader(io_nuevo)
     writer = PdfWriter()
 
     # 1. Agregar páginas del nuevo certificado
@@ -823,8 +892,14 @@ def sustituir_certificado_en_pdf(pdf_unificado_bytes: bytes, nuevo_cert_pdf_byte
 
     out_io = io.BytesIO()
     writer.write(out_io)
-    out_io.seek(0)
-    return out_io.getvalue()
+    result = out_io.getvalue()
+
+    out_io.close()
+    io_unido.close()
+    io_nuevo.close()
+    del writer, reader_unido, reader_nuevo
+    liberar_memoria_proceso()
+    return result
 
 # ====================================================================
 # --- BLOQUE 6: MOTOR COGNITIVO IA (VERTEX AI / GEMINI OCR) ---
@@ -856,8 +931,11 @@ ESTRUCTURA JSON EXACTA Y REGLAS DE NEGOCIO OBLIGATORIAS:
 }
 """
 
+_cached_genai_clients: Dict[str, Any] = {}
+
 def procesar_guia_ia_vertex(pdf_bytes: bytes) -> Optional[Dict[str, Any]]:
-    """Procesamiento OCR síncrono con Gemini vía Vertex AI / Google GenAI SDK."""
+    """Procesamiento OCR síncrono con Gemini vía Vertex AI / Google GenAI SDK con clientes cacheados y liberación de memoria."""
+    global _cached_genai_clients
     creds = obtener_credenciales()
     regiones = [REGION_ESTABLE or "us-central1", "us-west1", "us-east4", "southamerica-east1"]
     modelos = [MODEL_NAME or "gemini-2.5-flash"] + FALLBACK_MODELS
@@ -865,31 +943,38 @@ def procesar_guia_ia_vertex(pdf_bytes: bytes) -> Optional[Dict[str, Any]]:
     pdf_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
     errores = []
 
-    for region in regiones:
-        try:
-            client = genai.Client(vertexai=True, project=PROJECT_ID, location=region, credentials=creds)
-            for m_name in modelos:
-                try:
-                    response = client.models.generate_content(
-                        model=m_name,
-                        contents=[pdf_part, PROMPT_EXTRACCION_CERTIFICADO],
-                        config=types.GenerateContentConfig(response_mime_type="application/json")
-                    )
-                    datos = json.loads(response.text)
-                    if datos.get("destinatario") or len(datos.get("vehiculo", "")) >= 3 or datos.get("cliente"):
-                        if datos.get("serie"):
-                            datos["serie"] = limpiar_numero_guia(datos["serie"])
-                        return datos
-                except Exception as e:
-                    if "404" not in str(e):
-                        errores.append(f"{region}/{m_name}: {e}")
-                    continue
-        except Exception as e:
-            errores.append(f"Init {region}: {e}")
-            continue
+    try:
+        for region in regiones:
+            try:
+                if region not in _cached_genai_clients:
+                    _cached_genai_clients[region] = genai.Client(vertexai=True, project=PROJECT_ID, location=region, credentials=creds)
+                client = _cached_genai_clients[region]
 
-    logger.error(f"Falla OCR de Vertex AI en todas las regiones: {errores}")
-    return None
+                for m_name in modelos:
+                    try:
+                        response = client.models.generate_content(
+                            model=m_name,
+                            contents=[pdf_part, PROMPT_EXTRACCION_CERTIFICADO],
+                            config=types.GenerateContentConfig(response_mime_type="application/json")
+                        )
+                        datos = json.loads(response.text)
+                        if datos.get("destinatario") or len(datos.get("vehiculo", "")) >= 3 or datos.get("cliente"):
+                            if datos.get("serie"):
+                                datos["serie"] = limpiar_numero_guia(datos["serie"])
+                            return datos
+                    except Exception as e:
+                        if "404" not in str(e):
+                            errores.append(f"{region}/{m_name}: {e}")
+                        continue
+            except Exception as e:
+                errores.append(f"Init {region}: {e}")
+                continue
+
+        logger.error(f"Falla OCR de Vertex AI en todas las regiones: {errores}")
+        return None
+    finally:
+        del pdf_part
+        liberar_memoria_proceso()
 
 async def async_procesar_guia_ia_vertex(pdf_bytes: bytes) -> Optional[Dict[str, Any]]:
     """Envoltorio asíncrono para no bloquear el bucle de eventos del Bot."""
@@ -1125,7 +1210,7 @@ def resolver_plantilla_drive(empresa_nombre: str, tipo_certificado: str, drive_s
     return PLANTILLAS_FALLBACK.get(emp_key, {}).get(flujo_key, "1d09vmlBlW_4yjrrz5M1XM8WpCvzTI4f11pERDbxFvNE")
 
 def descargar_plantilla_docx(plantilla_id: str, drive_service) -> bytes:
-    """Descarga los bytes de una plantilla de Drive (Doc o Docx)."""
+    """Descarga los bytes de una plantilla de Drive (Doc o Docx) asegurando la última revisión."""
     meta = drive_service.files().get(fileId=plantilla_id, fields='mimeType', supportsAllDrives=True).execute()
     mime = meta.get('mimeType', '')
     if mime == 'application/vnd.google-apps.document':
@@ -1134,7 +1219,23 @@ def descargar_plantilla_docx(plantilla_id: str, drive_service) -> bytes:
             mimeType='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         )
     else:
-        req = drive_service.files().get_media(fileId=plantilla_id, supportsAllDrives=True)
+        # Para archivos binarios (.docx), consultar revisiones para descargar siempre la última revisión real
+        try:
+            rev_res = drive_service.revisions().list(
+                fileId=plantilla_id, fields='revisions(id, modifiedTime)'
+            ).execute()
+            revs = rev_res.get('revisions', [])
+            if revs:
+                latest_rev = sorted(revs, key=lambda r: r.get('modifiedTime', ''))[-1]
+                logger.info(f"Descargando última revisión de Drive {latest_rev.get('id')} ({latest_rev.get('modifiedTime')}) para {plantilla_id}")
+                req = drive_service.revisions().get_media(
+                    fileId=plantilla_id, revisionId=latest_rev['id']
+                )
+            else:
+                req = drive_service.files().get_media(fileId=plantilla_id, supportsAllDrives=True)
+        except Exception as e_rev:
+            logger.warning(f"No se pudo consultar revisiones de {plantilla_id} ({e_rev}), usando get_media estándar.")
+            req = drive_service.files().get_media(fileId=plantilla_id, supportsAllDrives=True)
 
     fh = io.BytesIO()
     dl = MediaIoBaseDownload(fh, req)
@@ -1345,21 +1446,27 @@ def buscar_datos_certificado_en_historial(correlativo: str, sheets_service=None,
 
         corr_query = str(correlativo).strip().upper()
         corr_num = int(corr_query) if corr_query.isdigit() else None
-        resultados = []
+        resultados_exactos = []
+        resultados_parciales = []
 
-        for idx, row in enumerate(filas[1:]):
-            num_fila = idx + 2
+        # Recorrer de abajo hacia arriba (más recientes primero)
+        for idx in range(len(filas) - 1, 0, -1):
+            row = filas[idx]
+            num_fila = idx + 1
             corr_row = str(row[3]).strip().upper().replace('=', '').replace('"', '') if len(row) > 3 else ""
+            if not corr_row:
+                continue
 
-            match = False
-            if corr_row and corr_row == corr_query:
-                match = True
+            es_exacto = False
+            es_parcial = False
+            if corr_row == corr_query:
+                es_exacto = True
             elif corr_num is not None and corr_row.isdigit() and int(corr_row) == corr_num:
-                match = True
+                es_exacto = True
             elif corr_query and corr_query in corr_row:
-                match = True
+                es_parcial = True
 
-            if match:
+            if es_exacto or es_parcial:
                 raw_guia = str(row[6]).strip() if len(row) > 6 else ""
                 raw_doc_val = str(row[7]).strip() if len(row) > 7 else ""
                 raw_pdf_val = str(row[8]).strip() if len(row) > 8 else ""
@@ -1406,7 +1513,7 @@ def buscar_datos_certificado_en_historial(correlativo: str, sheets_service=None,
                     tag_rem_b = "-REM-TRAN" if (len(row) > 5 and str(row[5]).strip()) else ""
                     nom_pdf = f"CERT-{tipo_cod_b}-{corr_row}{tag_rem_b}-{dest_b}.pdf"
 
-                resultados.append({
+                item_res = {
                     "fila": num_fila,
                     "fecha": str(row[0]).strip() if len(row) > 0 else "",
                     "empresa": str(row[1]).strip() if len(row) > 1 else "",
@@ -1420,9 +1527,13 @@ def buscar_datos_certificado_en_historial(correlativo: str, sheets_service=None,
                     "link_pdf": url_pdf,
                     "raw_pdf": nom_pdf,
                     "observacion": str(row[9]).strip() if len(row) > 9 else ""
-                })
+                }
+                if es_exacto:
+                    resultados_exactos.append(item_res)
+                else:
+                    resultados_parciales.append(item_res)
 
-        return resultados
+        return resultados_exactos + resultados_parciales
     except Exception as e:
         logger.error(f"Error buscando certificado en 'historial': {e}")
         return []
@@ -1619,9 +1730,15 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     doc.render(ctx)
     buf_tpl = io.BytesIO()
     doc.save(buf_tpl)
+    tpl_bytes = buf_tpl.getvalue()
+    buf_tpl.close()
+    del doc
 
     # 3. Inyectar tabla de ítems
-    docx_final_bytes = inyectar_tabla_en_docx(io.BytesIO(buf_tpl.getvalue()), items)
+    tpl_io = io.BytesIO(tpl_bytes)
+    docx_final_bytes = inyectar_tabla_en_docx(tpl_io, items)
+    tpl_io.close()
+    del tpl_bytes
 
     # 4. Convertir Certificado a PDF
     cert_pdf_bytes = convertir_docx_a_pdf(docx_final_bytes, drive_service)
@@ -1779,23 +1896,64 @@ def procesar_regeneracion_expediente(
     else:
         # Descargar Word actualizado directamente desde Google Drive
         doc_id = extraer_id_drive(link_doc)
+        if not doc_id and cert_sel.get('raw_doc'):
+            try:
+                res_f = drive_service.files().list(
+                    q=f"name contains '{cert_sel['raw_doc']}' and trashed = false",
+                    spaces='drive', orderBy='modifiedTime desc', fields='files(id)'
+                ).execute()
+                files_found = res_f.get('files', [])
+                if files_found:
+                    doc_id = files_found[0]['id']
+            except Exception:
+                pass
+
         if not doc_id:
             raise ValueError(f"No se pudo resolver el ID del documento Word para #{correlativo}.")
         doc_bytes = descargar_plantilla_docx(doc_id, drive_service)
         nuevo_cert_pdf_bytes = convertir_docx_a_pdf(doc_bytes, drive_service)
 
-    # 3. Descargar PDF unificado existente de Drive
+    # 3. Descargar PDF unificado existente de Drive asegurando la última versión
     pdf_id = extraer_id_drive(link_pdf)
+    if not pdf_id and cert_sel.get('raw_pdf'):
+        try:
+            res_pdf = drive_service.files().list(
+                q=f"name contains '{cert_sel['raw_pdf']}' and trashed = false",
+                spaces='drive', orderBy='modifiedTime desc', fields='files(id)'
+            ).execute()
+            files_pdf = res_pdf.get('files', [])
+            if files_pdf:
+                pdf_id = files_pdf[0]['id']
+        except Exception:
+            pass
+
     if not pdf_id:
         raise ValueError(f"No se pudo resolver el ID de Drive del PDF consolidado para #{correlativo}.")
 
-    req = drive_service.files().get_media(fileId=pdf_id, supportsAllDrives=True)
+    try:
+        rev_res = drive_service.revisions().list(
+            fileId=pdf_id, fields='revisions(id, modifiedTime)'
+        ).execute()
+        revs = rev_res.get('revisions', [])
+        if revs:
+            latest_rev = sorted(revs, key=lambda r: r.get('modifiedTime', ''))[-1]
+            logger.info(f"Descargando última revisión {latest_rev.get('id')} ({latest_rev.get('modifiedTime')}) del PDF consolidado {pdf_id}")
+            req = drive_service.revisions().get_media(
+                fileId=pdf_id, revisionId=latest_rev['id']
+            )
+        else:
+            req = drive_service.files().get_media(fileId=pdf_id, supportsAllDrives=True)
+    except Exception as e_rev:
+        logger.warning(f"Error consultando revisiones del PDF consolidado {pdf_id} ({e_rev}), usando get_media estándar.")
+        req = drive_service.files().get_media(fileId=pdf_id, supportsAllDrives=True)
+
     fh = io.BytesIO()
     dl = MediaIoBaseDownload(fh, req)
     done = False
     while not done:
         _, done = dl.next_chunk()
     pdf_unificado_existente_bytes = fh.getvalue()
+    fh.close()
 
     # 4. Sustitución quirúrgica de la carátula
     pdf_actualizado_bytes = sustituir_certificado_en_pdf(
@@ -1835,6 +1993,7 @@ def procesar_regeneracion_expediente(
         num_fila, val_col_i, usuario_editor=usuario_editor,
         obs_extra=obs_extra, sheets_service=sheets_service
     )
+    liberar_memoria_proceso()
 
     return {
         "status": "success",
@@ -2359,8 +2518,11 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
 
     out_io = io.BytesIO()
     writer.write(out_io)
-    out_io.seek(0)
     pdf_unificado_bytes = out_io.getvalue()
+    total_pags = len(writer.pages)
+    out_io.close()
+    del writer, reader_cert
+    del bytes_remision, bytes_transporte
 
     # 6. Sobrescribir in-place o subir nuevo a Drive
     if pdf_id:
@@ -2374,13 +2536,14 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
         pdf_id = file_id_subido
 
     # 7. Registrar auditoría y fórmula HYPERLINK en Sheets (Columna I y J)
-    obs_unir = f"Expediente unificado: {len(bytes_remision)} Guía(s) Remisión, {len(bytes_transporte)} Guía(s) Transporte"
+    obs_unir = f"Expediente unificado: {len(archivos_rem)} Guía(s) Remisión, {len(archivos_trans)} Guía(s) Transporte"
     link_final_hist = nuevo_link or link_pdf
     val_col_i = f'=HYPERLINK("{link_final_hist}"; "{nombre_pdf}")'
     registrar_edicion_en_historial(
         num_fila, val_col_i, usuario_editor=usuario_editor,
         obs_extra=obs_unir, sheets_service=sheets_service
     )
+    liberar_memoria_proceso()
 
     return {
         "status": "success",
@@ -2388,8 +2551,8 @@ def juntar_expediente_completo(correlativo: str, guias_lista: Optional[List[str]
         "fila": num_fila,
         "pdf_link": link_final_hist,
         "nombre_archivo": nombre_pdf,
-        "remisiones_unidas": len(bytes_remision),
-        "transportes_unidos": len(bytes_transporte),
-        "total_paginas": len(writer.pages),
+        "remisiones_unidas": len(archivos_rem),
+        "transportes_unidos": len(archivos_trans),
+        "total_paginas": total_pags,
         "pdf_bytes": pdf_unificado_bytes
     }

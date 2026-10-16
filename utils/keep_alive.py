@@ -5,6 +5,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 from config.settings import logger
+from utils.helpers import liberar_memoria_proceso
 
 _clientes_cache = None
 _clientes_cache_time = 0
@@ -516,6 +517,9 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 return
 
         elif path == '/api/certificados/ocr':
+            post_body = None
+            payload = None
+            pdf_bytes = None
             try:
                 content_len = int(self.headers.get('Content-Length', 0))
                 post_body = self.rfile.read(content_len)
@@ -555,8 +559,13 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
                 return
+            finally:
+                del post_body, payload, pdf_bytes
+                liberar_memoria_proceso()
 
         elif path == '/api/certificados/consolidar_repo':
+            post_body = None
+            payload = None
             try:
                 content_len = int(self.headers.get('Content-Length', 0))
                 post_body = self.rfile.read(content_len)
@@ -582,6 +591,9 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
                 return
+            finally:
+                del post_body, payload
+                liberar_memoria_proceso()
 
         elif path == '/api/certificados/emitir':
             content_len = int(self.headers.get('Content-Length', 0))
@@ -661,9 +673,13 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                         requests.post(f"https://api.telegram.org/bot{token}/sendDocument", data=data_tg, files=files, timeout=30)
                     except Exception as e_tg:
                         logger.error(f"Error enviando certificado por Telegram: {e_tg}")
+                    finally:
+                        del files, data_tg
 
                 # Respuesta segura JSON para la Mini App
                 res_safe = {k: v for k, v in res.items() if k != 'pdf_bytes'}
+                if isinstance(res, dict):
+                    res.pop('pdf_bytes', None)
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self.send_header('Access-Control-Allow-Origin', '*')
@@ -680,6 +696,8 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 return
             finally:
                 liberar_candado_certificado(candado_key)
+                del post_body, payload
+                liberar_memoria_proceso()
 
         elif path == '/api/certificados/regenerar':
             content_len = int(self.headers.get('Content-Length', 0))
@@ -761,8 +779,12 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                         requests.post(f"https://api.telegram.org/bot{token}/sendDocument", data=data_tg, files=files, timeout=30)
                     except Exception as e_tg:
                         logger.error(f"Error enviando actualización por Telegram: {e_tg}")
+                    finally:
+                        del files, data_tg
 
                 res_safe = {k: v for k, v in res.items() if k != 'pdf_bytes'}
+                if isinstance(res, dict):
+                    res.pop('pdf_bytes', None)
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self.send_header('Access-Control-Allow-Origin', '*')
@@ -779,6 +801,8 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 return
             finally:
                 liberar_candado_certificado(candado_key)
+                del post_body, payload
+                liberar_memoria_proceso()
 
         elif path == '/api/certificados/juntar_expediente':
             content_len = int(self.headers.get('Content-Length', 0))
@@ -850,8 +874,12 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                         requests.post(f"https://api.telegram.org/bot{token}/sendDocument", data=data_tg, files=files, timeout=30)
                     except Exception as e_tg:
                         logger.error(f"Error enviando expediente unificado por Telegram: {e_tg}")
+                    finally:
+                        del files, data_tg
 
                 res_safe = {k: v for k, v in res.items() if k != 'pdf_bytes'}
+                if isinstance(res, dict):
+                    res.pop('pdf_bytes', None)
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self.send_header('Access-Control-Allow-Origin', '*')
@@ -868,6 +896,8 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 return
             finally:
                 liberar_candado_certificado(candado_key)
+                del post_body, payload
+                liberar_memoria_proceso()
 
         elif path == '/api/flota/camiones/guardar':
             try:

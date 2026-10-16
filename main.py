@@ -8,6 +8,7 @@ import requests
 import pytz
 from datetime import time
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
+from telegram.request import HTTPXRequest
 
 from config.settings import logger, KEY_FILE
 from utils.helpers import init_db
@@ -95,7 +96,14 @@ def main():
         while True:
             _t.sleep(30)
     
-    app = ApplicationBuilder().token(token).post_init(post_init).build()
+    request_config = HTTPXRequest(
+        connection_pool_size=10,
+        connect_timeout=20.0,
+        read_timeout=30.0,
+        write_timeout=20.0,
+        pool_timeout=5.0
+    )
+    app = ApplicationBuilder().token(token).request(request_config).post_init(post_init).build()
     
     # Configurar tarea diaria a las 9:00 AM (Hora Perú)
     tz_peru = pytz.timezone('America/Lima')
@@ -139,7 +147,12 @@ def main():
     
     app.add_error_handler(global_error_handler)
     
-    app.run_polling(stop_signals=())
+    app.run_polling(
+        drop_pending_updates=False,
+        timeout=30,
+        bootstrap_retries=-1,
+        stop_signals=()
+    )
 
 if __name__ == '__main__':
     main()

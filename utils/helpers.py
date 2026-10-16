@@ -8,6 +8,8 @@ import asyncio
 import json
 import unicodedata
 import difflib
+import gc
+import ctypes
 from datetime import datetime
 from config.settings import logger
 
@@ -40,6 +42,18 @@ def clean_json_response(text):
     text = re.sub(r'```json\s*|\s*```', '', text, flags=re.IGNORECASE)
     match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
     return match.group(1) if match else text
+
+def liberar_memoria_proceso():
+    """
+    Fuerza la recolección de basura cíclica de Python y solicita a la librería C
+    (glibc malloc_trim en Linux) liberar de inmediato las páginas de memoria retenidas.
+    Vital para evitar alertas de límite de RAM (512MB) en Render y contenedores Docker.
+    """
+    gc.collect()
+    try:
+        ctypes.CDLL('libc.so.6').malloc_trim(0)
+    except Exception:
+        pass
 
 def normalize_search_text(text: str) -> str:
     """Normaliza texto para búsqueda: mayúsculas, sin tildes/diacríticos y sin puntuación."""

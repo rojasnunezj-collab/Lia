@@ -10,6 +10,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONIOENCODING=utf-8
+ENV MALLOC_ARENA_MAX=2
 
 # ====================================================================
 # --- DEPENDENCIAS DEL SISTEMA ---
