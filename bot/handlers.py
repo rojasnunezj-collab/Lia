@@ -3539,10 +3539,10 @@ async def ejecutar_lectura_manual(user_id, file_path, mime_type, context, msg_st
         user_data_cache[user_id]['img_message_id'] = original_msg_id
         user_states[user_id] = MODO_GUIAS_MANUAL_FECHA
         kb = [[InlineKeyboardButton("🔙 Volver", callback_data='volver_inicio')]]
-        await msg_status.edit_text("✅ Imagen subida a Drive.\n\n📅 Paso 1/5 — Escribe la Fecha de la guía (Ej: 04/04/2026):", reply_markup=InlineKeyboardMarkup(kb))
+        await msg_status.edit_text("✅ Archivo subido a Drive con éxito.\n\n📅 Paso 1/5 — Escribe la Fecha de la guía (Ej: 04/04/2026):", reply_markup=InlineKeyboardMarkup(kb))
     except Exception as e:
         logger.error(f"Error en ejecutar_lectura_manual: {e}")
-        await msg_status.edit_text(f"❌ Error al subir imagen a Drive: {e}")
+        await msg_status.edit_text(f"❌ Error al subir archivo a Drive: {e}")
     finally:
         if os.path.exists(file_path):
             try: os.remove(file_path)
@@ -3788,58 +3788,63 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     modo = user_states.get(user_id)
 
-    # Modo Pendientes (Audio, Nota de voz o Imagen)
+    # Modo Pendientes (Audio, Nota de voz o Imagen con instrucción explícita)
     if modo == MODO_PENDIENTE_ADD:
-        msg = await update.message.reply_text("⏳ Descargando audio/archivo para el pendiente...")
-        file_path = f"pnd_{user_id}_{update.message.id}.ogg"
-        try:
-            mime_type = "audio/ogg"
-            if update.message.voice:
-                f = await update.message.voice.get_file()
-                mime_type = "audio/ogg"
-            elif update.message.audio:
-                f = await update.message.audio.get_file()
-                mime_type = update.message.audio.mime_type or "audio/mp3"
-                file_path = file_path.replace('.ogg', '.mp3')
-            elif update.message.photo:
-                f = await update.message.photo[-1].get_file()
-                mime_type = "image/jpeg"
-                file_path = file_path.replace('.ogg', '.jpg')
-            elif update.message.document:
-                f = await update.message.document.get_file()
-                mime_type = update.message.document.mime_type or "application/pdf"
-                file_path = file_path.replace('.ogg', '.pdf')
-            else:
-                await msg.edit_text("⚠️ Tipo de archivo no compatible para registrar pendiente.")
-                return
-
-            await f.download_to_drive(file_path)
-            await msg.edit_text("🎙️🧠 Escuchando audio y extrayendo tarea con IA...")
-            caption = update.message.caption or ""
-            info = await procesar_pendiente_ia(texto=caption, file_path=file_path, mime_type=mime_type)
-
+        is_voice_audio = bool(update.message.voice or update.message.audio)
+        caption_lower = (update.message.caption or "").lower()
+        is_explicit_task = any(k in caption_lower for k in ["pendiente", "tarea", "recordar", "alerta", "nota"])
+        
+        if is_voice_audio or is_explicit_task:
+            msg = await update.message.reply_text("⏳ Descargando audio/archivo para el pendiente...")
+            file_path = f"pnd_{user_id}_{update.message.id}.ogg"
             try:
-                if os.path.exists(file_path): os.remove(file_path)
-            except: pass
+                mime_type = "audio/ogg"
+                if update.message.voice:
+                    f = await update.message.voice.get_file()
+                    mime_type = "audio/ogg"
+                elif update.message.audio:
+                    f = await update.message.audio.get_file()
+                    mime_type = update.message.audio.mime_type or "audio/mp3"
+                    file_path = file_path.replace('.ogg', '.mp3')
+                elif update.message.photo:
+                    f = await update.message.photo[-1].get_file()
+                    mime_type = "image/jpeg"
+                    file_path = file_path.replace('.ogg', '.jpg')
+                elif update.message.document:
+                    f = await update.message.document.get_file()
+                    mime_type = update.message.document.mime_type or "application/pdf"
+                    file_path = file_path.replace('.ogg', '.pdf')
+                else:
+                    await msg.edit_text("⚠️ Tipo de archivo no compatible para registrar pendiente.")
+                    return
 
-            draft = {
-                "titulo": info.get("titulo", "Nuevo pendiente"),
-                "detalle": info.get("detalle", ""),
-                "cliente_ref": info.get("cliente_ref", ""),
-                "fecha_alerta": info.get("fecha_alerta", ""),
-                "prioridad": info.get("prioridad", "MEDIA")
-            }
-            user_data_cache[user_id] = {"pendiente_draft": draft}
-            user_states[user_id] = None
-            card_text, kb_card = build_pendiente_draft_card(draft)
-            await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='HTML')
-        except Exception as e:
-            logger.error(f"Error procesando audio pendiente: {e}")
-            await msg.edit_text(f"❌ Error al procesar audio: {html.escape(str(e))}")
-        return
+                await f.download_to_drive(file_path)
+                await msg.edit_text("🎙️🧠 Escuchando audio y extrayendo tarea con IA...")
+                caption = update.message.caption or ""
+                info = await procesar_pendiente_ia(texto=caption, file_path=file_path, mime_type=mime_type)
+
+                try:
+                    if os.path.exists(file_path): os.remove(file_path)
+                except: pass
+
+                draft = {
+                    "titulo": info.get("titulo", "Nuevo pendiente"),
+                    "detalle": info.get("detalle", ""),
+                    "cliente_ref": info.get("cliente_ref", ""),
+                    "fecha_alerta": info.get("fecha_alerta", ""),
+                    "prioridad": info.get("prioridad", "MEDIA")
+                }
+                user_data_cache[user_id] = {"pendiente_draft": draft}
+                user_states[user_id] = None
+                card_text, kb_card = build_pendiente_draft_card(draft)
+                await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='HTML')
+            except Exception as e:
+                logger.error(f"Error procesando audio pendiente: {e}")
+                await msg.edit_text(f"❌ Error al procesar audio: {html.escape(str(e))}")
+            return
 
     # Modo Cotización por Voz / Audio
-    if modo == MODO_COTIZACION_IA:
+    if modo == MODO_COTIZACION_IA and (update.message.voice or update.message.audio):
         msg = await update.message.reply_text("⏳ Descargando audio para la cotización...")
         file_path = f"coti_{user_id}_{update.message.id}.ogg"
         try:
@@ -3851,9 +3856,6 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f = await update.message.audio.get_file()
                 mime_type = update.message.audio.mime_type or "audio/mp3"
                 file_path = file_path.replace('.ogg', '.mp3')
-            else:
-                await msg.edit_text("⚠️ Envía una nota de voz o audio dictando la cotización.")
-                return
 
             await f.download_to_drive(file_path)
             await msg.edit_text("🎙️🧠 Escuchando audio y analizando cotización con IA...")
@@ -3923,6 +3925,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "caption": caption
             }
             user_data_cache[user_id] = {"bitacora_draft": draft}
+            user_states[user_id] = None
             
             card_text, kb_card = build_bitacora_draft_card(draft)
             await msg.edit_text(card_text, reply_markup=kb_card, parse_mode='Markdown')
@@ -4012,103 +4015,13 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except: pass
         return
 
-    # CASO A: Subida directa sin comando /start previo (modo is None)
-    if modo is None:
-        if user_id not in user_data_cache:
-            user_data_cache[user_id] = {}
-        
-        display_name = file_name if file_name else ("documento.pdf" if is_pdf else "imagen.jpg")
+    # CASO: Modo Manual activo o pasos del flujo manual (si se envía una nueva imagen o PDF)
+    if modo in [MODO_GUIAS_MANUAL, MODO_GUIAS_MANUAL_FECHA, MODO_GUIAS_MANUAL_NUMGUIA, MODO_GUIAS_MANUAL_TIPO, MODO_GUIAS_MANUAL_EMPRESA, MODO_GUIAS_MANUAL_FUNDO]:
+        msg_status = await update.message.reply_text("⏳ Subiendo imagen a Drive para registro manual...")
+        await ejecutar_lectura_manual(user_id, file_path, mime_type, context, msg_status, original_msg_id=update.message.id)
+        return
 
-        if is_pdf:
-            tipo_detectado = await async_detectar_tipo_documento_pdf(file_path)
-            user_data_cache[user_id]['direct_file'] = {
-                'file_path': file_path,
-                'mime_type': mime_type,
-                'is_pdf': is_pdf,
-                'is_image': is_image,
-                'is_xml': False,
-                'tipo_label': tipo_label,
-                'tipo_detectado': tipo_detectado,
-                'message_id': update.message.id
-            }
-
-            if tipo_detectado == "FACTURA":
-                kb = [
-                    [InlineKeyboardButton("🧾 Registrar Factura", callback_data="direct_action|factura_registrar")],
-                    [InlineKeyboardButton("📘 Es una Guía", callback_data="direct_action|guia_options")],
-                    [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
-                ]
-                await update.message.reply_text(
-                    f"🧾 **Factura Electrónica detectada** (`{display_name}`)\n\n"
-                    f"He analizado el documento y corresponde a una **Factura**.\n"
-                    f"¿Deseas registrarla en el Google Sheet?",
-                    reply_markup=InlineKeyboardMarkup(kb),
-                    parse_mode='Markdown'
-                )
-                return
-
-            elif tipo_detectado == "GUIA":
-                kb = [
-                    [
-                        InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar"),
-                        InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer")
-                    ],
-                    [InlineKeyboardButton("🧾 Es una Factura", callback_data="direct_action|factura_registrar")],
-                    [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
-                ]
-                await update.message.reply_text(
-                    f"📘 **Guía de Remisión detectada** (`{display_name}`)\n\n"
-                    f"¿Deseas **registrar** la guía o **leerla**?",
-                    reply_markup=InlineKeyboardMarkup(kb),
-                    parse_mode='Markdown'
-                )
-                return
-
-            else:
-                # PDF Escaneado o no clasificado directamente con texto
-                kb = [
-                    [InlineKeyboardButton("🧾 Registrar Factura", callback_data="direct_action|factura_registrar")],
-                    [
-                        InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar"),
-                        InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer")
-                    ],
-                    [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
-                ]
-                await update.message.reply_text(
-                    f"📄 **Documento PDF recibido** (`{display_name}`)\n\n"
-                    f"¿Qué tipo de documento deseas procesar?",
-                    reply_markup=InlineKeyboardMarkup(kb),
-                    parse_mode='Markdown'
-                )
-                return
-
-        elif is_image:
-            user_data_cache[user_id]['direct_file'] = {
-                'file_path': file_path,
-                'mime_type': mime_type,
-                'is_pdf': is_pdf,
-                'is_image': is_image,
-                'is_xml': False,
-                'tipo_label': tipo_label,
-                'message_id': update.message.id
-            }
-            kb = [
-                [
-                    InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer"),
-                    InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar")
-                ],
-                [
-                    InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")
-                ]
-            ]
-            await update.message.reply_text(
-                f"📸 **Imagen recibida**\n\n¿Deseas **leer** la guía o **registrarla**?",
-                reply_markup=InlineKeyboardMarkup(kb),
-                parse_mode='Markdown'
-            )
-            return
-
-    # CASO B: Modo Lectura activo
+    # CASO: Modo Lectura activo
     if modo == MODO_GUIAS_LEER:
         if is_pdf:
             msg_status = await update.message.reply_text("⏳ Leyendo guía (PDF) con OCR e IA...")
@@ -4118,7 +4031,7 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await ejecutar_lectura_manual(user_id, file_path, mime_type, context, msg_status, original_msg_id=update.message.id)
         return
 
-    # CASO C: Modo Registro activo
+    # CASO: Modo Registro activo
     if modo == MODO_GUIAS_REGISTRAR:
         if is_pdf:
             tipo_detectado = await async_detectar_tipo_documento_pdf(file_path)
@@ -4163,11 +4076,108 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # CASO UNIVERSAL: Subida directa sin comando previo o cuando el usuario se quedó en CUALQUIER otra función
+    # (búsquedas, reportes, clientes, comentarios, cotizaciones, etc.). Se resetea el modo anterior y se procesa.
+    user_states[user_id] = None
+    if user_id not in user_data_cache:
+        user_data_cache[user_id] = {}
+    
+    display_name = file_name if file_name else ("documento.pdf" if is_pdf else "imagen.jpg")
 
-    # CASO D: Modo Manual activo
-    if modo == MODO_GUIAS_MANUAL:
-        msg_status = await update.message.reply_text("⏳ Subiendo imagen a Drive para registro manual...")
-        await ejecutar_lectura_manual(user_id, file_path, mime_type, context, msg_status, original_msg_id=update.message.id)
+    if is_pdf:
+        tipo_detectado = await async_detectar_tipo_documento_pdf(file_path)
+        user_data_cache[user_id]['direct_file'] = {
+            'file_path': file_path,
+            'mime_type': mime_type,
+            'is_pdf': is_pdf,
+            'is_image': is_image,
+            'is_xml': False,
+            'tipo_label': tipo_label,
+            'tipo_detectado': tipo_detectado,
+            'message_id': update.message.id
+        }
+
+        if tipo_detectado == "FACTURA":
+            kb = [
+                [InlineKeyboardButton("🧾 Registrar Factura", callback_data="direct_action|factura_registrar")],
+                [InlineKeyboardButton("📘 Es una Guía", callback_data="direct_action|guia_options")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+            ]
+            await update.message.reply_text(
+                f"🧾 **Factura Electrónica detectada** (`{display_name}`)\n\n"
+                f"He analizado el documento y corresponde a una **Factura**.\n"
+                f"¿Deseas registrarla en el Google Sheet?",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='Markdown'
+            )
+            return
+
+        elif tipo_detectado == "GUIA":
+            kb = [
+                [
+                    InlineKeyboardButton("📁 Registrar Guía (IA)", callback_data="direct_action|registrar"),
+                    InlineKeyboardButton("✍️ Subida Manual", callback_data="direct_action|manual")
+                ],
+                [
+                    InlineKeyboardButton("📖 Leer Guía (OCR)", callback_data="direct_action|leer"),
+                    InlineKeyboardButton("🧾 Es una Factura", callback_data="direct_action|factura_registrar")
+                ],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+            ]
+            await update.message.reply_text(
+                f"📘 **Guía de Remisión detectada** (`{display_name}`)\n\n"
+                f"¿Cómo deseas procesarla?",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='Markdown'
+            )
+            return
+
+        else:
+            # PDF Escaneado o no clasificado directamente con texto
+            kb = [
+                [
+                    InlineKeyboardButton("📁 Registrar Guía (IA)", callback_data="direct_action|registrar"),
+                    InlineKeyboardButton("✍️ Subida Manual", callback_data="direct_action|manual")
+                ],
+                [
+                    InlineKeyboardButton("🧾 Registrar Factura", callback_data="direct_action|factura_registrar"),
+                    InlineKeyboardButton("📖 Leer Guía (OCR)", callback_data="direct_action|leer")
+                ],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+            ]
+            await update.message.reply_text(
+                f"📄 **Documento PDF recibido** (`{display_name}`)\n\n"
+                f"¿Qué tipo de documento deseas procesar?",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode='Markdown'
+            )
+            return
+
+    elif is_image:
+        user_data_cache[user_id]['direct_file'] = {
+            'file_path': file_path,
+            'mime_type': mime_type,
+            'is_pdf': is_pdf,
+            'is_image': is_image,
+            'is_xml': False,
+            'tipo_label': tipo_label,
+            'message_id': update.message.id
+        }
+        kb = [
+            [
+                InlineKeyboardButton("✍️ Subida Manual", callback_data="direct_action|manual"),
+                InlineKeyboardButton("📁 Registrar Guía (IA)", callback_data="direct_action|registrar")
+            ],
+            [
+                InlineKeyboardButton("📖 Leer Guía (OCR)", callback_data="direct_action|ocr"),
+                InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")
+            ]
+        ]
+        await update.message.reply_text(
+            f"📸 **Imagen recibida**\n\n¿Deseas realizar la **Subida Manual**, **Registrarla con IA** o **Leerla**?",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode='Markdown'
+        )
         return
 
 # ====================================================================
@@ -4460,28 +4470,28 @@ async def handle_callback_direct_action(update: Update, context: ContextTypes.DE
             guia_origen_auto=None,
             original_msg_id=original_msg_id
         )
+
+    elif accion == "manual":
+        msg_status = await query.edit_message_text("⏳ Subiendo a Drive para registro manual...")
+        await ejecutar_lectura_manual(
+            user_id=user_id,
+            file_path=file_path,
+            mime_type=mime_type,
+            context=context,
+            msg_status=msg_status,
+            original_msg_id=original_msg_id
+        )
         
-    elif accion == "leer":
-        if is_pdf:
-            msg_status = await query.edit_message_text("⏳ Leyendo guía (PDF) con OCR e IA...")
-            await ejecutar_lectura_ocr(
-                user_id=user_id,
-                file_path=file_path,
-                mime_type=mime_type,
-                context=context,
-                msg_status=msg_status,
-                original_msg_id=original_msg_id
-            )
-        else:
-            msg_status = await query.edit_message_text("⏳ Subiendo imagen a Drive para registro manual...")
-            await ejecutar_lectura_manual(
-                user_id=user_id,
-                file_path=file_path,
-                mime_type=mime_type,
-                context=context,
-                msg_status=msg_status,
-                original_msg_id=original_msg_id
-            )
+    elif accion in ["leer", "ocr"]:
+        msg_status = await query.edit_message_text("⏳ Leyendo guía con OCR e IA...")
+        await ejecutar_lectura_ocr(
+            user_id=user_id,
+            file_path=file_path,
+            mime_type=mime_type,
+            context=context,
+            msg_status=msg_status,
+            original_msg_id=original_msg_id
+        )
 
     elif accion == "factura_registrar":
         msg_status = await query.edit_message_text("⏳ Procesando registro de factura...")
@@ -4498,12 +4508,15 @@ async def handle_callback_direct_action(update: Update, context: ContextTypes.DE
     elif accion == "guia_options":
         kb = [
             [
-                InlineKeyboardButton("📁 Registrar Guía", callback_data="direct_action|registrar"),
-                InlineKeyboardButton("📖 Leer Guía", callback_data="direct_action|leer")
+                InlineKeyboardButton("📁 Registrar Guía (IA)", callback_data="direct_action|registrar"),
+                InlineKeyboardButton("✍️ Subida Manual", callback_data="direct_action|manual")
             ],
-            [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+            [
+                InlineKeyboardButton("📖 Leer Guía (OCR)", callback_data="direct_action|ocr"),
+                InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")
+            ]
         ]
-        await query.edit_message_text("📘 **Opciones para Guía de Remisión:**\n\n¿Deseas registrarla o leerla?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        await query.edit_message_text("📘 **Opciones para Guía de Remisión:**\n\n¿Cómo deseas procesar la guía?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 # ====================================================================
 # --- HANDLER CALLBACK VINCULACION ---
