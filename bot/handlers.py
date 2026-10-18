@@ -30,7 +30,8 @@ from config.settings import (
     MODO_FLOTA_CAMION_ADD, MODO_FLOTA_CAMION_BUSCAR,
     MODO_FLOTA_CONDUCTOR_ADD, MODO_FLOTA_CONDUCTOR_BUSCAR,
     WEBAPP_FLOTA_URL,
-    DRIVE_FOLDER_LEER, DRIVE_FOLDER_FACTURAS
+    DRIVE_FOLDER_LEER, DRIVE_FOLDER_FACTURAS,
+    es_usuario_autorizado, ALLOWED_USER_IDS
 )
 from utils.helpers import clean_json_response, async_log_action, load_memoria_vinculacion, save_memoria_vinculacion, match_company_flexible
 from core.ai_client import generar_con_reintento
@@ -143,8 +144,38 @@ def match_guia_en_texto(guia_target, texto_referencia):
 
     return False
 
-async def async_obtener_historial_certificados():
-    """Descarga de forma segura y en hilo secundario los registros de la hoja Historial."""
+# ====================================================================
+# --- CACHÉ DE BÚSQUEDAS (OPTIMIZACIÓN DE VELOCIDAD Y CUOTAS) ---
+# ====================================================================
+_cache_busquedas = {}
+CACHE_BUSQUEDA_TTL = 180  # 3 minutos de vigencia para consultas frecuentes
+
+def obtener_datos_cache(clave: str):
+    entrada = _cache_busquedas.get(clave)
+    if entrada:
+        datos, ts = entrada
+        import time as _t
+        if _t.time() - ts < CACHE_BUSQUEDA_TTL:
+            return datos
+    return None
+
+def guardar_datos_cache(clave: str, datos):
+    import time as _t
+    _cache_busquedas[clave] = (datos, _t.time())
+
+def invalidar_cache_busquedas(clave: str = None):
+    if clave:
+        _cache_busquedas.pop(clave, None)
+    else:
+        _cache_busquedas.clear()
+
+async def async_obtener_historial_certificados(forzar_refresco: bool = False):
+    """Descarga de forma segura y en hilo secundario los registros de la hoja Historial con caché inteligente."""
+    if not forzar_refresco:
+        cached = obtener_datos_cache("historial_certificados")
+        if cached is not None:
+            return cached
+
     def _fetch():
         try:
             creds = obtener_credenciales()
@@ -157,7 +188,108 @@ async def async_obtener_historial_certificados():
         except Exception as e:
             logger.warning(f"No se pudo cargar la hoja Historial para certificados: {e}")
             return []
-    return await asyncio.to_thread(_fetch)
+
+    res = await asyncio.to_thread(_fetch)
+    if res:
+        guardar_datos_cache("historial_certificados", res)
+    return res
+
+# ====================================================================
+# --- GENERADOR DE TECLADOS POST-BÚSQUEDA INTERCONECTADOS ---
+# ====================================================================
+def generar_teclado_post_busqueda(tipo_busqueda: str, submodo: str = None, extra_rows: list = None) -> InlineKeyboardMarkup:
+    """
+    Genera un teclado interactivo que permite encadenar búsquedas inmediatamente:
+    - Repetir la búsqueda en la misma categoría / submodo
+    - Cambiar de criterio
+    - Saltar a otra categoría (Certificados, Direcciones, Clientes, Reportes)
+    - Volver al Centro de Búsqueda o Menú Principal
+    """
+    kb = []
+    
+    if extra_rows:
+        for r in extra_rows:
+            kb.append(r)
+            
+    fila1 = []
+    if tipo_busqueda == 'certificados':
+        criterio_txt = "mismo criterio"
+        cb_reintento = 'modo_buscar_cert'
+        if submodo == MODO_BUSCAR_CERT_FECHA:
+            criterio_txt = "Fecha"
+            cb_reintento = 'cert_search_fecha'
+        elif submodo == MODO_BUSCAR_CERT_FUNDO:
+            criterio_txt = "Fundo"
+            cb_reintento = 'cert_search_fundo'
+        elif submodo == MODO_BUSCAR_CERT_EMPRESA:
+            criterio_txt = "Empresa"
+            cb_reintento = 'cert_search_empresa'
+        elif submodo == MODO_BUSCAR_CERT_CORRE:
+            criterio_txt = "Correlativo"
+            cb_reintento = 'cert_search_corre'
+            
+        fila1.append(InlineKeyboardButton(f"🔍 Otra por {criterio_txt}", callback_data=cb_reintento))
+        fila1.append(InlineKeyboardButton("🔄 Criterios Cert.", callback_data='modo_buscar_cert'))
+    elif tipo_busqueda == 'direcciones':
+        criterio_txt = "Empresa" if submodo == MODO_DIR_EMPRESA else ("Fundo" if submodo == MODO_DIR_FUNDO else "Dirección")
+        cb_reintento = 'dir_buscar_empresa' if submodo == MODO_DIR_EMPRESA else 'dir_buscar_fundo'
+        fila1.append(InlineKeyboardButton(f"🔍 Otra por {criterio_txt}", callback_data=cb_reintento))
+        fila1.append(InlineKeyboardButton("🔄 Empresa / Fundo", callback_data='modo_direcciones'))
+    elif tipo_busqueda == 'clientes':
+        fila1.append(InlineKeyboardButton("🔍 Otro Cliente", callback_data='modo_buscar_cliente'))
+        fila1.append(InlineKeyboardButton("📍 Buscar Direcciones", callback_data='modo_direcciones'))
+    elif tipo_busqueda == 'reporte_guias':
+        cb_reintento = 'reporte_registro' if submodo == MODO_REPORTE_REGISTRO else 'reporte_recibidas'
+        fila1.append(InlineKeyboardButton("🔍 Otra Guía / Fecha", callback_data=cb_reintento))
+        fila1.append(InlineKeyboardButton("🔄 Cambiar Base Guías", callback_data='modo_buscar'))
+    
+    if fila1:
+        kb.append(fila1)
+        
+    fila_cruzada = []
+    if tipo_busqueda != 'certificados':
+        fila_cruzada.append(InlineKeyboardButton("📜 Certificados", callback_data='modo_buscar_cert'))
+    if tipo_busqueda != 'direcciones':
+        fila_cruzada.append(InlineKeyboardButton("📍 Direcciones", callback_data='modo_direcciones'))
+    if tipo_busqueda != 'clientes':
+        fila_cruzada.append(InlineKeyboardButton("👥 Clientes", callback_data='modo_buscar_cliente'))
+    if fila_cruzada:
+        kb.append(fila_cruzada)
+        
+    kb.append([
+        InlineKeyboardButton("🔙 Centro Búsqueda", callback_data='menu_busqueda'),
+        InlineKeyboardButton("🏠 Menú Principal", callback_data='volver_inicio')
+    ])
+    
+    return InlineKeyboardMarkup(kb)
+
+# ====================================================================
+# --- SEGURIDAD: VERIFICACIÓN DE USUARIOS AUTORIZADOS ---
+# ====================================================================
+async def check_auth_or_reject(update: Update) -> bool:
+    """Verifica si el usuario está autorizado. Si no lo está, envía aviso y retorna False."""
+    if not update.effective_user:
+        return True
+    user_id = update.effective_user.id
+    if not es_usuario_autorizado(user_id):
+        nombre = update.effective_user.first_name or "Usuario"
+        msg = (
+            f"⛔ *Acceso no autorizado*\n\n"
+            f"Hola {nombre}, este bot es de uso privado corporativo.\n"
+            f"Tu ID de Telegram es: `{user_id}`\n\n"
+            f"Solicita al administrador del sistema que agregue tu ID a la lista autorizada (`ALLOWED_USERS`)."
+        )
+        if update.callback_query:
+            try:
+                await update.callback_query.answer("Acceso no autorizado", show_alert=True)
+                await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
+            except Exception:
+                pass
+        elif update.message:
+            await update.message.reply_text(msg, parse_mode='Markdown')
+        return False
+    return True
+
 
 import core.sheets_client as rc 
 
@@ -595,6 +727,8 @@ def get_documentos_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth_or_reject(update):
+        return
     user_id = update.effective_user.id if update.effective_user else None
     await update.message.reply_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
 
@@ -603,6 +737,8 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def certificados_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando directo /certificados o /cert [correlativo]."""
+    if not await check_auth_or_reject(update):
+        return
     user_id = update.effective_user.id if update.effective_user else None
     args = context.args if context.args else []
     corr_arg = args[0].strip() if args else None
@@ -987,6 +1123,8 @@ def build_conductor_draft_card(draft: dict):
 
 async def flota_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando directo /flota, /camiones, /conductores."""
+    if not await check_auth_or_reject(update):
+        return
     user_id = update.effective_user.id if update.effective_user else None
     url_app_flota = obtener_url_webapp_flota('camiones', user_id=user_id)
     
@@ -1377,6 +1515,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
     except Exception as e:
         logger.warning(f"Ignorando error al responder query (posiblemente muy antiguo): {e}")
+    if not await check_auth_or_reject(update):
+        return
     user_id = query.from_user.id
     
     if query.data == 'cancelar_start':
@@ -2228,6 +2368,8 @@ async def _procesar_resultado_coti_ia(update: Update, context: ContextTypes.DEFA
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
+    if not await check_auth_or_reject(update):
+        return
     text = update.message.text.strip()
     user_id = update.effective_user.id
     modo = user_states.get(user_id)
@@ -2622,15 +2764,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     reporte += "➖➖➖➖➖➖➖➖➖➖\n"
                 
-                if len(reporte) > 4000:
-                    reporte = reporte[:4000] + "\n\n⚠️ _[Reporte recortado por límite de caracteres de Telegram]_"
-                    
+                if len(reporte) > 3800:
+                    reporte = reporte[:3800] + "\n\n⚠️ _[Reporte recortado por límite de caracteres de Telegram]_"
+                
+                reporte += "\n💡 _Puedes escribir otra fecha o N° de guía directamente para buscar de nuevo:_\n"
+                user_states[user_id] = modo
+                reply_markup = generar_teclado_post_busqueda('reporte_guias', modo)
                 try:
-                    await msg.edit_text(reporte, parse_mode='Markdown', disable_web_page_preview=True)
+                    await msg.edit_text(reporte, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=reply_markup)
                 except Exception:
-                    await msg.edit_text(reporte, disable_web_page_preview=True)
+                    await msg.edit_text(reporte, disable_web_page_preview=True, reply_markup=reply_markup)
             else: 
-                await msg.edit_text("❌ No se encontraron resultados para esa búsqueda.")
+                user_states[user_id] = modo
+                reply_markup = generar_teclado_post_busqueda('reporte_guias', modo)
+                await msg.edit_text(
+                    f"❌ No se encontraron resultados para `{raw_query}`.\n\n"
+                    "💡 Puedes escribir otra fecha o guía directamente, o elegir una opción:",
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
         except Exception as e: 
             logger.error(f"Error en búsqueda: {e}")
             await msg.edit_text(f"❌ Error en la búsqueda: {e}")
@@ -2721,6 +2873,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     fundo_val = str(r.get('Fundo', 'S/D'))
                     correlativo_val = str(r.get('Correlativo', 'S/D'))
                     certificado_val = str(r.get('Certificado', 'S/D'))
+                    guia_val = str(r.get('Guia', r.get('Guía', r.get('N° Guía', 'S/D')))).strip()
                     link_guia = str(r.get('Link Guia', '')).strip()
                     link_doc = str(r.get('Link Documento', '')).strip()
                     link_pdf = str(r.get('Link pdf', r.get('Link PDF', ''))).strip()
@@ -2774,23 +2927,31 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                     reporte += "➖➖➖➖➖➖➖➖➖➖\n"
                 
-                if len(reporte) > 4000:
-                    reporte = reporte[:4000] + "\n\n⚠️ _[Reporte recortado por límite de caracteres]_"
+                if len(reporte) > 3800:
+                    reporte = reporte[:3800] + "\n\n⚠️ _[Reporte recortado por límite de caracteres]_"
 
-                kb_rows = []
+                extra_rows = []
                 if len(encontrados) == 1:
                     c_corr = str(encontrados[0].get('Correlativo', '')).strip()
                     if c_corr:
                         from core.certificados_service import obtener_url_webapp_certificados
                         u_id = update.effective_user.id if update.effective_user else None
                         url_m = obtener_url_webapp_certificados(correlativo=c_corr, user_id=u_id, modo="modificar")
-                        kb_rows.append([InlineKeyboardButton(f"✏️ Gestionar #{c_corr} en Mini App", web_app=WebAppInfo(url=url_m))])
-                kb_rows.append([InlineKeyboardButton("🔙 Menú Certificados", callback_data='menu_certificados'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')])
-
-                await msg.edit_text(reporte, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=InlineKeyboardMarkup(kb_rows))
+                        extra_rows.append([InlineKeyboardButton(f"✏️ Gestionar #{c_corr} en Mini App", web_app=WebAppInfo(url=url_m))])
+                
+                reporte += "\n💡 _Puedes escribir otro término directamente para buscar de nuevo:_\n"
+                user_states[user_id] = modo
+                reply_markup = generar_teclado_post_busqueda('certificados', modo, extra_rows=extra_rows)
+                await msg.edit_text(reporte, parse_mode='Markdown', disable_web_page_preview=True, reply_markup=reply_markup)
             else:
-                kb_fail = [[InlineKeyboardButton("🔙 Volver a Certificados", callback_data='menu_certificados')]]
-                await msg.edit_text("❌ No se encontraron certificados con ese término.", reply_markup=InlineKeyboardMarkup(kb_fail))
+                user_states[user_id] = modo
+                reply_markup = generar_teclado_post_busqueda('certificados', modo)
+                await msg.edit_text(
+                    f"❌ No se encontraron certificados para `{raw_query}`.\n\n"
+                    "💡 Puedes escribir otro término directamente o cambiar de opción:",
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
         except Exception as e:
             logger.error(f"Error en búsqueda de certificados: {e}")
             await msg.edit_text(f"❌ Error en la búsqueda: {e}")
@@ -2802,13 +2963,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         try:
             def fetch_direcciones():
+                cached = obtener_datos_cache("direcciones")
+                if cached is not None:
+                    return cached
                 creds = obtener_credenciales()
                 if not creds:
                     raise Exception("No se encontraron las credenciales de Google. Verifica GOOGLE_CREDENTIALS_JSON en Render.")
                 client = gspread.authorize(creds)
                 book2 = client.open_by_key(SHEET_ID)
                 try:
-                    return book2.worksheet("Direcciones").get_all_records()
+                    res = book2.worksheet("Direcciones").get_all_records()
+                    guardar_datos_cache("direcciones", res)
+                    return res
                 except gspread.exceptions.WorksheetNotFound:
                     return []
                 
@@ -2836,15 +3002,25 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reporte += f"📍 **Dirección:** `{direccion_val}`\n"
                     reporte += "➖➖➖➖➖➖➖➖➖➖\n"
                     
-                if len(reporte) > 4000:
-                    reporte = reporte[:4000] + "\n\n⚠️ _[Reporte recortado]_"
+                if len(reporte) > 3800:
+                    reporte = reporte[:3800] + "\n\n⚠️ _[Reporte recortado]_"
                     
-                await msg.edit_text(reporte, parse_mode='Markdown')
+                reporte += "\n💡 _Puedes escribir otro término directamente para buscar de nuevo:_\n"
+                user_states[user_id] = modo
+                reply_markup = generar_teclado_post_busqueda('direcciones', modo)
+                await msg.edit_text(reporte, parse_mode='Markdown', reply_markup=reply_markup)
             else:
-                await msg.edit_text("❌ No se encontraron direcciones con ese término.")
+                user_states[user_id] = modo
+                reply_markup = generar_teclado_post_busqueda('direcciones', modo)
+                await msg.edit_text(
+                    f"❌ No se encontraron direcciones para `{raw_query}`.\n\n"
+                    "💡 Puedes escribir otro término directamente o elegir una opción:",
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
         except Exception as e:
             logger.error(f"Error en búsqueda de direcciones: {e}")
-            await msg.edit_text(f"❌ Error en la búsqueda de directori: {e}")
+            await msg.edit_text(f"❌ Error en la búsqueda de direcciones: {e}")
 
     elif modo == MODO_BUSCAR_CLIENTE:
         raw_query = str(update.message.text).strip()
@@ -2852,6 +3028,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         try:
             def fetch_clientes():
+                cached = obtener_datos_cache("clientes")
+                if cached is not None:
+                    return cached
                 creds = obtener_credenciales()
                 if not creds:
                     raise Exception("No se encontraron las credenciales de Google.")
@@ -2864,7 +3043,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         break
                 if not ws_target:
                     return []
-                return ws_target.get_all_records()
+                res = ws_target.get_all_records()
+                guardar_datos_cache("clientes", res)
+                return res
                 
             registros = await asyncio.to_thread(fetch_clientes)
             
@@ -2878,9 +3059,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             matches_scored.sort(key=lambda x: x[1], reverse=True)
             encontrados = [m[0] for m in matches_scored]
             
-            kb = [
-                [InlineKeyboardButton("🔙 Menú Búsquedas", callback_data='menu_busqueda')]
-            ]
+            reply_markup = generar_teclado_post_busqueda('clientes', modo)
             
             if encontrados:
                 reporte = f"✅ **{len(encontrados)} Cliente(s) Encontrado(s)**\n\n"
@@ -2908,17 +3087,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reporte += f"📍 **Dirección 2:** `{dir2}`\n"
                     reporte += "➖➖➖➖➖➖➖➖➖➖\n"
                     
-                if len(reporte) > 4000:
-                    reporte = reporte[:4000] + "\n\n⚠️ _[Reporte recortado por límite de caracteres]_"
+                if len(reporte) > 3800:
+                    reporte = reporte[:3800] + "\n\n⚠️ _[Reporte recortado por límite de caracteres]_"
                     
+                reporte += "\n💡 _Puedes ingresar otro nombre directamente para buscar de nuevo:_\n"
+                user_states[user_id] = modo
                 try:
-                    await msg.edit_text(reporte, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                    await msg.edit_text(reporte, reply_markup=reply_markup, parse_mode='Markdown')
                 except Exception:
-                    await msg.edit_text(reporte, reply_markup=InlineKeyboardMarkup(kb))
+                    await msg.edit_text(reporte, reply_markup=reply_markup)
             else:
+                user_states[user_id] = modo
                 await msg.edit_text(
-                    f"❌ No se encontró ningún cliente con `{raw_query}`.\n\nPuedes ingresar otro nombre o pulsar el botón para volver:",
-                    reply_markup=InlineKeyboardMarkup(kb)
+                    f"❌ No se encontró ningún cliente con `{raw_query}`.\n\n"
+                    "💡 Puedes ingresar otro nombre directamente o elegir una opción:",
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
                 )
         except Exception as e:
             logger.error(f"Error en búsqueda de clientes: {e}")
@@ -3599,6 +3783,8 @@ async def ejecutar_registro_factura(user_id, file_path, mime_type, context, msg_
 # ====================================================================
 async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
+    if not await check_auth_or_reject(update):
+        return
     user_id = update.effective_user.id
     modo = user_states.get(user_id)
 

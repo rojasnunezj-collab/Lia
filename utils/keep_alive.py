@@ -319,6 +319,19 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
 
         elif path == '/api/credenciales':
             try:
+                from config.settings import es_usuario_autorizado, ALLOWED_USER_IDS
+                qs = parse_qs(parsed.query)
+                uid = qs.get('uid', [None])[0]
+
+                if ALLOWED_USER_IDS:
+                    if not uid or not es_usuario_autorizado(uid):
+                        self.send_response(403)
+                        self.send_header('Content-Type', 'application/json; charset=utf-8')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({'error': 'Acceso no autorizado a la bóveda de credenciales.'}).encode('utf-8'))
+                        return
+
                 from core.credenciales_service import obtener_credenciales_sync
                 data = obtener_credenciales_sync()
                 self.send_response(200)
@@ -494,9 +507,20 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
 
         elif path == '/api/credenciales':
             try:
+                from config.settings import es_usuario_autorizado, ALLOWED_USER_IDS
                 content_len = int(self.headers.get('Content-Length', 0))
                 post_body = self.rfile.read(content_len)
                 payload = json.loads(post_body.decode('utf-8'))
+
+                if ALLOWED_USER_IDS:
+                    uid = payload.get('uid') or parse_qs(parsed.query).get('uid', [None])[0]
+                    if not uid or not es_usuario_autorizado(uid):
+                        self.send_response(403)
+                        self.send_header('Content-Type', 'application/json; charset=utf-8')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({'success': False, 'error': 'No autorizado para modificar credenciales.'}).encode('utf-8'))
+                        return
 
                 from core.credenciales_service import guardar_credencial_sync
                 crd_id = guardar_credencial_sync(payload)

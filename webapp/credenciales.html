@@ -551,7 +551,9 @@
 
     async function cargarDatos() {
       try {
-        const res = await fetch('/api/credenciales').then(r => r.json()).catch(() => []);
+        const urlParams = new URLSearchParams(window.location.search);
+        const uid = urlParams.get('uid') || (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) || '';
+        const res = await fetch(`/api/credenciales${uid ? `?uid=${uid}` : ''}`).then(r => r.json()).catch(() => []);
         _credenciales = Array.isArray(res) ? res : [];
         document.getElementById('badgeCuentas').innerText = `${_credenciales.length} Cuentas`;
         renderCredenciales();
@@ -663,6 +665,9 @@
       btn.disabled = true;
       btn.innerText = "Guardando...";
 
+      const urlParams = new URLSearchParams(window.location.search);
+      const uid = urlParams.get('uid') || (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) || '';
+
       const payload = {
         servicio: document.getElementById('crd_servicio').value,
         categoria: document.getElementById('crd_categoria').value,
@@ -671,11 +676,12 @@
         contraseña: document.getElementById('crd_clave').value,
         pin_extra: document.getElementById('crd_pin').value,
         titular: document.getElementById('crd_titular').value,
-        observaciones: document.getElementById('crd_obs').value
+        observaciones: document.getElementById('crd_obs').value,
+        uid: uid
       };
 
       try {
-        const res = await fetch('/api/credenciales', {
+        const res = await fetch(`/api/credenciales${uid ? `?uid=${uid}` : ''}`, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(payload)

@@ -34,6 +34,26 @@ DRIVE_FOLDER_ID = os.getenv("DRIVE_FOLDER_ID")
 DRIVE_FOLDER_LEER = os.getenv("DRIVE_FOLDER_LEER")
 DRIVE_FOLDER_FACTURAS = os.getenv("DRIVE_FOLDER_FACTURAS", "1dnfgXGNHZL_VGXTVzCIrp2hZ8TigDsNC")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+ALLOWED_USERS_RAW = os.getenv("ALLOWED_USERS", "")
+ALLOWED_USER_IDS = set()
+if ADMIN_CHAT_ID:
+    clean_admin = str(ADMIN_CHAT_ID).strip()
+    if clean_admin.lstrip('-').isdigit():
+        ALLOWED_USER_IDS.add(int(clean_admin))
+for uid in ALLOWED_USERS_RAW.split(","):
+    uid = uid.strip()
+    if uid and (uid.isdigit() or (uid.startswith('-') and uid[1:].isdigit())):
+        ALLOWED_USER_IDS.add(int(uid))
+
+def es_usuario_autorizado(user_id) -> bool:
+    """Valida si un ID de usuario de Telegram tiene permisos para usar el bot."""
+    if not ALLOWED_USER_IDS:
+        return True
+    try:
+        return int(user_id) in ALLOWED_USER_IDS
+    except (TypeError, ValueError):
+        return False
+
 TEMPLATE_COTIZACION_ID = os.getenv("TEMPLATE_COTIZACION_ID", "1-Umk538IEr1MCYvWHf2Pp7KmEPHNcTpxSvTxbDZk4oQ")
 DRIVE_FOLDER_COTIZACIONES = os.getenv("DRIVE_FOLDER_COTIZACIONES", "")
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
