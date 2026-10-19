@@ -24,7 +24,7 @@ from config.settings import (
     MODO_BUSCAR_CERT_CORRE, MODO_BUSCAR_CERT_EMPRESA,
     MODO_DIR_EMPRESA, MODO_DIR_FUNDO, MODO_BUSCAR_CLIENTE,
     MODO_BITACORA_ADD, MODO_BITACORA_SEARCH, MODO_BITACORA_EDIT_TEXT, MODO_OBS_ESCRIBIR, MODO_LIGAR_ESCRIBIR,
-    MODO_COTIZACION_BUSCAR, MODO_COTIZACION_IA,
+    MODO_COTIZACION_BUSCAR, MODO_COTIZACION_BUSCAR_EMPRESA, MODO_COTIZACION_IA,
     MODO_FACTURAS_REGISTRAR, MODO_FACTURAS_BUSCAR,
     MODO_PENDIENTE_ADD, MODO_CREDENCIAL_BUSCAR,
     MODO_FLOTA_CAMION_ADD, MODO_FLOTA_CAMION_BUSCAR,
@@ -44,7 +44,8 @@ from core.cotizaciones_service import (
     async_generar_cotizacion, async_buscar_cotizacion_por_correlativo,
     obtener_siguiente_correlativo, obtener_url_webapp,
     async_sincronizar_pdf_desde_doc, interpretar_cotizacion_ia,
-    buscar_ruc_por_empresa, async_buscar_ruc_por_empresa
+    buscar_ruc_por_empresa, async_buscar_ruc_por_empresa,
+    obtener_todas_cotizaciones, async_obtener_todas_cotizaciones
 )
 from core.invoices_service import (
     async_parse_factura_xml, parse_factura_pdf, async_detectar_tipo_documento_pdf,
@@ -1509,6 +1510,68 @@ async def handle_callback_flota(update: Update, context: ContextTypes.DEFAULT_TY
             await msg_wait.edit_text(f"❌ Error al guardar conductor: {html.escape(str(e))}")
         return
 
+async def _render_cotizaciones_telegram(update, context, user_id, cotis, titulo=None, msg_wait=None):
+    """Renderiza hasta 5 cotizaciones con enlaces directos a Docs/PDF y botón para modificar en Mini App."""
+    if not cotis:
+        kb = [
+            [InlineKeyboardButton("🏢 Buscar otra Empresa", callback_data='coti_buscar_empresa')],
+            [InlineKeyboardButton("🔙 Volver a Cotizaciones", callback_data='menu_cotizaciones')]
+        ]
+        msg_texto = f"❌ No se encontraron cotizaciones registradas{' para esa búsqueda' if titulo else ''}."
+        if msg_wait:
+            await msg_wait.edit_text(msg_texto, reply_markup=InlineKeyboardMarkup(kb))
+        elif update.callback_query:
+            await safe_edit_or_reply(update.callback_query, msg_texto, reply_markup=InlineKeyboardMarkup(kb))
+        elif update.message:
+            await update.message.reply_text(msg_texto, reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    header_txt = titulo if titulo else f"📋 <b>Últimas {len(cotis)} Cotizaciones Registradas:</b>"
+    texto = f"{header_txt}\n\n"
+    
+    kb = []
+    for idx, c in enumerate(cotis, start=1):
+        corr = html.escape(str(c.get('correlativo', '')))
+        cod = html.escape(str(c.get('codigo', '')))
+        cli = html.escape(str(c.get('cliente', '')))
+        fec = html.escape(str(c.get('fecha', '')))
+        resumen = html.escape(str(c.get('items_resumen', '')))
+        doc_l = c.get('doc_link', '')
+        pdf_l = c.get('pdf_link', '')
+        
+        texto += f"<b>{idx}. COTIZACION N°{cod}</b>\n"
+        texto += f"🏢 Cliente: <code>{cli}</code>\n"
+        texto += f"📅 Fecha: {fec}\n"
+        if resumen:
+            r_corta = (resumen[:65] + '...') if len(resumen) > 65 else resumen
+            texto += f"📦 Ítems: <i>{r_corta}</i>\n"
+        
+        links = []
+        if doc_l and doc_l.startswith('http'):
+            links.append(f"<a href='{doc_l}'>📄 Google Doc</a>")
+        if pdf_l and pdf_l.startswith('http'):
+            links.append(f"<a href='{pdf_l}'>📂 PDF Drive</a>")
+        if links:
+            texto += f"🔗 {' | '.join(links)}\n"
+        texto += "\n"
+        
+        datos_edit = c.get('datos_json') or c
+        url_edit = obtener_url_webapp(correlativo=c.get('correlativo'), datos_edicion=datos_edit, user_id=user_id)
+        cli_btn = c.get('cliente', '')
+        cli_btn_corta = (cli_btn[:16] + '..') if len(cli_btn) > 16 else cli_btn
+        kb.append([InlineKeyboardButton(f"✏️ Modificar #{corr} - {cli_btn_corta}", web_app=WebAppInfo(url=url_edit))])
+
+    url_repo = obtener_url_webapp(user_id=user_id, vista="repo")
+    kb.append([InlineKeyboardButton("📱 Repositorio Completo en WebApp", web_app=WebAppInfo(url=url_repo))])
+    kb.append([InlineKeyboardButton("🏢 Buscar otra Empresa", callback_data='coti_buscar_empresa'), InlineKeyboardButton("🔙 Volver", callback_data='menu_cotizaciones')])
+
+    if msg_wait:
+        await msg_wait.edit_text(texto, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
+    elif update.callback_query:
+        await safe_edit_or_reply(update.callback_query, texto, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
+    elif update.message:
+        await update.message.reply_text(texto, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb), disable_web_page_preview=True)
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     try:
@@ -1585,20 +1648,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states[user_id] = None
         corr_sig = obtener_siguiente_correlativo()
         url_app = obtener_url_webapp(correlativo=corr_sig, user_id=user_id)
+        url_repo = obtener_url_webapp(user_id=user_id, vista="repo")
         keyboard = [
             [InlineKeyboardButton("➕ Nueva Cotización", web_app=WebAppInfo(url=url_app))],
+            [InlineKeyboardButton("📋 Ver Últimas 5 Cotizaciones", callback_data='coti_ultimas')],
+            [InlineKeyboardButton("🏢 Buscar por Empresa (Últimas 5)", callback_data='coti_buscar_empresa')],
+            [InlineKeyboardButton("🔍 Buscar por N° Correlativo", callback_data='coti_buscar')],
+            [InlineKeyboardButton("📱 Repositorio Completo en WebApp", web_app=WebAppInfo(url=url_repo))],
             [InlineKeyboardButton("🎙️ Cotizar por Voz o Texto", callback_data='coti_ia')],
-            [InlineKeyboardButton("🔍 Buscar / Modificar Cotización", callback_data='coti_buscar')],
             [InlineKeyboardButton("🔙 Volver a Documentos", callback_data='menu_documentos'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
         ]
         texto = (
             f"📋 *Módulo de Cotizaciones - EPMI SAC*\n\n"
             f"• *Siguiente Correlativo sugerido:* `{corr_sig}`\n"
             f"• Pulsa *➕ Nueva Cotización* para abrir el formulario en tu celular.\n"
-            f"• Pulsa *🎙️ Cotizar por Voz o Texto* para dictar la cotización a Lía.\n"
-            f"• Para revisar o editar una cotización previa, pulsa *🔍 Buscar / Modificar*."
+            f"• Pulsa *📋 Ver Últimas 5* o *🏢 Buscar por Empresa* para ver links directos y modificar.\n"
+            f"• Pulsa *📱 Repositorio Completo* para ver todas en la Mini App.\n"
+            f"• Pulsa *🎙️ Cotizar por Voz o Texto* para dictar la cotización a Lía."
         )
         await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data == 'coti_ultimas':
+        user_states[user_id] = None
+        await query.answer("⏳ Consultando cotizaciones...")
+        msg_wait = await query.message.reply_text("⏳ Consultando últimas cotizaciones en Sheets...")
+        try:
+            cotis = await async_obtener_todas_cotizaciones(limite=5)
+            await _render_cotizaciones_telegram(update, context, user_id, cotis, titulo="📋 <b>Últimas 5 Cotizaciones Registradas:</b>", msg_wait=msg_wait)
+        except Exception as e:
+            logger.error(f"Error listando últimas cotizaciones: {e}")
+            await msg_wait.edit_text(f"❌ Error al consultar cotizaciones: {e}")
+
+    elif query.data == 'coti_buscar_empresa':
+        user_states[user_id] = MODO_COTIZACION_BUSCAR_EMPRESA
+        keyboard = [
+            [InlineKeyboardButton("🔙 Volver a Cotizaciones", callback_data='menu_cotizaciones'), InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+        ]
+        texto = (
+            "🏢 <b>Buscar Cotizaciones por Empresa (Últimas 5):</b>\n\n"
+            "Escribe el <b>nombre</b> o <b>RUC</b> de la empresa (por ejemplo: <code>Exalmar</code>, <code>Agrícola Andrea</code>, <code>Petramas</code>):"
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == 'coti_ia':
         user_states[user_id] = MODO_COTIZACION_IA
@@ -2537,6 +2627,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg_wait.edit_text(texto_coti, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
         except Exception as e:
             logger.error(f"Error buscando cotización: {e}")
+        return
+
+    elif modo == MODO_COTIZACION_BUSCAR_EMPRESA:
+        user_states[user_id] = None
+        empresa_query = text.strip()
+        msg_wait = await update.message.reply_text(f"🔍 Buscando cotizaciones para <code>{html.escape(empresa_query)}</code>...", parse_mode='HTML')
+        try:
+            cotis = await async_obtener_todas_cotizaciones(limite=5, filtro_empresa=empresa_query)
+            titulo = f"🏢 <b>Últimas 5 Cotizaciones para:</b> <code>{html.escape(empresa_query.upper())}</code>"
+            await _render_cotizaciones_telegram(update, context, user_id, cotis, titulo=titulo, msg_wait=msg_wait)
+        except Exception as e:
+            logger.error(f"Error buscando cotizaciones por empresa: {e}")
+            await msg_wait.edit_text(f"❌ Error al buscar cotizaciones: {e}")
         return
 
     elif modo == MODO_COTIZACION_IA:
@@ -4099,36 +4202,44 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if tipo_detectado == "FACTURA":
             kb = [
-                [InlineKeyboardButton("🧾 Registrar Factura", callback_data="direct_action|factura_registrar")],
-                [InlineKeyboardButton("📘 Es una Guía", callback_data="direct_action|guia_options")],
-                [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+                [InlineKeyboardButton("💾 1. REGISTRAR FACTURA ➜ (Guardar en Sheets)", callback_data="direct_action|factura_registrar")],
+                [InlineKeyboardButton("👁️ 2. SOLO LEER (OCR)   ➜ (Ver montos sin guardar)", callback_data="direct_action|factura_leer")],
+                [InlineKeyboardButton("🔄 No es factura, es Guía", callback_data="direct_action|cambiar_a_guia")],
+                [InlineKeyboardButton("❌ Cancelar y Descartar", callback_data="direct_action|cancelar")]
             ]
+            texto = (
+                f"🧾 <b>FACTURA ELECTRÓNICA DETECTADA</b>\n"
+                f"📄 Archivo: <code>{html.escape(display_name)}</code>\n\n"
+                f"Lía analizó el documento y corresponde a una <b>Factura de Proveedor</b>.\n"
+                f"¿Qué deseas hacer con este archivo?"
+            )
             await update.message.reply_text(
-                f"🧾 **Factura Electrónica detectada** (`{display_name}`)\n\n"
-                f"He analizado el documento y corresponde a una **Factura**.\n"
-                f"¿Deseas registrarla en el Google Sheet?",
+                texto,
                 reply_markup=InlineKeyboardMarkup(kb),
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
             return
 
         elif tipo_detectado == "GUIA":
             kb = [
+                [InlineKeyboardButton("💾 1. REGISTRAR GUÍA  ➜ (Guardar en Sheets)", callback_data="direct_action|registrar")],
+                [InlineKeyboardButton("👁️ 2. SOLO LEER (OCR) ➜ (Ver datos sin guardar)", callback_data="direct_action|leer")],
                 [
-                    InlineKeyboardButton("📁 Registrar Guía (IA)", callback_data="direct_action|registrar"),
+                    InlineKeyboardButton("🔄 No es guía, es Factura", callback_data="direct_action|cambiar_a_factura"),
                     InlineKeyboardButton("✍️ Subida Manual", callback_data="direct_action|manual")
                 ],
-                [
-                    InlineKeyboardButton("📖 Leer Guía (OCR)", callback_data="direct_action|leer"),
-                    InlineKeyboardButton("🧾 Es una Factura", callback_data="direct_action|factura_registrar")
-                ],
-                [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+                [InlineKeyboardButton("❌ Cancelar y Descartar", callback_data="direct_action|cancelar")]
             ]
+            texto = (
+                f"📘 <b>GUÍA DE REMISIÓN DETECTADA</b>\n"
+                f"📄 Archivo: <code>{html.escape(display_name)}</code>\n\n"
+                f"Lía analizó el documento y corresponde a una <b>Guía de Remisión</b>.\n"
+                f"¿Qué deseas hacer con este archivo?"
+            )
             await update.message.reply_text(
-                f"📘 **Guía de Remisión detectada** (`{display_name}`)\n\n"
-                f"¿Cómo deseas procesarla?",
+                texto,
                 reply_markup=InlineKeyboardMarkup(kb),
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
             return
 
@@ -4136,20 +4247,25 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # PDF Escaneado o no clasificado directamente con texto
             kb = [
                 [
-                    InlineKeyboardButton("📁 Registrar Guía (IA)", callback_data="direct_action|registrar"),
-                    InlineKeyboardButton("✍️ Subida Manual", callback_data="direct_action|manual")
+                    InlineKeyboardButton("💾 REGISTRAR GUÍA", callback_data="direct_action|registrar"),
+                    InlineKeyboardButton("💾 REGISTRAR FACTURA", callback_data="direct_action|factura_registrar")
                 ],
                 [
-                    InlineKeyboardButton("🧾 Registrar Factura", callback_data="direct_action|factura_registrar"),
-                    InlineKeyboardButton("📖 Leer Guía (OCR)", callback_data="direct_action|leer")
+                    InlineKeyboardButton("👁️ LEER GUÍA (OCR)", callback_data="direct_action|leer"),
+                    InlineKeyboardButton("👁️ LEER FACTURA (OCR)", callback_data="direct_action|factura_leer")
                 ],
-                [InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")]
+                [InlineKeyboardButton("✍️ Subida Manual Guía", callback_data="direct_action|manual")],
+                [InlineKeyboardButton("❌ Cancelar y Descartar", callback_data="direct_action|cancelar")]
             ]
+            texto = (
+                f"📄 <b>DOCUMENTO PDF RECIBIDO (Escaneado o sin texto directo)</b>\n"
+                f"📄 Archivo: <code>{html.escape(display_name)}</code>\n\n"
+                f"No se detectó texto directo incrustado. Selecciona el tipo y si deseas <b>guardarlo en Sheets</b> o <b>solo consultarlo con OCR</b>:"
+            )
             await update.message.reply_text(
-                f"📄 **Documento PDF recibido** (`{display_name}`)\n\n"
-                f"¿Qué tipo de documento deseas procesar?",
+                texto,
                 reply_markup=InlineKeyboardMarkup(kb),
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
             return
 
@@ -4505,18 +4621,83 @@ async def handle_callback_direct_action(update: Update, context: ContextTypes.DE
             original_msg_id=original_msg_id
         )
 
-    elif accion == "guia_options":
+    elif accion == "factura_leer":
+        msg_status = await query.edit_message_text("⏳ Leyendo factura con IA (solo consulta OCR)...")
+        try:
+            if direct_file.get('is_xml'):
+                datos = await async_parse_factura_xml(file_path)
+            else:
+                datos = await parse_factura_pdf(file_path, msg_status)
+
+            numero_factura = datos.get("numero_factura", "S/N")
+            emisor_nombre = datos.get("emisor_nombre", "EMISOR DESCONOCIDO")
+            emisor_ruc = datos.get("emisor_ruc", "")
+            fecha_emision = datos.get("fecha_emision", "")
+            moneda = datos.get("moneda", "PEN")
+            simb = "S/." if moneda == "PEN" else "$"
+            cantidad = datos.get("cantidad", 1)
+            valor_unitario = datos.get("valor_unitario", 0.0)
+            valor_total = datos.get("valor_total", 0.0)
+            igv = datos.get("igv", 0.0)
+            importe_total = datos.get("importe_total", 0.0)
+
+            resumen = (
+                f"👁️ <b>Lectura OCR de Factura (Consulta)</b>\n"
+                f"<i>⚠️ No se guardó en Google Sheets</i>\n\n"
+                f"📄 <b>N° Factura:</b> <code>{html.escape(str(numero_factura))}</code>\n"
+                f"🏢 <b>Emisor:</b> <code>{html.escape(str(emisor_nombre))}</code>\n"
+            )
+            if emisor_ruc:
+                resumen += f"🆔 <b>RUC:</b> <code>{html.escape(str(emisor_ruc))}</code>\n"
+            resumen += (
+                f"📅 <b>Fecha:</b> {html.escape(str(fecha_emision))}\n"
+                f"💰 <b>Moneda:</b> {html.escape(str(moneda))}\n"
+                f"📦 <b>Cantidad:</b> {html.escape(str(cantidad))}\n"
+                f"🏷️ <b>Valor Unitario:</b> {simb} {valor_unitario:,.4f}\n"
+                f"📊 <b>Valor Total:</b> {simb} {valor_total:,.2f}\n"
+                f"🧾 <b>IGV:</b> {simb} {igv:,.2f}\n"
+                f"💵 <b>Importe Total:</b> <b>{simb} {importe_total:,.2f}</b>\n"
+            )
+
+            kb = [
+                [InlineKeyboardButton("💾 Ahora sí, Registrar en Sheets", callback_data="direct_action|factura_registrar")],
+                [InlineKeyboardButton("❌ Descartar Archivo", callback_data="direct_action|cancelar")]
+            ]
+            await msg_status.edit_text(resumen, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+        except Exception as e:
+            logger.error(f"Error en lectura OCR de factura: {e}")
+            await msg_status.edit_text(f"❌ Error al leer factura: {html.escape(str(e))}")
+
+    elif accion in ["cambiar_a_guia", "guia_options"]:
         kb = [
+            [InlineKeyboardButton("💾 1. REGISTRAR GUÍA  ➜ (Guardar en Sheets)", callback_data="direct_action|registrar")],
+            [InlineKeyboardButton("👁️ 2. SOLO LEER (OCR) ➜ (Ver datos sin guardar)", callback_data="direct_action|leer")],
             [
-                InlineKeyboardButton("📁 Registrar Guía (IA)", callback_data="direct_action|registrar"),
+                InlineKeyboardButton("🔄 Volver a Factura", callback_data="direct_action|cambiar_a_factura"),
                 InlineKeyboardButton("✍️ Subida Manual", callback_data="direct_action|manual")
             ],
-            [
-                InlineKeyboardButton("📖 Leer Guía (OCR)", callback_data="direct_action|ocr"),
-                InlineKeyboardButton("❌ Cancelar", callback_data="direct_action|cancelar")
-            ]
+            [InlineKeyboardButton("❌ Cancelar y Descartar", callback_data="direct_action|cancelar")]
         ]
-        await query.edit_message_text("📘 **Opciones para Guía de Remisión:**\n\n¿Cómo deseas procesar la guía?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        texto = (
+            f"📘 <b>GUÍA DE REMISIÓN</b>\n\n"
+            f"Has cambiado el tipo a <b>Guía de Remisión</b>.\n"
+            f"¿Qué deseas hacer con el documento?"
+        )
+        await query.edit_message_text(texto, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
+
+    elif accion == "cambiar_a_factura":
+        kb = [
+            [InlineKeyboardButton("💾 1. REGISTRAR FACTURA ➜ (Guardar en Sheets)", callback_data="direct_action|factura_registrar")],
+            [InlineKeyboardButton("👁️ 2. SOLO LEER (OCR)   ➜ (Ver montos sin guardar)", callback_data="direct_action|factura_leer")],
+            [InlineKeyboardButton("🔄 Volver a Guía", callback_data="direct_action|cambiar_a_guia")],
+            [InlineKeyboardButton("❌ Cancelar y Descartar", callback_data="direct_action|cancelar")]
+        ]
+        texto = (
+            f"🧾 <b>FACTURA ELECTRÓNICA</b>\n\n"
+            f"Has cambiado el tipo a <b>Factura</b>.\n"
+            f"¿Qué deseas hacer con el documento?"
+        )
+        await query.edit_message_text(texto, reply_markup=InlineKeyboardMarkup(kb), parse_mode='HTML')
 
 # ====================================================================
 # --- HANDLER CALLBACK VINCULACION ---

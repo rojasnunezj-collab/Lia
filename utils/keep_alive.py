@@ -366,6 +366,29 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 logger.error(f"Error en /api/clientes: {e}")
 
+        elif path == '/api/cotizaciones':
+            try:
+                from core.cotizaciones_service import obtener_todas_cotizaciones
+                q_params = parse_qs(parsed.query)
+                force = q_params.get('force', ['0'])[0] == '1'
+                q_empresa = q_params.get('q', [''])[0]
+                data = obtener_todas_cotizaciones(filtro_empresa=q_empresa or None, force_refresh=force)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+                self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/cotizaciones: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
         # Default Health Check para UptimeRobot y Render
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')

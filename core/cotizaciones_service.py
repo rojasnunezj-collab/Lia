@@ -61,7 +61,7 @@ MESES_ES = {
     9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
 }
 
-def obtener_url_webapp(correlativo=None, datos_edicion=None, user_id=None):
+def obtener_url_webapp(correlativo=None, datos_edicion=None, user_id=None, vista=None):
     """Construye la URL segura HTTPS para abrir la Telegram Mini App."""
     import urllib.parse
     import base64
@@ -78,6 +78,8 @@ def obtener_url_webapp(correlativo=None, datos_edicion=None, user_id=None):
         params['corr'] = str(correlativo)
     if user_id:
         params['uid'] = str(user_id)
+    if vista:
+        params['view'] = str(vista)
     if datos_edicion:
         json_str = json.dumps(datos_edicion, ensure_ascii=False)
         params['data'] = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
@@ -180,6 +182,15 @@ def obtener_siguiente_correlativo():
     except Exception as e:
         logger.error(f"Error obteniendo siguiente correlativo: {e}")
         return "080"
+
+_COTIZACIONES_CACHE = None
+_COTIZACIONES_CACHE_TIME = 0
+COTIZACIONES_CACHE_TTL = 60  # 60 segundos de caché
+
+def invalidar_cache_cotizaciones():
+    global _COTIZACIONES_CACHE, _COTIZACIONES_CACHE_TIME
+    _COTIZACIONES_CACHE = None
+    _COTIZACIONES_CACHE_TIME = 0
 
 _CATALOGO_CACHE = None
 _CATALOGO_CACHE_TIME = 0
@@ -701,6 +712,7 @@ def procesar_generacion_cotizacion(datos):
             except Exception as e_del:
                 logger.warning(f"No se pudo eliminar Doc previo {doc_id_previo}: {e_del}")
 
+        invalidar_cache_cotizaciones()
         return {
             "success": True,
             "correlativo": correlativo,
@@ -775,6 +787,83 @@ def buscar_cotizacion_por_correlativo(correlativo):
 
 async def async_buscar_cotizacion_por_correlativo(correlativo):
     return await asyncio.to_thread(buscar_cotizacion_por_correlativo, correlativo)
+
+def obtener_todas_cotizaciones(limite=None, filtro_empresa=None, force_refresh=False):
+    """
+    Obtiene las cotizaciones registradas en Google Sheets ordenadas de más reciente a más antigua.
+    Soporta filtro por empresa/RUC/código y límite (ej: 5 para Telegram).
+    """
+    global _COTIZACIONES_CACHE, _COTIZACIONES_CACHE_TIME
+    import re
+    now = time.time()
+    if force_refresh or _COTIZACIONES_CACHE is None or (now - _COTIZACIONES_CACHE_TIME > COTIZACIONES_CACHE_TTL):
+        try:
+            ws = obtener_o_crear_sheet_cotizaciones()
+            records = ws.get_all_records()
+            lista = []
+            for r in reversed(records):
+                corr = str(r.get("Correlativo", "")).strip()
+                if not corr:
+                    continue
+                raw_json = r.get("Datos_JSON", "")
+                parsed = None
+                if raw_json:
+                    try:
+                        parsed = json.loads(raw_json)
+                    except Exception:
+                        pass
+
+                doc_l = str(r.get("Link Doc", "")).strip()
+                pdf_l = str(r.get("Link PDF", "")).strip()
+                m_doc = re.search(r"/document/d/([a-zA-Z0-9_-]+)", doc_l)
+                m_pdf = re.search(r"/(?:file/d/|id=)([a-zA-Z0-9_-]+)", pdf_l)
+
+                item = {
+                    "correlativo": corr,
+                    "codigo": str(r.get("Codigo", f"{corr}-2026-EO-RS")),
+                    "fecha": str(r.get("Fecha Emision", "")),
+                    "ruc": str(r.get("RUC", "")),
+                    "cliente": str(r.get("Cliente", "")),
+                    "direccion": str(r.get("Direccion", "")),
+                    "responsable": str(r.get("Responsable", "")),
+                    "cargo": str(r.get("Cargo", "")),
+                    "items_resumen": str(r.get("Items Resumen", "")),
+                    "estado": str(r.get("Estado", "EMITIDA")),
+                    "ultima_edicion": str(r.get("Ultima Edicion", "")),
+                    "doc_link": doc_l,
+                    "pdf_link": pdf_l,
+                    "doc_id": m_doc.group(1) if m_doc else (parsed.get("doc_id") if parsed else None),
+                    "pdf_id": m_pdf.group(1) if m_pdf else (parsed.get("pdf_id") if parsed else None),
+                    "datos_json": parsed
+                }
+                lista.append(item)
+            _COTIZACIONES_CACHE = lista
+            _COTIZACIONES_CACHE_TIME = now
+        except Exception as e:
+            logger.error(f"Error obteniendo todas las cotizaciones: {e}")
+            if _COTIZACIONES_CACHE is not None:
+                return _COTIZACIONES_CACHE
+            return []
+
+    resultado = list(_COTIZACIONES_CACHE)
+    if filtro_empresa:
+        q = str(filtro_empresa).strip().lower()
+        def _match(c):
+            cli = str(c.get("cliente", "")).lower()
+            ruc = str(c.get("ruc", "")).lower()
+            cod = str(c.get("codigo", "")).lower()
+            corr = str(c.get("correlativo", "")).lower()
+            return q in cli or q in ruc or q in cod or q == corr
+        resultado = [c for c in resultado if _match(c)]
+
+    if limite and isinstance(limite, int) and limite > 0:
+        resultado = resultado[:limite]
+
+    return resultado
+
+async def async_obtener_todas_cotizaciones(limite=None, filtro_empresa=None, force_refresh=False):
+    return await asyncio.to_thread(obtener_todas_cotizaciones, limite, filtro_empresa, force_refresh)
+
 
 # ====================================================================
 # --- SINCRONIZAR PDF DESDE GOOGLE DOCS ---
@@ -855,6 +944,7 @@ def sincronizar_pdf_desde_doc(correlativo):
     except Exception as e_sh:
         logger.warning(f"Error actualizando Sheets al sincronizar PDF: {e_sh}")
 
+    invalidar_cache_cotizaciones()
     return {
         "success": True,
         "correlativo": correlativo,
