@@ -844,6 +844,14 @@
       } catch (e) {}
     }
 
+    function getFechaHoy() {
+      const hoy = new Date();
+      const dd = String(hoy.getDate()).padStart(2, '0');
+      const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+      const yyyy = hoy.getFullYear();
+      return `${dd}/${mm}/${yyyy}`;
+    }
+
     let catalogosData = null;
     let guiasRepositorioList = [];
     let correlativoActual = "";
@@ -952,9 +960,8 @@
       poblarSelectConOpciones(document.getElementById('servicio'), optsServ.length ? optsServ : [defServ], defServ);
       poblarSelectConOpciones(document.getElementById('tipoResiduo'), optsRes.length ? optsRes : [defRes], defRes);
 
-      const fBase = document.getElementById('fechaEmision')?.value;
-      if (fBase) {
-        document.getElementById('fechaEmision').value = calcularFechaEmisionSugerida(fBase, flujo);
+      if (!document.getElementById('fechaEmision')?.value) {
+        document.getElementById('fechaEmision').value = getFechaHoy();
       }
 
       actualizarCorrelativoSugerido();
@@ -1064,12 +1071,8 @@
         document.getElementById('userPill').innerText = user.first_name || user.username || "Operador";
       }
 
-      // Fecha de hoy por defecto
-      const hoy = new Date();
-      const dd = String(hoy.getDate()).padStart(2, '0');
-      const mm = String(hoy.getMonth() + 1).padStart(2, '0');
-      const yyyy = hoy.getFullYear();
-      document.getElementById('fechaEmision').value = `${dd}/${mm}/${yyyy}`;
+      // Fecha de Emisión predeterminada para el día que se hace (hoy)
+      document.getElementById('fechaEmision').value = getFechaHoy();
 
       // Configurar Drag & Drop de OCR
       setupDropZone();
@@ -1141,11 +1144,9 @@
         }
       }
 
-      // Regla especial de fecha para Prosembra / Villacurí en Comercialización
-      const flujo = document.getElementById('tipoFlujo')?.value || 'Comercialización';
-      const fBase = document.getElementById('fechaEmision')?.value;
-      if (fBase) {
-        document.getElementById('fechaEmision').value = calcularFechaEmisionSugerida(fBase, flujo, v);
+      // Fecha de emisión se mantiene predeterminada para el día que se hace (hoy)
+      if (!document.getElementById('fechaEmision')?.value) {
+        document.getElementById('fechaEmision').value = getFechaHoy();
       }
     }
 
@@ -1253,7 +1254,10 @@
       if (d.punto_partida) document.getElementById('puntoPartida').value = d.punto_partida;
       const elLlegada = document.getElementById('puntoLlegada');
       if (elLlegada && d.punto_llegada) elLlegada.value = d.punto_llegada;
-      if (d.fecha) document.getElementById('fechaEmision').value = d.fecha;
+      // Fecha de Emisión predeterminada para el día que se hace
+      if (!document.getElementById('fechaEmision')?.value) {
+        document.getElementById('fechaEmision').value = getFechaHoy();
+      }
       if (d.titulo && document.getElementById('tituloCert')) document.getElementById('tituloCert').value = d.titulo;
 
       // Cargar ítems
@@ -1262,9 +1266,9 @@
       if (Array.isArray(d.items) && d.items.length > 0) {
         d.items.forEach(it => {
           agregarFilaItem({
-            fecha: d.fecha || document.getElementById('fechaEmision').value,
-            placa: d.vehiculo || '',
-            guia: limpiarNumeroGuia(d.serie || it.guia || ''),
+            fecha: it.fecha_origen || it.fecha || d.fecha || getFechaHoy(),
+            placa: it.placa_origen || it.placa || d.vehiculo || '',
+            guia: limpiarNumeroGuia(it.guia_origen || it.guia || d.serie || ''),
             desc: it.desc || '',
             cant: it.cant || '1',
             um: (it.um || 'KG').toUpperCase(),
@@ -1272,7 +1276,11 @@
           });
         });
       } else {
-        agregarFilaItem();
+        agregarFilaItem({
+          fecha: d.fecha || getFechaHoy(),
+          placa: d.vehiculo || '',
+          guia: limpiarNumeroGuia(d.serie || '')
+        });
       }
     }
 
@@ -1285,9 +1293,9 @@
       card.className = 'item-card';
       card.id = `item-row-${idx}`;
 
-      const defFecha = data?.fecha || document.getElementById('fechaEmision').value;
-      const defPlaca = data?.placa || document.getElementById('placa').value;
-      const defGuia = limpiarNumeroGuia(data?.guia || '');
+      const defFecha = data?.fecha || data?.fecha_origen || document.getElementById('fechaEmision')?.value || getFechaHoy();
+      const defPlaca = data?.placa || data?.placa_origen || document.getElementById('placa')?.value || '';
+      const defGuia = limpiarNumeroGuia(data?.guia || data?.guia_origen || '');
       const defDesc = data?.desc || '';
       const defCant = data?.cant || '1';
       const defUm = data?.um || 'KG';
@@ -1299,6 +1307,10 @@
           <button type="button" class="btn-delete" onclick="eliminarFilaItem('${card.id}')">🗑️</button>
         </div>
         <div class="form-row">
+          <div class="form-group" style="flex:1.1;">
+            <label>Fecha Servicio</label>
+            <input type="text" class="it-fecha" value="${defFecha}" placeholder="dd/mm/yyyy">
+          </div>
           <div class="form-group" style="flex:1;">
             <label>Guía N°</label>
             <input type="text" class="it-guia" value="${defGuia}" placeholder="T001-1" onblur="this.value = limpiarNumeroGuia(this.value)" onchange="this.value = limpiarNumeroGuia(this.value)">
@@ -1376,13 +1388,13 @@
         const items = [];
         itemCards.forEach(c => {
           items.push({
-            fecha_origen: document.getElementById('fechaEmision').value,
-            placa_origen: c.querySelector('.it-placa')?.value || '',
+            fecha_origen: c.querySelector('.it-fecha')?.value?.trim() || document.getElementById('fechaEmision')?.value || getFechaHoy(),
+            placa_origen: c.querySelector('.it-placa')?.value?.trim() || '',
             guia_origen: limpiarNumeroGuia(c.querySelector('.it-guia')?.value || ''),
-            desc: c.querySelector('.it-desc')?.value || '',
-            cant: c.querySelector('.it-cant')?.value || '1',
-            um: c.querySelector('.it-um')?.value || 'KG',
-            peso: c.querySelector('.it-peso')?.value || '0.00'
+            desc: c.querySelector('.it-desc')?.value?.trim() || '',
+            cant: c.querySelector('.it-cant')?.value?.trim() || '1',
+            um: (c.querySelector('.it-um')?.value?.trim() || 'KG').toUpperCase(),
+            peso: c.querySelector('.it-peso')?.value?.trim() || '0.00'
           });
         });
 
@@ -1824,12 +1836,12 @@
         document.getElementById('tipoFlujo').value = flujoSugerido;
         actualizarCamposPorTipo();
 
-        // 6. Fecha de Emisión sugerida
-        if (primera.fecha) {
-          document.getElementById('fechaEmision').value = calcularFechaEmisionSugerida(primera.fecha, document.getElementById('tipoFlujo').value);
+        // 6. Fecha de Emisión predeterminada para el día que se hace (hoy)
+        if (!document.getElementById('fechaEmision')?.value) {
+          document.getElementById('fechaEmision').value = getFechaHoy();
         }
 
-        // 7. Cargar los ítems reales extraídos por OCR en la tabla
+        // 7. Cargar los ítems reales con su Fecha de Servicio individual en la tabla
         const container = document.getElementById('itemsContainer');
         container.innerHTML = '';
 
@@ -1845,9 +1857,9 @@
 
         itemsACargar.forEach(it => {
           agregarFilaItem({
-            fecha: it.fecha_origen || primera.fecha || '',
-            placa: it.placa_origen || data.placa || '',
-            guia: limpiarNumeroGuia(it.guia_origen || ''),
+            fecha: it.fecha_origen || it.fecha || primera.fecha || getFechaHoy(),
+            placa: it.placa_origen || it.placa || data.placa || '',
+            guia: limpiarNumeroGuia(it.guia_origen || it.guia || ''),
             desc: it.desc || '',
             cant: it.cant || '1',
             um: it.um || 'KG',
