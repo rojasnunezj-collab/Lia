@@ -688,9 +688,10 @@ def ajustar_posicion_y_tamano_firmas(doc: Document, num_items: int) -> None:
     except Exception as e:
         logger.warning(f"Aviso en ajuste de firmas: {e}")
 
-def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]]) -> bytes:
+def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]], columnas: Optional[List[Dict[str, Any]]] = None) -> bytes:
     """
     Inyecta la tabla formateada en el marcador [[TABLA_NOTAS]] del documento Word.
+    Soporta columnas dinámicas (encabezados editables y eliminables).
     """
     doc = Document(doc_io)
     target_paragraph = None
@@ -705,7 +706,44 @@ def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]])
             if "CERTIFICADO" in p.text.upper():
                 p.paragraph_format.space_after = Pt(0)
 
-        table = doc.add_table(rows=1, cols=7)
+        # Resolver columnas activas y sus encabezados
+        if isinstance(columnas, str):
+            try:
+                columnas = json.loads(columnas)
+            except Exception:
+                columnas = None
+
+        if not columnas or not isinstance(columnas, list) or len(columnas) == 0:
+            columnas_def = [
+                {"key": "fecha_origen", "label": "Fecha"},
+                {"key": "placa_origen", "label": "Placa"},
+                {"key": "guia_origen", "label": "N° Guía"},
+                {"key": "desc", "label": "Descripción"},
+                {"key": "cant", "label": "Cantidad"},
+                {"key": "um", "label": "Medida"},
+                {"key": "peso", "label": "Peso (Kg)"}
+            ]
+        else:
+            columnas_def = []
+            for c_item in columnas:
+                if isinstance(c_item, dict) and c_item.get('key'):
+                    columnas_def.append({
+                        "key": str(c_item.get('key')).strip(),
+                        "label": str(c_item.get('label') or c_item.get('key')).strip()
+                    })
+            if not columnas_def:
+                columnas_def = [
+                    {"key": "fecha_origen", "label": "Fecha"},
+                    {"key": "placa_origen", "label": "Placa"},
+                    {"key": "guia_origen", "label": "N° Guía"},
+                    {"key": "desc", "label": "Descripción"},
+                    {"key": "cant", "label": "Cantidad"},
+                    {"key": "um", "label": "Medida"},
+                    {"key": "peso", "label": "Peso (Kg)"}
+                ]
+
+        num_cols = len(columnas_def)
+        table = doc.add_table(rows=1, cols=num_cols)
         try:
             table.style = 'Table Grid'
         except Exception:
@@ -715,13 +753,28 @@ def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]])
         table.allow_autofit = False
         _set_table_margins(table, top=72, bottom=72, left=30, right=30)
 
-        widths = [Inches(0.75), Inches(0.75), Inches(0.75), Inches(3.0), Inches(0.75), Inches(0.75), Inches(0.75)]
+        # Distribuir anchos de columnas dinámicamente para ocupar el ancho imprimible (7.5 pulgadas)
+        has_desc = any(c_item.get('key') == 'desc' for c_item in columnas_def)
+        widths = []
+        if has_desc and num_cols > 1:
+            other_w = min(1.0, max(0.65, (7.5 - 3.0) / (num_cols - 1)))
+            desc_w = 7.5 - (other_w * (num_cols - 1))
+            for c_item in columnas_def:
+                if c_item.get('key') == 'desc':
+                    widths.append(Inches(desc_w))
+                else:
+                    widths.append(Inches(other_w))
+        else:
+            equal_w = 7.5 / num_cols
+            for _ in columnas_def:
+                widths.append(Inches(equal_w))
+
         for i, col in enumerate(table.columns):
             col.width = widths[i]
 
-        encabezados = ['Fecha', 'Placa', 'N° Guía', 'Descripción', 'Cantidad', 'Medida', 'Peso (Kg)']
         hdr_cells = table.rows[0].cells
-        for i, nombre in enumerate(encabezados):
+        for i, col_info in enumerate(columnas_def):
+            nombre = col_info['label']
             cell = hdr_cells[i]
             cell.text = nombre
             cell.width = widths[i]
@@ -741,15 +794,17 @@ def inyectar_tabla_en_docx(doc_io: io.BytesIO, data_items: List[Dict[str, Any]])
 
         for item in data_items:
             row_cells = table.add_row().cells
-            vals = [
-                str(item.get('fecha_origen', '')),
-                str(item.get('placa_origen', '')),
-                limpiar_numero_guia(item.get('guia_origen', '')),
-                str(item.get('desc', '')),
-                str(item.get('cant', '')),
-                str(item.get('um', '')).upper(),
-                str(item.get('peso', ''))
-            ]
+            vals = []
+            for col_info in columnas_def:
+                k = col_info['key']
+                if k == 'guia_origen':
+                    v = limpiar_numero_guia(item.get('guia_origen', ''))
+                elif k == 'um':
+                    v = str(item.get('um', '')).upper()
+                else:
+                    v = str(item.get(k, ''))
+                vals.append(v)
+
             for idx, valor in enumerate(vals):
                 cell = row_cells[idx]
                 cell.text = valor
@@ -1734,9 +1789,10 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
     buf_tpl.close()
     del doc
 
-    # 3. Inyectar tabla de ítems
+    # 3. Inyectar tabla de ítems con columnas personalizadas
+    columnas_payload = payload.get("columnas")
     tpl_io = io.BytesIO(tpl_bytes)
-    docx_final_bytes = inyectar_tabla_en_docx(tpl_io, items)
+    docx_final_bytes = inyectar_tabla_en_docx(tpl_io, items, columnas=columnas_payload)
     tpl_io.close()
     del tpl_bytes
 

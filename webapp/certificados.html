@@ -642,6 +642,22 @@
         <span id="badgeTotalItems" style="font-size:11px; color:var(--text-muted);">0 ítems</span>
       </div>
 
+      <!-- CONFIGURACIÓN DE ENCABEZADOS DE TABLA -->
+      <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:10px; padding:10px 12px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:11px; font-weight:700; color:#334155; text-transform:uppercase; letter-spacing:0.4px;">
+            🏷️ Encabezados de Tabla (Editables / Eliminables)
+          </span>
+          <button type="button" onclick="restablecerColumnasDefault()" style="background:none; border:none; color:var(--primary); font-size:11px; font-weight:600; cursor:pointer; text-decoration:underline;">
+            ↺ Restablecer
+          </button>
+        </div>
+
+        <div id="encabezadosActivosContainer" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+
+        <div id="restaurarColumnasContainer" style="margin-top:8px; display:none; flex-wrap:wrap; gap:6px; align-items:center;"></div>
+      </div>
+
       <div id="itemsContainer">
         <!-- Ítems dinámicos -->
       </div>
@@ -850,6 +866,143 @@
       const mm = String(hoy.getMonth() + 1).padStart(2, '0');
       const yyyy = hoy.getFullYear();
       return `${dd}/${mm}/${yyyy}`;
+    }
+
+    const COLUMNAS_DEFAULT = [
+      { key: 'fecha_origen', label: 'Fecha', defaultLabel: 'Fecha' },
+      { key: 'placa_origen', label: 'Placa', defaultLabel: 'Placa' },
+      { key: 'guia_origen', label: 'N° Guía', defaultLabel: 'N° Guía' },
+      { key: 'desc', label: 'Descripción', defaultLabel: 'Descripción' },
+      { key: 'cant', label: 'Cantidad', defaultLabel: 'Cantidad' },
+      { key: 'um', label: 'Medida', defaultLabel: 'Medida' },
+      { key: 'peso', label: 'Peso (Kg)', defaultLabel: 'Peso (Kg)' }
+    ];
+
+    let columnasActivas = JSON.parse(JSON.stringify(COLUMNAS_DEFAULT));
+
+    function getLabelCol(key) {
+      const col = columnasActivas.find(x => x.key === key);
+      if (col) return col.label;
+      const def = COLUMNAS_DEFAULT.find(x => x.key === key);
+      return def ? def.label : key;
+    }
+
+    function renderizarBarraEncabezados() {
+      const container = document.getElementById('encabezadosActivosContainer');
+      if (!container) return;
+      container.innerHTML = '';
+
+      columnasActivas.forEach(col => {
+        const pill = document.createElement('div');
+        pill.style.cssText = 'display:inline-flex; align-items:center; background:#ffffff; border:1px solid #94a3b8; border-radius:6px; padding:3px 6px; gap:4px; box-shadow:0 1px 2px rgba(0,0,0,0.04);';
+        pill.innerHTML = `
+          <span style="font-size:10px; color:#64748b;">🏷️</span>
+          <input type="text" value="${escapeHtml(col.label)}"
+            oninput="actualizarLabelColumna('${col.key}', this.value)"
+            style="border:none; border-bottom:1px dashed #0284c7; background:transparent; font-size:12px; font-weight:700; color:#0f172a; padding:1px 2px; width:${Math.max(col.label.length * 8 + 14, 50)}px; outline:none;"
+            title="Clic para editar el nombre de la columna">
+          <button type="button" onclick="eliminarColumna('${col.key}')"
+            title="Eliminar columna de la tabla"
+            style="border:none; background:transparent; color:#ef4444; cursor:pointer; font-size:14px; font-weight:700; padding:0 2px; line-height:1; display:flex; align-items:center;">
+            ×
+          </button>
+        `;
+        container.appendChild(pill);
+      });
+
+      const restContainer = document.getElementById('restaurarColumnasContainer');
+      if (restContainer) {
+        restContainer.innerHTML = '';
+        const eliminadas = COLUMNAS_DEFAULT.filter(def => !columnasActivas.some(act => act.key === def.key));
+        if (eliminadas.length > 0) {
+          const lbl = document.createElement('span');
+          lbl.style.cssText = 'font-size:11px; color:#64748b; margin-right:2px;';
+          lbl.innerText = 'Reactivar:';
+          restContainer.appendChild(lbl);
+
+          eliminadas.forEach(col => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.style.cssText = 'background:#ffffff; border:1px dashed #94a3b8; border-radius:6px; padding:2px 8px; font-size:11px; color:#475569; cursor:pointer; display:inline-flex; align-items:center; gap:3px;';
+            btn.innerHTML = `<span>➕</span> <b>${escapeHtml(col.label)}</b>`;
+            btn.onclick = () => reAgregarColumna(col.key);
+            restContainer.appendChild(btn);
+          });
+          restContainer.style.display = 'flex';
+        } else {
+          restContainer.style.display = 'none';
+        }
+      }
+    }
+
+    function actualizarLabelColumna(key, nuevoLabel) {
+      const col = columnasActivas.find(c => c.key === key);
+      if (col) {
+        col.label = nuevoLabel.trim() || col.defaultLabel;
+        actualizarLabelsEnFilasItems();
+      }
+    }
+
+    function eliminarColumna(key) {
+      if (columnasActivas.length <= 1) {
+        alert("La tabla debe tener al menos un encabezado.");
+        return;
+      }
+      columnasActivas = columnasActivas.filter(c => c.key !== key);
+      renderizarBarraEncabezados();
+      actualizarVisibilidadCamposEnFilas();
+    }
+
+    function reAgregarColumna(key) {
+      const colDef = COLUMNAS_DEFAULT.find(c => c.key === key);
+      if (colDef && !columnasActivas.some(c => c.key === key)) {
+        const idxOriginal = COLUMNAS_DEFAULT.findIndex(c => c.key === key);
+        let insertado = false;
+        for (let i = 0; i < columnasActivas.length; i++) {
+          const idxAct = COLUMNAS_DEFAULT.findIndex(c => c.key === columnasActivas[i].key);
+          if (idxAct > idxOriginal) {
+            columnasActivas.splice(i, 0, JSON.parse(JSON.stringify(colDef)));
+            insertado = true;
+            break;
+          }
+        }
+        if (!insertado) {
+          columnasActivas.push(JSON.parse(JSON.stringify(colDef)));
+        }
+        renderizarBarraEncabezados();
+        actualizarVisibilidadCamposEnFilas();
+      }
+    }
+
+    function restablecerColumnasDefault() {
+      columnasActivas = JSON.parse(JSON.stringify(COLUMNAS_DEFAULT));
+      renderizarBarraEncabezados();
+      actualizarVisibilidadCamposEnFilas();
+    }
+
+    function actualizarVisibilidadCamposEnCard(card) {
+      COLUMNAS_DEFAULT.forEach(col => {
+        const activa = columnasActivas.some(c => c.key === col.key);
+        const field = card.querySelector(`.col-field-${col.key}`);
+        if (field) {
+          field.style.display = activa ? '' : 'none';
+        }
+      });
+    }
+
+    function actualizarVisibilidadCamposEnFilas() {
+      document.querySelectorAll('#itemsContainer .item-card').forEach(card => {
+        actualizarVisibilidadCamposEnCard(card);
+      });
+      actualizarLabelsEnFilasItems();
+    }
+
+    function actualizarLabelsEnFilasItems() {
+      columnasActivas.forEach(col => {
+        document.querySelectorAll(`.col-lbl-${col.key}`).forEach(lbl => {
+          lbl.innerText = col.label;
+        });
+      });
     }
 
     let catalogosData = null;
@@ -1073,6 +1226,9 @@
 
       // Fecha de Emisión predeterminada para el día que se hace (hoy)
       document.getElementById('fechaEmision').value = getFechaHoy();
+
+      // Renderizar barra de encabezados de la tabla
+      renderizarBarraEncabezados();
 
       // Configurar Drag & Drop de OCR
       setupDropZone();
@@ -1307,39 +1463,40 @@
           <button type="button" class="btn-delete" onclick="eliminarFilaItem('${card.id}')">🗑️</button>
         </div>
         <div class="form-row">
-          <div class="form-group" style="flex:1.1;">
-            <label>Fecha Servicio</label>
+          <div class="form-group col-field-fecha_origen" style="flex:1.1;">
+            <label class="col-lbl-fecha_origen">${getLabelCol('fecha_origen')}</label>
             <input type="text" class="it-fecha" value="${defFecha}" placeholder="dd/mm/yyyy">
           </div>
-          <div class="form-group" style="flex:1;">
-            <label>Guía N°</label>
+          <div class="form-group col-field-guia_origen" style="flex:1;">
+            <label class="col-lbl-guia_origen">${getLabelCol('guia_origen')}</label>
             <input type="text" class="it-guia" value="${defGuia}" placeholder="T001-1" onblur="this.value = limpiarNumeroGuia(this.value)" onchange="this.value = limpiarNumeroGuia(this.value)">
           </div>
-          <div class="form-group" style="flex:1;">
-            <label>Placa</label>
+          <div class="form-group col-field-placa_origen" style="flex:1;">
+            <label class="col-lbl-placa_origen">${getLabelCol('placa_origen')}</label>
             <input type="text" class="it-placa" value="${defPlaca}" placeholder="ABC-123">
           </div>
         </div>
-        <div class="form-group">
-          <label>Descripción del Residuo</label>
+        <div class="form-group col-field-desc">
+          <label class="col-lbl-desc">${getLabelCol('desc')}</label>
           <input type="text" class="it-desc" value="${defDesc}" placeholder="Ej: CARTÓN EN DESUSO">
         </div>
         <div class="form-row">
-          <div class="form-group" style="flex:1;">
-            <label>Cant.</label>
+          <div class="form-group col-field-cant" style="flex:1;">
+            <label class="col-lbl-cant">${getLabelCol('cant')}</label>
             <input type="text" class="it-cant" value="${defCant}">
           </div>
-          <div class="form-group" style="flex:1;">
-            <label>Unidad</label>
+          <div class="form-group col-field-um" style="flex:1;">
+            <label class="col-lbl-um">${getLabelCol('um')}</label>
             <input type="text" class="it-um" value="${defUm}">
           </div>
-          <div class="form-group" style="flex:1;">
-            <label>Peso (Kg/TM)</label>
+          <div class="form-group col-field-peso" style="flex:1;">
+            <label class="col-lbl-peso">${getLabelCol('peso')}</label>
             <input type="text" class="it-peso" value="${defPeso}">
           </div>
         </div>
       `;
 
+      actualizarVisibilidadCamposEnCard(card);
       container.appendChild(card);
       actualizarContadorItems();
     }
@@ -1411,6 +1568,7 @@
           punto_llegada: document.getElementById('puntoLlegada')?.value?.trim() || '',
           servicio: document.getElementById('servicio')?.value?.trim() || '',
           tipo_residuo: document.getElementById('tipoResiduo')?.value?.trim() || '',
+          columnas: columnasActivas.map(c => ({ key: c.key, label: c.label })),
           items: items,
           user_id: tg?.initDataUnsafe?.user?.id || null,
           usuario_email: obtenerUsuarioMiniApp(),
