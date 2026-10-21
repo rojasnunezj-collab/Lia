@@ -1445,13 +1445,23 @@
       const container = document.getElementById('itemsContainer');
       const idx = container.children.length + 1;
 
+      // Obtener valores de fecha y guía del ítem anterior (si existe) para heredarlos al agregar más filas
+      const ultimaCard = container.lastElementChild;
+      let fechaHeredada = '';
+      let guiaHeredada = '';
+      if (ultimaCard) {
+        fechaHeredada = ultimaCard.querySelector('.it-fecha')?.value?.trim() || '';
+        guiaHeredada = ultimaCard.querySelector('.it-guia')?.value?.trim() || '';
+      }
+
       const card = document.createElement('div');
       card.className = 'item-card';
       card.id = `item-row-${idx}`;
 
-      const defFecha = data?.fecha || data?.fecha_origen || document.getElementById('fechaEmision')?.value || getFechaHoy();
+      // Solo fecha y guía se heredan de la fila anterior cuando no se pasa data explícita
+      const defFecha = data?.fecha || data?.fecha_origen || fechaHeredada || document.getElementById('fechaEmision')?.value || getFechaHoy();
       const defPlaca = data?.placa || data?.placa_origen || document.getElementById('placa')?.value || '';
-      const defGuia = limpiarNumeroGuia(data?.guia || data?.guia_origen || '');
+      const defGuia = limpiarNumeroGuia(data?.guia || data?.guia_origen || guiaHeredada || '');
       const defDesc = data?.desc || '';
       const defCant = data?.cant || '1';
       const defUm = data?.um || 'KG';
