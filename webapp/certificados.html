@@ -1421,13 +1421,23 @@
         if (d.success) {
           haptic('success');
           actualizarCorrelativoSugerido();
-          mostrarModalExito(d.res || {
+          ultimoCertificadoEmitido = d.res || {
             correlativo: correlativo,
             nombre_archivo: (d.res && d.res.nombre_archivo) ? d.res.nombre_archivo : ('CERT-' + (document.getElementById('tipoFlujo').value.includes('Comercial') ? 'COM' : 'SER') + '-' + correlativo + '.pdf'),
             cliente: cliente,
             fecha: payload.fecha_emision,
             guias: window.guiasSeleccionadasLista || []
-          });
+          };
+
+          showLoading("✅ ¡Certificado Emitido!", `Certificado N° ${correlativo} emitido y enviado a Telegram con éxito.\nCerrando aplicación...`);
+          setTimeout(() => {
+            cerrarMiniApp();
+            // Fallback si se abre en navegador web estándar fuera de Telegram
+            setTimeout(() => {
+              hideLoading();
+              mostrarModalExito(ultimoCertificadoEmitido);
+            }, 500);
+          }, 1200);
         } else {
           haptic('error');
           alert("❌ Error emitiendo certificado: " + (d.error || "Falla desconocida."));
@@ -1471,14 +1481,29 @@
       document.getElementById('modalExito').style.display = 'flex';
     }
 
-    function cerrarModalExito() {
-      document.getElementById('modalExito').style.display = 'none';
+    function cerrarMiniApp() {
       if (tg) {
         try {
-          tg.sendData(JSON.stringify({ tipo: "CERTIFICADO_EMITIDO", correlativo: ultimoCertificadoEmitido?.correlativo }));
-          tg.close();
-        } catch(e) {}
+          if (typeof tg.sendData === 'function') {
+            tg.sendData(JSON.stringify({ tipo: "CERTIFICADO_EMITIDO", correlativo: ultimoCertificadoEmitido?.correlativo }));
+          }
+        } catch (e) {}
+        try {
+          if (typeof tg.close === 'function') {
+            tg.close();
+            return;
+          }
+        } catch (e) {}
       }
+      try {
+        window.close();
+      } catch (e) {}
+    }
+
+    function cerrarModalExito() {
+      const modalExito = document.getElementById('modalExito');
+      if (modalExito) modalExito.style.display = 'none';
+      cerrarMiniApp();
     }
 
     async function ejecutarJuntarTrasEmision() {
