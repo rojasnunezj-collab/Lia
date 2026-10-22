@@ -891,7 +891,7 @@
         <label style="font-size:11px; font-weight:700; color:#334155; display:block; margin-bottom:4px;">
           📋 O Pega los datos aquí (Ctrl+V):
         </label>
-        <textarea id="loteTexto" rows="6" oninput="previsualizarCargaLote()" placeholder="Copia tus celdas en Excel o Sheets y pégalas aquí...&#10;Ejemplo:&#10;22/10/2026&#9;F004-1410&#9;ABC-123&#9;CARTÓN PRENSADO&#9;1&#9;TN&#9;12.50&#10;22/10/2026&#9;F004-1410&#9;ABC-123&#9;PLÁSTICO FILM&#9;2&#9;TN&#9;4.20" style="width:100%; font-family:monospace; font-size:11px; padding:8px; border-radius:8px; border:1px solid #cbd5e1; resize:vertical; box-sizing:border-box;"></textarea>
+        <textarea id="loteTexto" rows="6" oninput="previsualizarCargaLote()" onchange="previsualizarCargaLote()" onkeyup="previsualizarCargaLote()" onpaste="setTimeout(previsualizarCargaLote, 50)" placeholder="Copia tus celdas en Excel o Sheets y pégalas aquí...&#10;Ejemplo:&#10;22/10/2026&#9;F004-1410&#9;ABC-123&#9;CARTÓN PRENSADO&#9;1&#9;TN&#9;12.50&#10;22/10/2026&#9;F004-1410&#9;ABC-123&#9;PLÁSTICO FILM&#9;2&#9;TN&#9;4.20" style="width:100%; font-family:monospace; font-size:11px; padding:8px; border-radius:8px; border:1px solid #cbd5e1; resize:vertical; box-sizing:border-box;"></textarea>
       </div>
 
       <!-- Opciones de inserción -->
@@ -933,15 +933,108 @@
   </div>
 
   <!-- JAVASCRIPT LOGIC -->
-  <script>
-
-    // ==========================================
-    // GESTIÓN DE FUNDOS Y AUTOCOMPLETADO DIRECCIÓN (Columna D)
-    // ==========================================
-    function normalizarTexto(txt) {
-      return (txt || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
+    <script>
+    // ----------------------------------------------------
+    // INICIALIZACIÓN Y VARIABLES DE ESTADO GLOBALES
+    // ----------------------------------------------------
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      try {
+        tg.ready();
+        tg.expand();
+      } catch (e) {}
     }
 
+    let catalogosData = null;
+    let guiasRepositorioList = [];
+    let correlativoActual = "";
+    let base64OcrPdf = null;
+    let operacionEnCurso = false;
+    let ultimoCertificadoEmitido = null;
+    let itemsLoteParseados = [];
+
+    const COLUMNAS_DEFAULT = [
+      { key: 'fecha_origen', label: 'Fecha', defaultLabel: 'Fecha' },
+      { key: 'placa_origen', label: 'Placa', defaultLabel: 'Placa' },
+      { key: 'guia_origen', label: 'N° Guía', defaultLabel: 'N° Guía' },
+      { key: 'desc', label: 'Descripción', defaultLabel: 'Descripción' },
+      { key: 'cant', label: 'Cantidad', defaultLabel: 'Cantidad' },
+      { key: 'um', label: 'Medida', defaultLabel: 'Medida' },
+      { key: 'peso', label: 'Peso (Kg)', defaultLabel: 'Peso (Kg)' }
+    ];
+
+    let columnasActivas = JSON.parse(JSON.stringify(COLUMNAS_DEFAULT));
+
+    // ----------------------------------------------------
+    // FUNCIONES UTILITARIAS BÁSICAS
+    // ----------------------------------------------------
+    function getFechaHoy() {
+      const hoy = new Date();
+      const dd = String(hoy.getDate()).padStart(2, '0');
+      const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+      const yyyy = hoy.getFullYear();
+      return `${dd}/${mm}/${yyyy}`;
+    }
+
+    function normalizarTexto(txt) {
+      return (txt || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+    }
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function limpiarNumeroGuia(val) {
+      if (!val) return '';
+      let s = String(val).trim().toUpperCase();
+      if (['', 'NONE', 'NAN', 'S/D', 'S/G', 'SIN DATOS'].includes(s)) return '';
+      s = s.replace(/^(?:GU[IÍ]A(?:\s+DE\s+REMISI[OÓN])?\s*(?:ELECTR[OÓN]ICA)?\s*:?\s*)/i, '');
+      s = s.replace(/(?:N[°\.]|NUMERO|NRO\.?)\s*/i, '');
+      if (!/\d/.test(s)) return s;
+      const partes = s.split(/[-_\/\s]+/);
+      if (partes.length >= 2) {
+        const serie = partes[0].replace(/[^A-Z0-9]/g, '');
+        const corr = partes.slice(1).join('').replace(/\D/g, '');
+        if (serie && corr) {
+          const numLimpio = String(parseInt(corr, 10));
+          return `${serie}-${numLimpio}`;
+        }
+      }
+      const match = s.match(/([A-Z0-9]{1,4})\s*[-_\/]?\s*(\d+)/i);
+      if (match) {
+        const serie = match[1];
+        const numLimpio = String(parseInt(match[2], 10));
+        return `${serie}-${numLimpio}`;
+      }
+      return s;
+    }
+
+    function haptic(type = 'medium') {
+      try {
+        if (tg?.HapticFeedback) {
+          if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+          else if (type === 'error') tg.HapticFeedback.notificationOccurred('error');
+          else tg.HapticFeedback.impactOccurred(type);
+        }
+      } catch (e) {}
+    }
+
+    function getLabelCol(key) {
+      const col = columnasActivas.find(x => x.key === key);
+      if (col) return col.label;
+      const def = COLUMNAS_DEFAULT.find(x => x.key === key);
+      return def ? def.label : key;
+    }
+
+    // ----------------------------------------------------
+    // GESTIÓN DE FUNDOS Y AUTOCOMPLETADO DIRECCIÓN (Columna D)
+    // ----------------------------------------------------
     function poblarSelectorFundos(empresaFiltro) {
       const selFundo = document.getElementById('fundoSelect');
       if (!selFundo) return;
@@ -983,13 +1076,11 @@
           if (fundo === valorPrevio) opt.selected = true;
           selFundo.appendChild(opt);
         }
-        // Si la empresa tiene un solo fundo registrado, auto-seleccionarlo y actualizar dirección
         if (count === 1) {
           selFundo.selectedIndex = 1;
           onFundoChange(selFundo.value);
         }
       } else {
-        // Si no hay empresa filtrada, mostrar todos agrupados por empresa
         selFundo.innerHTML = '<option value="">-- Seleccionar Fundo --</option>';
         for (const [emp, fMap] of Object.entries(dirs)) {
           const group = document.createElement('optgroup');
@@ -1018,7 +1109,6 @@
       const dir = opt.dataset.direccion || '';
       const emp = opt.dataset.empresa || '';
 
-      // Jalar dirección de Columna D a Punto de Partida
       if (dir) {
         const inputPartida = document.getElementById('puntoPartida');
         if (inputPartida) {
@@ -1026,7 +1116,6 @@
         }
       }
 
-      // Si no hay cliente seleccionado o no coincide, auto-completar cliente
       if (emp) {
         const inputCli = document.getElementById('cliente');
         if (inputCli && (!inputCli.value || !normalizarTexto(inputCli.value).includes(normalizarTexto(emp)))) {
@@ -1097,16 +1186,14 @@
       return sel ? sel.value.trim() : '';
     }
 
-    // ==========================================
+    // ----------------------------------------------------
     // CARGA DE TABLA EN LOTE (TODO JUNTO)
-    // ==========================================
-    let itemsLoteParseados = [];
-
+    // ----------------------------------------------------
     function abrirModalCargaLote() {
       document.getElementById('modalCargaLote').style.display = 'flex';
       const txt = document.getElementById('loteTexto');
       if (txt) {
-        setTimeout(() => txt.focus(), 100);
+        setTimeout(() => txt.focus(), 80);
       }
       previsualizarCargaLote();
     }
@@ -1116,7 +1203,8 @@
     }
 
     function limpiarModalCargaLote() {
-      document.getElementById('loteTexto').value = '';
+      const txt = document.getElementById('loteTexto');
+      if (txt) txt.value = '';
       const fInput = document.getElementById('loteArchivo');
       if (fInput) fInput.value = '';
       itemsLoteParseados = [];
@@ -1128,7 +1216,7 @@
       if (!file) return;
 
       if (typeof XLSX === 'undefined') {
-        alert("Librería Excel no cargada aún. Por favor pega los datos directamente o intenta en 5 segundos.");
+        alert("Librería Excel en proceso de carga. Por favor pega tus celdas directamente o intenta en 5 segundos.");
         return;
       }
 
@@ -1153,12 +1241,10 @@
     function normalizarFechaLote(val) {
       if (!val) return '';
       const s = String(val).trim();
-      // YYYY-MM-DD
       const mIso = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
       if (mIso) {
         return `${String(mIso[3]).padStart(2, '0')}/${String(mIso[2]).padStart(2, '0')}/${mIso[1]}`;
       }
-      // DD-MM-YYYY or DD/MM/YY
       const mDmy = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
       if (mDmy) {
         let yr = mDmy[3];
@@ -1168,53 +1254,71 @@
       return s;
     }
 
+    function parsearLineaIndividual(linea) {
+      if (!linea || !linea.trim()) return null;
+      let l = linea.trim();
+      let celdas = [];
+
+      if (l.includes('\t')) {
+        celdas = l.split('\t');
+      } else if (l.includes('|')) {
+        celdas = l.split('|');
+      } else if (l.includes(';')) {
+        celdas = l.split(';');
+      } else if (l.includes(',') && !/^\d+,\d+$/.test(l)) {
+        celdas = l.split(',');
+      } else if (/\s{2,}/.test(l)) {
+        celdas = l.split(/\s{2,}/);
+      } else if (l.includes(' - ') && !/^[A-Z0-9]{3,4}\s*-\s*\d+$/i.test(l)) {
+        celdas = l.split(/\s+-\s+/);
+      } else {
+        const tokens = l.split(/\s+/).filter(Boolean);
+        celdas = tokens.length > 0 ? tokens : [l];
+      }
+
+      return celdas.map(c => c.trim().replace(/^["']|["']$/g, '')).filter(c => c.length > 0);
+    }
+
+    function esFilaEncabezadoLote(fila, totalFilas) {
+      if (!fila || totalFilas <= 1) return false;
+      for (const c of fila) {
+        if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(c.trim())) {
+          return false;
+        }
+      }
+      let matches = 0;
+      for (const c of fila) {
+        const clean = c.trim().toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ0-9]/g, '');
+        if (['FECHA', 'DATE', 'GUIA', 'FACTURA', 'PLACA', 'DESCRIPCION', 'CANT', 'CANTIDAD', 'UM', 'MEDIDA', 'PESO', 'TOTAL'].includes(clean)) {
+          matches++;
+        }
+      }
+      return matches >= 2;
+    }
+
     function parsearTextoTabular(texto) {
       if (!texto || !texto.trim()) return [];
       const lineas = texto.trim().split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
       if (lineas.length === 0) return [];
 
-      // Detectar delimitador: tab, punto y coma, o coma
-      const primeraLinea = lineas[0];
-      let delim = '\t';
-      if (primeraLinea.includes('\t')) {
-        delim = '\t';
-      } else if (primeraLinea.includes(';') && !primeraLinea.includes('\t')) {
-        delim = ';';
-      } else if (primeraLinea.includes(',') && !primeraLinea.includes('\t')) {
-        delim = ',';
-      }
-
-      const filasCeldas = lineas.map(linea => {
-        return linea.split(delim).map(c => c.trim().replace(/^["']|["']$/g, ''));
-      });
-
+      const filasCeldas = lineas.map(parsearLineaIndividual).filter(f => f && f.length > 0);
       if (filasCeldas.length === 0) return [];
 
-      // Detectar encabezados en la primera fila
-      const primeraFila = filasCeldas[0];
       let filaInicio = 0;
       let mapaIndices = null;
 
-      const esEncabezado = primeraFila.some(c => {
-        const u = normalizarTexto(c);
-        return u.includes('FECHA') || u.includes('GUIA') || u.includes('FACTURA') || 
-               u.includes('PLACA') || u.includes('DESC') || u.includes('RESIDUO') || 
-               u.includes('CANT') || u.includes('UM') || u.includes('MEDIDA') || 
-               u.includes('PESO') || u.includes('KILO') || u.includes('TN');
-      });
-
-      if (esEncabezado) {
+      if (esFilaEncabezadoLote(filasCeldas[0], filasCeldas.length)) {
         filaInicio = 1;
         mapaIndices = {};
-        primeraFila.forEach((colName, idx) => {
-          const u = normalizarTexto(colName);
-          if (u.includes('FECHA') || u.includes('DATE')) mapaIndices.fecha = idx;
-          else if (u.includes('PLACA') || u.includes('VEHIC')) mapaIndices.placa = idx;
-          else if (u.includes('GUIA') || u.includes('FACTURA') || u.includes('COMPROBANTE') || u.includes('GR')) mapaIndices.guia = idx;
-          else if (u.includes('DESC') || u.includes('RESIDUO') || u.includes('ITEM') || u.includes('MATERIAL') || u.includes('DETALLE')) mapaIndices.desc = idx;
-          else if (u.includes('CANT')) mapaIndices.cant = idx;
-          else if (u.includes('UM') || u.includes('MEDIDA') || u.includes('UNIDAD')) mapaIndices.um = idx;
-          else if (u.includes('PESO') || u.includes('KG') || u.includes('KILO') || u.includes('TN') || u.includes('TOTAL')) mapaIndices.peso = idx;
+        filasCeldas[0].forEach((colName, idx) => {
+          const clean = colName.trim().toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ0-9]/g, '');
+          if (clean.includes('FECHA') || clean.includes('DATE')) mapaIndices.fecha = idx;
+          else if (clean.includes('PLACA') || clean.includes('VEHIC')) mapaIndices.placa = idx;
+          else if (clean.includes('GUIA') || clean.includes('FACTURA') || clean.includes('COMPROBANTE') || clean.includes('GR')) mapaIndices.guia = idx;
+          else if (clean.includes('DESC') || clean.includes('ITEM') || clean.includes('MATERIAL') || clean.includes('RESIDUO')) mapaIndices.desc = idx;
+          else if (clean.includes('CANT')) mapaIndices.cant = idx;
+          else if (clean.includes('UM') || clean.includes('MEDIDA') || clean.includes('UNIDAD')) mapaIndices.um = idx;
+          else if (clean.includes('PESO') || clean.includes('KG') || clean.includes('KILO') || clean.includes('TN') || clean.includes('TOTAL')) mapaIndices.peso = idx;
         });
       }
 
@@ -1225,7 +1329,7 @@
 
       for (let i = filaInicio; i < filasCeldas.length; i++) {
         const fila = filasCeldas[i];
-        if (!fila || fila.length === 0 || fila.every(c => !c)) continue;
+        if (!fila || fila.length === 0) continue;
 
         let item = {
           fecha: '',
@@ -1238,81 +1342,82 @@
         };
 
         if (mapaIndices && Object.keys(mapaIndices).length >= 2) {
-          if (mapaIndices.fecha !== undefined) item.fecha = fila[mapaIndices.fecha] || '';
-          if (mapaIndices.placa !== undefined) item.placa = fila[mapaIndices.placa] || '';
-          if (mapaIndices.guia !== undefined) item.guia = fila[mapaIndices.guia] || '';
-          if (mapaIndices.desc !== undefined) item.desc = fila[mapaIndices.desc] || '';
-          if (mapaIndices.cant !== undefined) item.cant = fila[mapaIndices.cant] || '1';
-          if (mapaIndices.um !== undefined) item.um = (fila[mapaIndices.um] || 'KG').toUpperCase();
-          if (mapaIndices.peso !== undefined) item.peso = fila[mapaIndices.peso] || '0.00';
+          if (mapaIndices.fecha !== undefined && fila[mapaIndices.fecha]) item.fecha = fila[mapaIndices.fecha];
+          if (mapaIndices.placa !== undefined && fila[mapaIndices.placa]) item.placa = fila[mapaIndices.placa];
+          if (mapaIndices.guia !== undefined && fila[mapaIndices.guia]) item.guia = fila[mapaIndices.guia];
+          if (mapaIndices.desc !== undefined && fila[mapaIndices.desc]) item.desc = fila[mapaIndices.desc];
+          if (mapaIndices.cant !== undefined && fila[mapaIndices.cant]) item.cant = fila[mapaIndices.cant];
+          if (mapaIndices.um !== undefined && fila[mapaIndices.um]) item.um = fila[mapaIndices.um].toUpperCase();
+          if (mapaIndices.peso !== undefined && fila[mapaIndices.peso]) item.peso = fila[mapaIndices.peso];
+        } else if (fila.length === 7) {
+          item.fecha = fila[0];
+          const c1 = fila[1], c2 = fila[2];
+          if (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(c1) && /\d/.test(c1)) {
+            item.placa = c1;
+            item.guia = c2;
+          } else {
+            item.guia = c1;
+            item.placa = c2;
+          }
+          item.desc = fila[3];
+          item.cant = fila[4] || '1';
+          item.um = (fila[5] || 'KG').toUpperCase();
+          item.peso = fila[6] || '0.00';
+        } else if (fila.length === 6) {
+          item.fecha = fila[0];
+          item.guia = fila[1];
+          item.desc = fila[2];
+          item.cant = fila[3] || '1';
+          item.um = (fila[4] || 'KG').toUpperCase();
+          item.peso = fila[5] || '0.00';
         } else {
-          // Mapeo posicional inteligente
-          const keysActivas = columnasActivas.map(c => c.key);
-          if (fila.length === keysActivas.length) {
-            keysActivas.forEach((k, colIdx) => {
-              const val = fila[colIdx] || '';
-              if (k === 'fecha_origen') item.fecha = val;
-              else if (k === 'placa_origen') item.placa = val;
-              else if (k === 'guia_origen') item.guia = val;
-              else if (k === 'desc') item.desc = val;
-              else if (k === 'cant') item.cant = val || '1';
-              else if (k === 'um') item.um = val ? val.toUpperCase() : 'KG';
-              else if (k === 'peso') item.peso = val || '0.00';
-            });
-          } else if (fila.length === 7) {
-            item.fecha = fila[0];
-            const c1 = fila[1], c2 = fila[2];
-            if (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(c1) || /^[A-Z0-9]{6,7}$/i.test(c1)) {
-              item.placa = c1;
-              item.guia = c2;
-            } else if (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(c2)) {
-              item.guia = c1;
-              item.placa = c2;
-            } else {
-              item.guia = c1;
-              item.placa = c2;
+          const descParts = [];
+          const numbers = [];
+          fila.forEach(c => {
+            const trimmed = c.trim();
+            if (!trimmed) return;
+
+            if (!item.fecha && (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(trimmed) || /^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$/.test(trimmed))) {
+              item.fecha = trimmed;
+              return;
             }
-            item.desc = fila[3];
-            item.cant = fila[4] || '1';
-            item.um = (fila[5] || 'KG').toUpperCase();
-            item.peso = fila[6] || '0.00';
-          } else if (fila.length === 6) {
-            // Fecha, Guía, Desc, Cant, UM, Peso
-            item.fecha = fila[0];
-            item.guia = fila[1];
-            item.desc = fila[2];
-            item.cant = fila[3] || '1';
-            item.um = (fila[4] || 'KG').toUpperCase();
-            item.peso = fila[5] || '0.00';
-          } else if (fila.length >= 4) {
-            // Heurística por tipo de dato
-            fila.forEach(c => {
-              const trimmed = c.trim();
-              if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(trimmed) || /^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$/.test(trimmed)) {
-                if (!item.fecha) item.fecha = trimmed;
-              } else if (/^[A-Z0-9]{1,4}[\-\_]\d{1,8}$/i.test(trimmed)) {
-                if (!item.guia) item.guia = trimmed;
-              } else if (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(trimmed)) {
-                if (!item.placa) item.placa = trimmed;
-              } else if (/^(KG|TN|TM|UND|M3|GLN|LT|GAL|LTS|PZA)$/i.test(trimmed)) {
-                item.um = trimmed.toUpperCase();
-              } else if (/^\d+(?:[\.,]\d+)?$/.test(trimmed) && parseFloat(trimmed.replace(',', '.')) > 0) {
-                if (!item.peso || item.peso === '0.00') {
-                  item.peso = trimmed.replace(',', '.');
-                } else if (!item.cant || item.cant === '1') {
-                  item.cant = trimmed;
-                }
-              } else if (trimmed.length > 2 && !item.desc) {
-                item.desc = trimmed;
-              }
-            });
+
+            if (!item.guia && (/^[A-Z0-9]{1,4}[\-\_]\d{1,8}$/i.test(trimmed) || /^(?:E|T|F|B)\d{3}-\d+/i.test(trimmed))) {
+              item.guia = trimmed;
+              return;
+            }
+
+            if (!item.placa && /\d/.test(trimmed) && (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(trimmed) || /^[A-Z]{1,2}\d{1,2}-[A-Z0-9]{2,4}$/i.test(trimmed))) {
+              item.placa = trimmed;
+              return;
+            }
+
+            if (/^(KG|TN|TM|UND|M3|GLN|LT|GAL|LTS|PZA|KILOS|TON|TONELADAS)$/i.test(trimmed)) {
+              item.um = trimmed.toUpperCase().replace('TONELADAS', 'TN').replace('TON', 'TN').replace('KILOS', 'KG');
+              return;
+            }
+
+            if (/^\d+(?:[\.,]\d+)?$/.test(trimmed) && parseFloat(trimmed.replace(',', '.')) > 0) {
+              numbers.push(trimmed.replace(',', '.'));
+              return;
+            }
+
+            descParts.push(trimmed);
+          });
+
+          if (numbers.length === 1) {
+            item.peso = numbers[0];
+          } else if (numbers.length >= 2) {
+            item.cant = numbers[0];
+            item.peso = numbers[1];
+          }
+
+          if (descParts.length > 0) {
+            item.desc = descParts.join(' ');
           }
         }
 
-        // Normalizar fecha
         item.fecha = normalizarFechaLote(item.fecha);
-
-        // Copiar / heredar fecha, guía y placa si vienen vacías (como en Excel al copiar celdas combinadas)
         if (item.fecha) ultimaFecha = item.fecha;
         else if (ultimaFecha) item.fecha = ultimaFecha;
 
@@ -1324,10 +1429,11 @@
 
         item.guia = limpiarNumeroGuia(item.guia);
 
-        if (item.desc || item.peso !== '0.00' || item.guia || item.fecha) {
+        if (item.desc || (item.peso && item.peso !== '0.00') || item.guia || item.fecha) {
           items.push(item);
         }
       }
+
       return items;
     }
 
@@ -1340,64 +1446,72 @@
       const tabla = document.getElementById('loteTablaPreview');
       const btnConfirmar = document.getElementById('btnConfirmarLote');
 
-      if (!previewContainer || !badgeCount || !tabla || !btnConfirmar) return;
+      if (!btnConfirmar) return;
 
       if (itemsLoteParseados.length === 0) {
-        previewContainer.style.display = 'none';
-        btnConfirmar.disabled = true;
-        btnConfirmar.style.opacity = '0.6';
+        if (previewContainer) previewContainer.style.display = 'none';
+        btnConfirmar.disabled = false; // Permitir clic para diagnosticar y dar feedback
+        btnConfirmar.style.opacity = '0.7';
         btnConfirmar.innerText = '📥 Cargar en la Matriz';
         return;
       }
 
-      previewContainer.style.display = 'block';
-      badgeCount.innerText = `✨ ${itemsLoteParseados.length} fila(s) detectada(s)`;
+      if (previewContainer) previewContainer.style.display = 'block';
+      if (badgeCount) badgeCount.innerText = `✨ ${itemsLoteParseados.length} fila(s) detectada(s)`;
       btnConfirmar.disabled = false;
       btnConfirmar.style.opacity = '1';
-      btnConfirmar.innerText = `📥 Cargar ${itemsLoteParseados.length} Ítems en la Matriz`;
+      btnConfirmar.innerText = `📥 Cargar ${itemsLoteParseados.length} Ítem(s) en la Matriz`;
 
-      let html = `
-        <thead>
-          <tr style="background:#f1f5f9; color:#475569; border-bottom:1px solid #cbd5e1;">
-            <th style="padding:4px 6px;">#</th>
-            <th style="padding:4px 6px;">Fecha</th>
-            <th style="padding:4px 6px;">N° Guía</th>
-            <th style="padding:4px 6px;">Placa</th>
-            <th style="padding:4px 6px;">Descripción</th>
-            <th style="padding:4px 6px;">Cant</th>
-            <th style="padding:4px 6px;">UM</th>
-            <th style="padding:4px 6px;">Peso</th>
-          </tr>
-        </thead>
-        <tbody>
-      `;
-
-      itemsLoteParseados.forEach((it, idx) => {
-        html += `
-          <tr style="border-bottom:1px solid #f1f5f9;">
-            <td style="padding:4px 6px; color:#64748b;">${idx + 1}</td>
-            <td style="padding:4px 6px; font-weight:600;">${escapeHtml(it.fecha || '-')}</td>
-            <td style="padding:4px 6px; font-weight:600; color:#0284c7;">${escapeHtml(it.guia || '-')}</td>
-            <td style="padding:4px 6px;">${escapeHtml(it.placa || '-')}</td>
-            <td style="padding:4px 6px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(it.desc || '-')}</td>
-            <td style="padding:4px 6px;">${escapeHtml(it.cant || '1')}</td>
-            <td style="padding:4px 6px;">${escapeHtml(it.um || 'KG')}</td>
-            <td style="padding:4px 6px; font-weight:700; color:#10b981;">${escapeHtml(it.peso || '0.00')}</td>
-          </tr>
+      if (tabla) {
+        let html = `
+          <thead>
+            <tr style="background:#f1f5f9; color:#475569; border-bottom:1px solid #cbd5e1;">
+              <th style="padding:4px 6px;">#</th>
+              <th style="padding:4px 6px;">Fecha</th>
+              <th style="padding:4px 6px;">N° Guía</th>
+              <th style="padding:4px 6px;">Placa</th>
+              <th style="padding:4px 6px;">Descripción</th>
+              <th style="padding:4px 6px;">Cant</th>
+              <th style="padding:4px 6px;">UM</th>
+              <th style="padding:4px 6px;">Peso</th>
+            </tr>
+          </thead>
+          <tbody>
         `;
-      });
-      html += '</tbody>';
-      tabla.innerHTML = html;
+
+        itemsLoteParseados.forEach((it, idx) => {
+          html += `
+            <tr style="border-bottom:1px solid #f1f5f9;">
+              <td style="padding:4px 6px; color:#64748b;">${idx + 1}</td>
+              <td style="padding:4px 6px; font-weight:600;">${escapeHtml(it.fecha || '-')}</td>
+              <td style="padding:4px 6px; font-weight:600; color:#0284c7;">${escapeHtml(it.guia || '-')}</td>
+              <td style="padding:4px 6px;">${escapeHtml(it.placa || '-')}</td>
+              <td style="padding:4px 6px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(it.desc || '-')}</td>
+              <td style="padding:4px 6px;">${escapeHtml(it.cant || '1')}</td>
+              <td style="padding:4px 6px;">${escapeHtml(it.um || 'KG')}</td>
+              <td style="padding:4px 6px; font-weight:700; color:#10b981;">${escapeHtml(it.peso || '0.00')}</td>
+            </tr>
+          `;
+        });
+        html += '</tbody>';
+        tabla.innerHTML = html;
+      }
     }
 
     function insertarLoteEnTabla() {
+      const texto = document.getElementById('loteTexto')?.value || '';
       if (!itemsLoteParseados || itemsLoteParseados.length === 0) {
-        alert("No hay filas para insertar.");
+        itemsLoteParseados = parsearTextoTabular(texto);
+      }
+
+      if (!itemsLoteParseados || itemsLoteParseados.length === 0) {
+        alert("⚠️ No se detectaron residuos válidos en los datos ingresados.\n\nPor favor ingresa al menos la descripción o peso de cada residuo (por ejemplo:\n22/10/2026  F004-1410  ABC-123  CARTON  1  TN  15.50)");
         return;
       }
 
       const chkReemplazar = document.getElementById('chkReemplazarTabla');
       const container = document.getElementById('itemsContainer');
+      if (!container) return;
 
       if (chkReemplazar && chkReemplazar.checked) {
         container.innerHTML = '';
@@ -1410,42 +1524,7 @@
       actualizarContadorItems();
       cerrarModalCargaLote();
       haptic('success');
-    }
-
-    // Inicialización Telegram WebApp
-    const tg = window.Telegram?.WebApp;
-    if (tg) {
-      try {
-        tg.ready();
-        tg.expand();
-      } catch (e) {}
-    }
-
-    function getFechaHoy() {
-      const hoy = new Date();
-      const dd = String(hoy.getDate()).padStart(2, '0');
-      const mm = String(hoy.getMonth() + 1).padStart(2, '0');
-      const yyyy = hoy.getFullYear();
-      return `${dd}/${mm}/${yyyy}`;
-    }
-
-    const COLUMNAS_DEFAULT = [
-      { key: 'fecha_origen', label: 'Fecha', defaultLabel: 'Fecha' },
-      { key: 'placa_origen', label: 'Placa', defaultLabel: 'Placa' },
-      { key: 'guia_origen', label: 'N° Guía', defaultLabel: 'N° Guía' },
-      { key: 'desc', label: 'Descripción', defaultLabel: 'Descripción' },
-      { key: 'cant', label: 'Cantidad', defaultLabel: 'Cantidad' },
-      { key: 'um', label: 'Medida', defaultLabel: 'Medida' },
-      { key: 'peso', label: 'Peso (Kg)', defaultLabel: 'Peso (Kg)' }
-    ];
-
-    let columnasActivas = JSON.parse(JSON.stringify(COLUMNAS_DEFAULT));
-
-    function getLabelCol(key) {
-      const col = columnasActivas.find(x => x.key === key);
-      if (col) return col.label;
-      const def = COLUMNAS_DEFAULT.find(x => x.key === key);
-      return def ? def.label : key;
+      alert(`✅ Se cargaron exitosamente ${itemsLoteParseados.length} residuo(s) en la matriz.`);
     }
 
     function renderizarBarraEncabezados() {
@@ -1566,10 +1645,10 @@
       });
     }
 
-    let catalogosData = null;
-    let guiasRepositorioList = [];
-    let correlativoActual = "";
-    let base64OcrPdf = null;
+    // catalogosData inicializado al inicio
+    // guiasRepositorioList inicializado al inicio
+    // correlativoActual inicializado al inicio
+    // base64OcrPdf inicializado al inicio
 
     function escapeHtml(str) {
       if (str === null || str === undefined) return '';
@@ -1688,7 +1767,7 @@
       return path;
     }
 
-    let operacionEnCurso = false;
+    // operacionEnCurso inicializado al inicio
 
     function bloquearBoton(btn, textoEspera = "⏳ Esperando...") {
       if (!btn) return null;
@@ -2196,7 +2275,7 @@
       }
     }
 
-    let ultimoCertificadoEmitido = null;
+    // ultimoCertificadoEmitido inicializado al inicio
 
     function mostrarModalExito(res) {
       ultimoCertificadoEmitido = res;
