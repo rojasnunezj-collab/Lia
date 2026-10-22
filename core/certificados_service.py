@@ -1808,16 +1808,21 @@ def procesar_generacion_certificado(payload: Dict[str, Any], remision_bytes: Opt
 
     # 6. Nombres de archivo y destino
     tipo_cod = "COM" if "comercializa" in str(tipo_flujo).lower() else "SER"
-    destino_raw = str(v_partida).split(' - ')[-1].strip()
-    destino_raw = re.sub(r'(?i)^(Av\.|Avenida|Calle|Jr\.|Jirón|Pasaje|Carretera|Panamericana)\s+', '', destino_raw).strip()
-    destino_limpio = re.sub(r'(?i)^(Planta|Fundo|Sede|Sucursal|Predio)\s+', '', destino_raw).strip().upper()
-    if not destino_limpio or destino_limpio == "NAN":
-        destino_final = str(v_cli).strip().upper()
+    v_fundo = payload.get('fundo')
+    if v_fundo and str(v_fundo).strip() and str(v_fundo).strip().upper() not in ["", "NONE", "NAN", "-- SELECCIONAR FUNDO --"]:
+        destino_limpio = re.sub(r'(?i)^(Planta|Fundo|Sede|Sucursal|Predio)\s+', '', str(v_fundo)).strip().upper()
+        destino_final = destino_limpio if destino_limpio and destino_limpio != "NAN" else str(v_fundo).strip().upper()
     else:
-        destino_final = destino_limpio
+        destino_raw = str(v_partida).split(' - ')[-1].strip()
+        destino_raw = re.sub(r'(?i)^(Av\.|Avenida|Calle|Jr\.|Jirón|Pasaje|Carretera|Panamericana)\s+', '', destino_raw).strip()
+        destino_limpio = re.sub(r'(?i)^(Planta|Fundo|Sede|Sucursal|Predio)\s+', '', destino_raw).strip().upper()
+        if not destino_limpio or destino_limpio == "NAN":
+            destino_final = str(v_cli).strip().upper()
+        else:
+            destino_final = destino_limpio
 
-    if ' - ' not in str(v_partida) and len(destino_final.split()) > 1:
-        destino_final = destino_final.split()[0]
+        if ' - ' not in str(v_partida) and len(destino_final.split()) > 1:
+            destino_final = destino_final.split()[0]
 
     nombre_base = f"CERT-{tipo_cod}-{v_corr}-{destino_final}"
     nombre_docx = f"{nombre_base}.docx"

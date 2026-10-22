@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Sistema de Certificados IA - Lía</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     :root {
       --primary: #198754;
@@ -602,14 +603,25 @@
         <datalist id="listaClientes"></datalist>
       </div>
 
+      <!-- Placa oculta para retrocompatibilidad con scripts u OCR -->
+      <input type="hidden" id="placa" value="">
+
       <div class="form-row">
         <div class="form-group">
           <label>RUC Cliente</label>
           <input type="text" id="rucCliente" placeholder="20XXXXXXXXX">
         </div>
         <div class="form-group">
-          <label>Placa Vehículo</label>
-          <input type="text" id="placa" placeholder="ABC-123">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label style="margin-bottom:0;">Fundo / Planta</label>
+            <button type="button" id="btnToggleFundoManual" onclick="toggleModoFundoManual()" style="background:none; border:none; color:var(--primary); font-size:11px; font-weight:600; cursor:pointer; text-decoration:underline; padding:0;">
+              ✏️ Manual
+            </button>
+          </div>
+          <select id="fundoSelect" onchange="onFundoChange(this.value)" style="margin-top:6px;">
+            <option value="">-- Seleccionar Fundo --</option>
+          </select>
+          <input type="text" id="fundoManual" placeholder="Escribir nombre del fundo..." style="display:none; margin-top:6px;">
         </div>
       </div>
 
@@ -662,9 +674,14 @@
         <!-- Ítems dinámicos -->
       </div>
 
-      <button type="button" class="btn-add" onclick="agregarFilaItem()">
-        ➕ Agregar Residuo
-      </button>
+      <div style="display:flex; gap:10px; margin-top:8px;">
+        <button type="button" class="btn-add" onclick="agregarFilaItem()" style="flex:1;">
+          ➕ Agregar Residuo
+        </button>
+        <button type="button" onclick="abrirModalCargaLote()" style="flex:1; background:#0284c7; color:#fff; font-weight:700; border:none; border-radius:10px; padding:12px; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; box-shadow:0 2px 6px rgba(2,132,199,0.25); transition:all 0.2s ease;">
+          📋 Cargar Todo Junto
+        </button>
+      </div>
     </div>
 
     <!-- ANEXOS OPCIONALES DE GUÍA (PARA CONSOLIDAR EN PDF) -->
@@ -849,8 +866,552 @@
     </div>
   </div>
 
+  <!-- MODAL CARGA DE TABLA EN LOTE (TODO JUNTO) -->
+  <div id="modalCargaLote" class="modal-overlay" style="display:none; z-index:1100;">
+    <div class="modal-card" style="max-width:540px; width:95%; max-height:92vh; overflow-y:auto; text-align:left; padding:18px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #e2e8f0; padding-bottom:8px;">
+        <h3 style="font-size:15px; font-weight:700; color:#0f172a; display:flex; align-items:center; gap:6px; margin:0;">
+          📋 Cargar Datos de la Tabla Todo Junto
+        </h3>
+        <button type="button" onclick="cerrarModalCargaLote()" style="background:none; border:none; font-size:18px; cursor:pointer; color:#64748b; font-weight:700;">✕</button>
+      </div>
+
+      <p style="font-size:12px; color:#475569; margin-bottom:10px; line-height:1.4;">
+        Pega filas copiadas directamente de <b>Excel o Google Sheets</b> (Ctrl+V), o sube tu archivo <b>.xlsx / .csv</b>:
+      </p>
+
+      <!-- Selector de Archivo -->
+      <div style="margin-bottom:10px; background:#f1f5f9; padding:8px 10px; border-radius:8px; border:1px dashed #94a3b8; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        <span style="font-size:11px; font-weight:600; color:#334155;">📁 Subir Excel / CSV:</span>
+        <input type="file" id="loteArchivo" accept=".xlsx,.xls,.csv" onchange="procesarArchivoLote(event)" style="font-size:11px; max-width:210px;">
+      </div>
+
+      <!-- Textarea para Pegar -->
+      <div style="margin-bottom:10px;">
+        <label style="font-size:11px; font-weight:700; color:#334155; display:block; margin-bottom:4px;">
+          📋 O Pega los datos aquí (Ctrl+V):
+        </label>
+        <textarea id="loteTexto" rows="6" oninput="previsualizarCargaLote()" placeholder="Copia tus celdas en Excel o Sheets y pégalas aquí...&#10;Ejemplo:&#10;22/10/2026&#9;F004-1410&#9;ABC-123&#9;CARTÓN PRENSADO&#9;1&#9;TN&#9;12.50&#10;22/10/2026&#9;F004-1410&#9;ABC-123&#9;PLÁSTICO FILM&#9;2&#9;TN&#9;4.20" style="width:100%; font-family:monospace; font-size:11px; padding:8px; border-radius:8px; border:1px solid #cbd5e1; resize:vertical; box-sizing:border-box;"></textarea>
+      </div>
+
+      <!-- Opciones de inserción -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#334155; cursor:pointer;">
+          <input type="checkbox" id="chkReemplazarTabla" checked>
+          <span>Reemplazar filas actuales de la tabla</span>
+        </label>
+        <button type="button" onclick="limpiarModalCargaLote()" style="background:none; border:none; font-size:11px; color:#dc3545; cursor:pointer; text-decoration:underline;">
+          Limpiar
+        </button>
+      </div>
+
+      <!-- Previsualización -->
+      <div id="lotePreviewContainer" style="display:none; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span id="loteBadgeCount" style="font-size:11px; font-weight:700; color:#0284c7; background:#e0f2fe; padding:2px 8px; border-radius:6px;">
+            0 filas detectadas
+          </span>
+          <span style="font-size:10px; color:#64748b;">Mapeo según columnas</span>
+        </div>
+        <div style="max-height:160px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px; background:#fafafa;">
+          <table id="loteTablaPreview" style="width:100%; border-collapse:collapse; font-size:10px; text-align:left;">
+            <!-- Renderizado dinámico -->
+          </table>
+        </div>
+      </div>
+
+      <!-- Botones de Acción -->
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button type="button" id="btnConfirmarLote" onclick="insertarLoteEnTabla()" disabled style="flex:2; background:#10b981; color:#fff; font-weight:700; font-size:13px; border:none; border-radius:8px; padding:10px; cursor:pointer; opacity:0.6;">
+          📥 Cargar en la Matriz
+        </button>
+        <button type="button" onclick="cerrarModalCargaLote()" style="flex:1; background:#e2e8f0; color:#334155; font-weight:600; font-size:13px; border:none; border-radius:8px; padding:10px; cursor:pointer;">
+          Cancelar
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- JAVASCRIPT LOGIC -->
   <script>
+
+    // ==========================================
+    // GESTIÓN DE FUNDOS Y AUTOCOMPLETADO DIRECCIÓN (Columna D)
+    // ==========================================
+    function normalizarTexto(txt) {
+      return (txt || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
+    }
+
+    function poblarSelectorFundos(empresaFiltro) {
+      const selFundo = document.getElementById('fundoSelect');
+      if (!selFundo) return;
+
+      const valorPrevio = selFundo.value;
+      selFundo.innerHTML = '';
+
+      if (!catalogosData || !catalogosData.direcciones) {
+        selFundo.innerHTML = '<option value="">-- Sin catálogo de fundos --</option>';
+        return;
+      }
+
+      const dirs = catalogosData.direcciones;
+      const empNorm = normalizarTexto(empresaFiltro);
+
+      let fundosEncontrados = null;
+      let empresaExacta = '';
+
+      if (empNorm) {
+        for (const [emp, fMap] of Object.entries(dirs)) {
+          const eNorm = normalizarTexto(emp);
+          if (eNorm === empNorm || empNorm.includes(eNorm) || eNorm.includes(empNorm)) {
+            fundosEncontrados = fMap;
+            empresaExacta = emp;
+            break;
+          }
+        }
+      }
+
+      if (fundosEncontrados && Object.keys(fundosEncontrados).length > 0) {
+        const count = Object.keys(fundosEncontrados).length;
+        selFundo.innerHTML = `<option value="">-- Seleccionar Fundo (${count}) --</option>`;
+        for (const [fundo, direccion] of Object.entries(fundosEncontrados)) {
+          const opt = document.createElement('option');
+          opt.value = fundo;
+          opt.textContent = fundo;
+          opt.dataset.direccion = direccion;
+          opt.dataset.empresa = empresaExacta;
+          if (fundo === valorPrevio) opt.selected = true;
+          selFundo.appendChild(opt);
+        }
+        // Si la empresa tiene un solo fundo registrado, auto-seleccionarlo y actualizar dirección
+        if (count === 1) {
+          selFundo.selectedIndex = 1;
+          onFundoChange(selFundo.value);
+        }
+      } else {
+        // Si no hay empresa filtrada, mostrar todos agrupados por empresa
+        selFundo.innerHTML = '<option value="">-- Seleccionar Fundo --</option>';
+        for (const [emp, fMap] of Object.entries(dirs)) {
+          const group = document.createElement('optgroup');
+          group.label = emp;
+          for (const [fundo, direccion] of Object.entries(fMap)) {
+            const opt = document.createElement('option');
+            opt.value = fundo;
+            opt.textContent = `${fundo} (${emp})`;
+            opt.dataset.direccion = direccion;
+            opt.dataset.empresa = emp;
+            if (fundo === valorPrevio) opt.selected = true;
+            group.appendChild(opt);
+          }
+          selFundo.appendChild(group);
+        }
+      }
+    }
+
+    function onFundoChange(val) {
+      const selFundo = document.getElementById('fundoSelect');
+      if (!selFundo) return;
+
+      const opt = selFundo.options[selFundo.selectedIndex];
+      if (!opt || !opt.value) return;
+
+      const dir = opt.dataset.direccion || '';
+      const emp = opt.dataset.empresa || '';
+
+      // Jalar dirección de Columna D a Punto de Partida
+      if (dir) {
+        const inputPartida = document.getElementById('puntoPartida');
+        if (inputPartida) {
+          inputPartida.value = dir;
+        }
+      }
+
+      // Si no hay cliente seleccionado o no coincide, auto-completar cliente
+      if (emp) {
+        const inputCli = document.getElementById('cliente');
+        if (inputCli && (!inputCli.value || !normalizarTexto(inputCli.value).includes(normalizarTexto(emp)))) {
+          inputCli.value = emp;
+          autoCompletarCliente(emp);
+        }
+      }
+    }
+
+    function seleccionarFundo(fundoNombre) {
+      if (!fundoNombre) return;
+      const selFundo = document.getElementById('fundoSelect');
+      const manFundo = document.getElementById('fundoManual');
+      if (!selFundo) return;
+
+      const fNorm = normalizarTexto(fundoNombre);
+      let encontrado = false;
+
+      for (let i = 0; i < selFundo.options.length; i++) {
+        const opt = selFundo.options[i];
+        if (normalizarTexto(opt.value) === fNorm || normalizarTexto(opt.text).includes(fNorm) || fNorm.includes(normalizarTexto(opt.value))) {
+          selFundo.selectedIndex = i;
+          onFundoChange(opt.value);
+          encontrado = true;
+          break;
+        }
+      }
+
+      if (!encontrado && manFundo) {
+        if (manFundo.style.display === 'none') {
+          toggleModoFundoManual();
+        }
+        manFundo.value = fundoNombre;
+      }
+    }
+
+    function toggleModoFundoManual() {
+      const sel = document.getElementById('fundoSelect');
+      const man = document.getElementById('fundoManual');
+      const btn = document.getElementById('btnToggleFundoManual');
+      if (!sel || !man || !btn) return;
+
+      if (man.style.display === 'none') {
+        man.style.display = 'block';
+        sel.style.display = 'none';
+        btn.textContent = '📋 Lista';
+        man.focus();
+      } else {
+        man.style.display = 'none';
+        sel.style.display = 'block';
+        btn.textContent = '✏️ Manual';
+        if (man.value.trim()) {
+          const found = Array.from(sel.options).find(o => normalizarTexto(o.value) === normalizarTexto(man.value));
+          if (found) {
+            sel.value = found.value;
+            onFundoChange(sel.value);
+          }
+        }
+      }
+    }
+
+    function getFundoSeleccionado() {
+      const man = document.getElementById('fundoManual');
+      if (man && man.style.display !== 'none' && man.value.trim()) {
+        return man.value.trim();
+      }
+      const sel = document.getElementById('fundoSelect');
+      return sel ? sel.value.trim() : '';
+    }
+
+    // ==========================================
+    // CARGA DE TABLA EN LOTE (TODO JUNTO)
+    // ==========================================
+    let itemsLoteParseados = [];
+
+    function abrirModalCargaLote() {
+      document.getElementById('modalCargaLote').style.display = 'flex';
+      const txt = document.getElementById('loteTexto');
+      if (txt) {
+        setTimeout(() => txt.focus(), 100);
+      }
+      previsualizarCargaLote();
+    }
+
+    function cerrarModalCargaLote() {
+      document.getElementById('modalCargaLote').style.display = 'none';
+    }
+
+    function limpiarModalCargaLote() {
+      document.getElementById('loteTexto').value = '';
+      const fInput = document.getElementById('loteArchivo');
+      if (fInput) fInput.value = '';
+      itemsLoteParseados = [];
+      previsualizarCargaLote();
+    }
+
+    function procesarArchivoLote(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      if (typeof XLSX === 'undefined') {
+        alert("Librería Excel no cargada aún. Por favor pega los datos directamente o intenta en 5 segundos.");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const tsv = XLSX.utils.sheet_to_csv(worksheet, { FS: "\t" });
+          document.getElementById('loteTexto').value = tsv;
+          previsualizarCargaLote();
+        } catch (err) {
+          console.error("Error leyendo archivo Excel:", err);
+          alert("No se pudo leer el archivo: " + err.message);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function normalizarFechaLote(val) {
+      if (!val) return '';
+      const s = String(val).trim();
+      // YYYY-MM-DD
+      const mIso = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+      if (mIso) {
+        return `${String(mIso[3]).padStart(2, '0')}/${String(mIso[2]).padStart(2, '0')}/${mIso[1]}`;
+      }
+      // DD-MM-YYYY or DD/MM/YY
+      const mDmy = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+      if (mDmy) {
+        let yr = mDmy[3];
+        if (yr.length === 2) yr = '20' + yr;
+        return `${String(mDmy[1]).padStart(2, '0')}/${String(mDmy[2]).padStart(2, '0')}/${yr}`;
+      }
+      return s;
+    }
+
+    function parsearTextoTabular(texto) {
+      if (!texto || !texto.trim()) return [];
+      const lineas = texto.trim().split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+      if (lineas.length === 0) return [];
+
+      // Detectar delimitador: tab, punto y coma, o coma
+      const primeraLinea = lineas[0];
+      let delim = '\t';
+      if (primeraLinea.includes('\t')) {
+        delim = '\t';
+      } else if (primeraLinea.includes(';') && !primeraLinea.includes('\t')) {
+        delim = ';';
+      } else if (primeraLinea.includes(',') && !primeraLinea.includes('\t')) {
+        delim = ',';
+      }
+
+      const filasCeldas = lineas.map(linea => {
+        return linea.split(delim).map(c => c.trim().replace(/^["']|["']$/g, ''));
+      });
+
+      if (filasCeldas.length === 0) return [];
+
+      // Detectar encabezados en la primera fila
+      const primeraFila = filasCeldas[0];
+      let filaInicio = 0;
+      let mapaIndices = null;
+
+      const esEncabezado = primeraFila.some(c => {
+        const u = normalizarTexto(c);
+        return u.includes('FECHA') || u.includes('GUIA') || u.includes('FACTURA') || 
+               u.includes('PLACA') || u.includes('DESC') || u.includes('RESIDUO') || 
+               u.includes('CANT') || u.includes('UM') || u.includes('MEDIDA') || 
+               u.includes('PESO') || u.includes('KILO') || u.includes('TN');
+      });
+
+      if (esEncabezado) {
+        filaInicio = 1;
+        mapaIndices = {};
+        primeraFila.forEach((colName, idx) => {
+          const u = normalizarTexto(colName);
+          if (u.includes('FECHA') || u.includes('DATE')) mapaIndices.fecha = idx;
+          else if (u.includes('PLACA') || u.includes('VEHIC')) mapaIndices.placa = idx;
+          else if (u.includes('GUIA') || u.includes('FACTURA') || u.includes('COMPROBANTE') || u.includes('GR')) mapaIndices.guia = idx;
+          else if (u.includes('DESC') || u.includes('RESIDUO') || u.includes('ITEM') || u.includes('MATERIAL') || u.includes('DETALLE')) mapaIndices.desc = idx;
+          else if (u.includes('CANT')) mapaIndices.cant = idx;
+          else if (u.includes('UM') || u.includes('MEDIDA') || u.includes('UNIDAD')) mapaIndices.um = idx;
+          else if (u.includes('PESO') || u.includes('KG') || u.includes('KILO') || u.includes('TN') || u.includes('TOTAL')) mapaIndices.peso = idx;
+        });
+      }
+
+      const items = [];
+      let ultimaFecha = '';
+      let ultimaGuia = '';
+      let ultimaPlaca = '';
+
+      for (let i = filaInicio; i < filasCeldas.length; i++) {
+        const fila = filasCeldas[i];
+        if (!fila || fila.length === 0 || fila.every(c => !c)) continue;
+
+        let item = {
+          fecha: '',
+          placa: '',
+          guia: '',
+          desc: '',
+          cant: '1',
+          um: 'KG',
+          peso: '0.00'
+        };
+
+        if (mapaIndices && Object.keys(mapaIndices).length >= 2) {
+          if (mapaIndices.fecha !== undefined) item.fecha = fila[mapaIndices.fecha] || '';
+          if (mapaIndices.placa !== undefined) item.placa = fila[mapaIndices.placa] || '';
+          if (mapaIndices.guia !== undefined) item.guia = fila[mapaIndices.guia] || '';
+          if (mapaIndices.desc !== undefined) item.desc = fila[mapaIndices.desc] || '';
+          if (mapaIndices.cant !== undefined) item.cant = fila[mapaIndices.cant] || '1';
+          if (mapaIndices.um !== undefined) item.um = (fila[mapaIndices.um] || 'KG').toUpperCase();
+          if (mapaIndices.peso !== undefined) item.peso = fila[mapaIndices.peso] || '0.00';
+        } else {
+          // Mapeo posicional inteligente
+          const keysActivas = columnasActivas.map(c => c.key);
+          if (fila.length === keysActivas.length) {
+            keysActivas.forEach((k, colIdx) => {
+              const val = fila[colIdx] || '';
+              if (k === 'fecha_origen') item.fecha = val;
+              else if (k === 'placa_origen') item.placa = val;
+              else if (k === 'guia_origen') item.guia = val;
+              else if (k === 'desc') item.desc = val;
+              else if (k === 'cant') item.cant = val || '1';
+              else if (k === 'um') item.um = val ? val.toUpperCase() : 'KG';
+              else if (k === 'peso') item.peso = val || '0.00';
+            });
+          } else if (fila.length === 7) {
+            item.fecha = fila[0];
+            const c1 = fila[1], c2 = fila[2];
+            if (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(c1) || /^[A-Z0-9]{6,7}$/i.test(c1)) {
+              item.placa = c1;
+              item.guia = c2;
+            } else if (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(c2)) {
+              item.guia = c1;
+              item.placa = c2;
+            } else {
+              item.guia = c1;
+              item.placa = c2;
+            }
+            item.desc = fila[3];
+            item.cant = fila[4] || '1';
+            item.um = (fila[5] || 'KG').toUpperCase();
+            item.peso = fila[6] || '0.00';
+          } else if (fila.length === 6) {
+            // Fecha, Guía, Desc, Cant, UM, Peso
+            item.fecha = fila[0];
+            item.guia = fila[1];
+            item.desc = fila[2];
+            item.cant = fila[3] || '1';
+            item.um = (fila[4] || 'KG').toUpperCase();
+            item.peso = fila[5] || '0.00';
+          } else if (fila.length >= 4) {
+            // Heurística por tipo de dato
+            fila.forEach(c => {
+              const trimmed = c.trim();
+              if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(trimmed) || /^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$/.test(trimmed)) {
+                if (!item.fecha) item.fecha = trimmed;
+              } else if (/^[A-Z0-9]{1,4}[\-\_]\d{1,8}$/i.test(trimmed)) {
+                if (!item.guia) item.guia = trimmed;
+              } else if (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(trimmed)) {
+                if (!item.placa) item.placa = trimmed;
+              } else if (/^(KG|TN|TM|UND|M3|GLN|LT|GAL|LTS|PZA)$/i.test(trimmed)) {
+                item.um = trimmed.toUpperCase();
+              } else if (/^\d+(?:[\.,]\d+)?$/.test(trimmed) && parseFloat(trimmed.replace(',', '.')) > 0) {
+                if (!item.peso || item.peso === '0.00') {
+                  item.peso = trimmed.replace(',', '.');
+                } else if (!item.cant || item.cant === '1') {
+                  item.cant = trimmed;
+                }
+              } else if (trimmed.length > 2 && !item.desc) {
+                item.desc = trimmed;
+              }
+            });
+          }
+        }
+
+        // Normalizar fecha
+        item.fecha = normalizarFechaLote(item.fecha);
+
+        // Copiar / heredar fecha, guía y placa si vienen vacías (como en Excel al copiar celdas combinadas)
+        if (item.fecha) ultimaFecha = item.fecha;
+        else if (ultimaFecha) item.fecha = ultimaFecha;
+
+        if (item.guia) ultimaGuia = item.guia;
+        else if (ultimaGuia) item.guia = ultimaGuia;
+
+        if (item.placa) ultimaPlaca = item.placa;
+        else if (ultimaPlaca) item.placa = ultimaPlaca;
+
+        item.guia = limpiarNumeroGuia(item.guia);
+
+        if (item.desc || item.peso !== '0.00' || item.guia || item.fecha) {
+          items.push(item);
+        }
+      }
+      return items;
+    }
+
+    function previsualizarCargaLote() {
+      const texto = document.getElementById('loteTexto')?.value || '';
+      itemsLoteParseados = parsearTextoTabular(texto);
+
+      const previewContainer = document.getElementById('lotePreviewContainer');
+      const badgeCount = document.getElementById('loteBadgeCount');
+      const tabla = document.getElementById('loteTablaPreview');
+      const btnConfirmar = document.getElementById('btnConfirmarLote');
+
+      if (!previewContainer || !badgeCount || !tabla || !btnConfirmar) return;
+
+      if (itemsLoteParseados.length === 0) {
+        previewContainer.style.display = 'none';
+        btnConfirmar.disabled = true;
+        btnConfirmar.style.opacity = '0.6';
+        btnConfirmar.innerText = '📥 Cargar en la Matriz';
+        return;
+      }
+
+      previewContainer.style.display = 'block';
+      badgeCount.innerText = `✨ ${itemsLoteParseados.length} fila(s) detectada(s)`;
+      btnConfirmar.disabled = false;
+      btnConfirmar.style.opacity = '1';
+      btnConfirmar.innerText = `📥 Cargar ${itemsLoteParseados.length} Ítems en la Matriz`;
+
+      let html = `
+        <thead>
+          <tr style="background:#f1f5f9; color:#475569; border-bottom:1px solid #cbd5e1;">
+            <th style="padding:4px 6px;">#</th>
+            <th style="padding:4px 6px;">Fecha</th>
+            <th style="padding:4px 6px;">N° Guía</th>
+            <th style="padding:4px 6px;">Placa</th>
+            <th style="padding:4px 6px;">Descripción</th>
+            <th style="padding:4px 6px;">Cant</th>
+            <th style="padding:4px 6px;">UM</th>
+            <th style="padding:4px 6px;">Peso</th>
+          </tr>
+        </thead>
+        <tbody>
+      `;
+
+      itemsLoteParseados.forEach((it, idx) => {
+        html += `
+          <tr style="border-bottom:1px solid #f1f5f9;">
+            <td style="padding:4px 6px; color:#64748b;">${idx + 1}</td>
+            <td style="padding:4px 6px; font-weight:600;">${escapeHtml(it.fecha || '-')}</td>
+            <td style="padding:4px 6px; font-weight:600; color:#0284c7;">${escapeHtml(it.guia || '-')}</td>
+            <td style="padding:4px 6px;">${escapeHtml(it.placa || '-')}</td>
+            <td style="padding:4px 6px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(it.desc || '-')}</td>
+            <td style="padding:4px 6px;">${escapeHtml(it.cant || '1')}</td>
+            <td style="padding:4px 6px;">${escapeHtml(it.um || 'KG')}</td>
+            <td style="padding:4px 6px; font-weight:700; color:#10b981;">${escapeHtml(it.peso || '0.00')}</td>
+          </tr>
+        `;
+      });
+      html += '</tbody>';
+      tabla.innerHTML = html;
+    }
+
+    function insertarLoteEnTabla() {
+      if (!itemsLoteParseados || itemsLoteParseados.length === 0) {
+        alert("No hay filas para insertar.");
+        return;
+      }
+
+      const chkReemplazar = document.getElementById('chkReemplazarTabla');
+      const container = document.getElementById('itemsContainer');
+
+      if (chkReemplazar && chkReemplazar.checked) {
+        container.innerHTML = '';
+      }
+
+      itemsLoteParseados.forEach(it => {
+        agregarFilaItem(it);
+      });
+
+      actualizarContadorItems();
+      cerrarModalCargaLote();
+      haptic('success');
+    }
+
     // Inicialización Telegram WebApp
     const tg = window.Telegram?.WebApp;
     if (tg) {
@@ -1281,12 +1842,14 @@
         }
         // Poblar selects con las opciones completas de los catálogos
         actualizarCamposPorTipo();
+        poblarSelectorFundos();
       } catch (e) {
         console.warn("Falla cargando catálogos remotos:", e);
       }
     }
 
     function autoCompletarCliente(val) {
+      poblarSelectorFundos(val);
       if (!catalogosData || !catalogosData.clientes) return;
       const v = (val || '').trim().toUpperCase();
       if (!v) return;
@@ -1574,6 +2137,7 @@
           fecha_emision: document.getElementById('fechaEmision').value,
           cliente: cliente,
           ruc_cliente: document.getElementById('rucCliente').value.trim(),
+          fundo: getFundoSeleccionado(),
           punto_partida: document.getElementById('puntoPartida').value.trim(),
           punto_llegada: document.getElementById('puntoLlegada')?.value?.trim() || '',
           servicio: document.getElementById('servicio')?.value?.trim() || '',
@@ -1971,8 +2535,13 @@
         const data = await res.json();
         hideLoading();
 
-        // 1. Cliente
-        document.getElementById('cliente').value = data.cliente || primera.empresa || '';
+        // 1. Cliente y Fundo
+        const cliFinal = data.cliente || primera.empresa || '';
+        document.getElementById('cliente').value = cliFinal;
+        poblarSelectorFundos(cliFinal);
+        if (primera.fundo) {
+          seleccionarFundo(primera.fundo);
+        }
 
         // 2. RUC (desde OCR o desde catálogo de cliente)
         let rucVal = data.ruc_cliente || primera.ruc || '';
