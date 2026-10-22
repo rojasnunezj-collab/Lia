@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Valorización de Servicios - EPMI SAC</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --primary: #198754;
+      --primary-dark: #146c43;
+      --primary-light: #e8f5e9;
+      --accent: #0284c7;
+      --accent-light: #f0f9ff;
+      --bg: #f8f9fa;
+      --card-bg: #ffffff;
+      --text: #212529;
+      --text-muted: #6c757d;
+      --border: #dee2e6;
+      --danger: #dc3545;
+      --warning: #ffc107;
+      --warning-bg: #fff9db;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      padding-bottom: 110px;
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #fff;
+      padding: 10px 14px;
+      border-radius: 10px;
+      margin-bottom: 10px;
+      border: 1px solid var(--border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      background: var(--primary);
+      color: #fff;
+      font-weight: 800;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+    }
+
+    .brand-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--primary-dark);
+      line-height: 1.2;
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .btn-close {
+      background: #f1f3f5;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Selector de Modos */
+    .mode-switch {
+      display: flex;
+      gap: 6px;
+      background: #e9ecef;
+      padding: 4px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+
+    .mode-btn {
+      flex: 1;
+      padding: 7px 4px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 600;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      color: #495057;
+      transition: all 0.2s;
+    }
+
+    .mode-btn.active {
+      background: #fff;
+      color: var(--primary-dark);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary-dark);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .form-group {
+      margin-bottom: 8px;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .form-row .form-group {
+      flex: 1;
+    }
+
+    label {
+      display: block;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 8px 10px;
+      font-size: 13px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fafafa;
+      outline: none;
+      box-sizing: border-box;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--primary);
+      background: #fff;
+    }
+
+    /* Tarjetas de Residuos */
+    .item-box {
+      background: #fdfdfd;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px;
+      margin-bottom: 8px;
+      position: relative;
+    }
+
+    .item-box-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .item-tag {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+
+    .btn-remove {
+      background: transparent;
+      border: none;
+      color: var(--danger);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 2px 6px;
+    }
+
+    .btn-add-item {
+      width: 100%;
+      padding: 8px;
+      background: var(--accent-light);
+      border: 1px dashed var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    /* Banner de Totales */
+    .totals-box {
+      background: #fdfbf7;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 10px;
+      margin-top: 8px;
+    }
+
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      margin-bottom: 4px;
+      color: #555;
+    }
+
+    .total-row.main {
+      font-size: 14px;
+      font-weight: 700;
+      color: #111;
+      border-top: 1px dashed #cbd5e1;
+      padding-top: 6px;
+      margin-top: 4px;
+    }
+
+    /* Mensaje Toast / Banner */
+    .toast-alert {
+      display: none;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .toast-alert.success {
+      display: block;
+      background: #d1e7dd;
+      color: #0f5132;
+      border: 1px solid #badbcc;
+    }
+
+    .toast-alert.error {
+      display: block;
+      background: #f8d7da;
+      color: #842029;
+      border: 1px solid #f5c2c7;
+    }
+
+    /* Botones de acción flotantes */
+    .sticky-actions {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #ffffff;
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.06);
+      display: flex;
+      gap: 8px;
+      z-index: 100;
+    }
+
+    .btn-action {
+      flex: 1;
+      padding: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-save {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-save:hover {
+      background: var(--primary-dark);
+    }
+
+    .btn-pdf {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-pdf:disabled {
+      background: #adb5bd;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Barra Superior -->
+  <div class="top-bar">
+    <div class="brand">
+      <div class="brand-logo">E</div>
+      <div>
+        <div class="brand-title">Valorizaciones EPMI</div>
+        <div class="brand-sub">LIQ-F-001 (Versión 1.0)</div>
+      </div>
+    </div>
+    <button class="btn-close" onclick="cerrarMiniApp()">✕ Salir</button>
+  </div>
+
+  <!-- Selector de Modo -->
+  <div class="mode-switch">
+    <button class="mode-btn active" id="btnModoHeredar" onclick="cambiarModo('heredar')">⚡ Heredar Pestaña</button>
+    <button class="mode-btn" id="btnModoNueva" onclick="cambiarModo('nueva')">➕ Nueva</button>
+    <button class="mode-btn" id="btnModoModificar" onclick="cambiarModo('modificar')">✏️ Modificar</button>
+  </div>
+
+  <!-- Alerta / Mensaje de Estado -->
+  <div id="toastAlert" class="toast-alert"></div>
+
+  <!-- Selección de Pestaña Origen / Destino -->
+  <div class="card" id="cardSelectorPestana">
+    <div class="card-title">
+      <span id="lblTituloSelector">1. Pestaña Base a Duplicar</span>
+    </div>
+    <div class="form-group">
+      <label id="lblSelector">Selecciona pestaña existente:</label>
+      <select id="selectPestana" onchange="cargarDatosPestanaSeleccionada()">
+        <option value="">Cargando pestañas del libro...</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Nombre de la Pestaña a Guardar:</label>
+      <input type="text" id="txtNombrePestana" placeholder="ej: AGROLATINA(SER 23)">
+    </div>
+  </div>
+
+  <!-- Datos de la Liquidación -->
+  <div class="card">
+    <div class="card-title">2. Datos de la Liquidación</div>
+    <div class="form-group">
+      <label>Razón Social (Cliente):</label>
+      <input type="text" id="txtCliente" placeholder="CORPORACION AGROLATINA S.A.C.">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>RUC:</label>
+        <input type="text" id="txtRuc" placeholder="20176770474">
+      </div>
+      <div class="form-group">
+        <label>N° Liquidación:</label>
+        <input type="text" id="txtLiquidacion" placeholder="023">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Fecha Emisión:</label>
+        <input type="text" id="txtFecha" placeholder="22/10/2026">
+      </div>
+      <div class="form-group">
+        <label>Responsable:</label>
+        <input type="text" id="txtResponsable" placeholder="LUIS MIGUEL PALOMINO">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Planta / Domicilio:</label>
+      <input type="text" id="txtPlanta" placeholder="Av. Manuel Olguin Nro. 335 - Surco">
+    </div>
+  </div>
+
+  <!-- Tabla Dinámica de Residuos -->
+  <div class="card">
+    <div class="card-title">
+      <span>3. Residuos y Servicios</span>
+      <span style="font-size: 11px; color: var(--text-muted);" id="lblContadorItems">0 filas</span>
+    </div>
+
+    <div id="contenedorItems"></div>
+
+    <button class="btn-add-item" onclick="agregarItem()">
+      ➕ Agregar Fila de Residuo
+    </button>
+
+    <!-- Resumen de Totales en Tiempo Real -->
+    <div class="totals-box">
+      <div class="total-row">
+        <span>SUB TOTAL (Generado en el mes):</span>
+        <span id="lblSubtotal">S/ 0.00</span>
+      </div>
+      <div class="total-row">
+        <span>IGV (18%):</span>
+        <span id="lblIgv">S/ 0.00</span>
+      </div>
+      <div class="total-row main">
+        <span>TOTAL LIQUIDACIÓN:</span>
+        <span id="lblTotal" style="color: var(--primary-dark);">S/ 0.00</span>
+      </div>
+      <div class="total-row" style="font-size: 10px; color: #888; margin-top: 3px;">
+        <span>Detracción referencial (4%):</span>
+        <span id="lblDetraccion">S/ 0.00</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Barra Inferior Fija de Acciones -->
+  <div class="sticky-actions">
+    <button class="btn-action btn-save" id="btnGuardar" onclick="guardarPestana()">
+      💾 Guardar Pestaña
+    </button>
+    <button class="btn-action btn-pdf" id="btnGenerarPdf" onclick="generarPdf()" disabled>
+      📄 Generar y Enviar PDF
+    </button>
+  </div>
+
+  <script>
+    let modoActual = "heredar";
+    let pestanasList = [];
+    let items = [];
+    let ultimoGidGuardado = null;
+    let userId = null;
+
+    // Inicializar Telegram WebApp
+    if (window.Telegram && window.Telegram.WebApp) {
+      window.Telegram.WebApp.ready();
+      window.Telegram.WebApp.expand();
+      const initData = window.Telegram.WebApp.initDataUnsafe;
+      if (initData && initData.user) {
+        userId = initData.user.id;
+      }
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    if (!userId && urlParams.get('uid')) {
+      userId = urlParams.get('uid');
+    }
+
+    // Inicialización al cargar la página
+    window.addEventListener('DOMContentLoaded', () => {
+      establecerFechaHoy();
+      cargarListadoPestanas();
+    });
+
+    function establecerFechaHoy() {
+      const hoy = new Date();
+      const dd = String(hoy.getDate()).padStart(2, '0');
+      const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+      const yyyy = hoy.getFullYear();
+      document.getElementById('txtFecha').value = `${dd}/${mm}/${yyyy}`;
+    }
+
+    function cambiarModo(nuevoModo) {
+      modoActual = nuevoModo;
+      document.getElementById('btnModoHeredar').classList.toggle('active', nuevoModo === 'heredar');
+      document.getElementById('btnModoNueva').classList.toggle('active', nuevoModo === 'nueva');
+      document.getElementById('btnModoModificar').classList.toggle('active', nuevoModo === 'modificar');
+
+      const cardSelector = document.getElementById('cardSelectorPestana');
+      const lblTituloSelector = document.getElementById('lblTituloSelector');
+      const lblSelector = document.getElementById('lblSelector');
+
+      if (nuevoModo === 'nueva') {
+        lblTituloSelector.textContent = "1. Formato Base Vacío";
+        lblSelector.textContent = "Plantilla limpia:";
+        document.getElementById('selectPestana').disabled = true;
+        document.getElementById('txtNombrePestana').value = "NUEVA_VALORIZACION";
+        limpiarFormulario(true);
+      } else if (nuevoModo === 'modificar') {
+        lblTituloSelector.textContent = "1. Pestaña a Modificar";
+        lblSelector.textContent = "Selecciona pestaña a editar:";
+        document.getElementById('selectPestana').disabled = false;
+        cargarDatosPestanaSeleccionada();
+      } else {
+        // Heredar
+        lblTituloSelector.textContent = "1. Pestaña Base a Duplicar";
+        lblSelector.textContent = "Selecciona pestaña existente:";
+        document.getElementById('selectPestana').disabled = false;
+        cargarDatosPestanaSeleccionada();
+      }
+    }
+
+    async function cargarListadoPestanas() {
+      try {
+        const resp = await fetch('/api/valorizaciones/pestanas');
+        const data = await resp.json();
+        if (data.pestanas && data.pestanas.length > 0) {
+          pestanasList = data.pestanas;
+          const select = document.getElementById('selectPestana');
+          select.innerHTML = '';
+          
+          // Ordenar las más recientes primero
+          pestanasList.slice().reverse().forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.title} - ${p.cliente || 'Sin cliente'} (Liq ${p.liquidacion || '-'})`;
+            select.appendChild(opt);
+          });
+
+          // Seleccionar la última por defecto
+          if (pestanasList.length > 0) {
+            select.value = pestanasList[pestanasList.length - 1].id;
+            cargarDatosPestanaSeleccionada();
+          }
+        }
+      } catch (e) {
+        console.error("Error cargando pestañas:", e);
+      }
+    }
+
+    async function cargarDatosPestanaSeleccionada() {
+      const select = document.getElementById('selectPestana');
+      const tabId = select.value;
+      if (!tabId || modoActual === 'nueva') return;
+
+      mostrarToast("⏳ Cargando datos de la pestaña...", "success");
+      try {
+        const resp = await fetch(`/api/valorizaciones/detalle?tab=${tabId}`);
+        const data = await resp.json();
+        if (data.detalle) {
+          const d = data.detalle;
+          document.getElementById('txtCliente').value = d.cliente || '';
+          document.getElementById('txtRuc').value = d.ruc || '';
+          document.getElementById('txtPlanta').value = d.planta || '';
+          document.getElementById('txtResponsable').value = d.responsable || '';
+
+          if (modoActual === 'heredar') {
+            // Incrementar correlativo si es numérico
+            let liqNum = parseInt(d.liquidacion, 10);
+            if (!isNaN(liqNum)) {
+              liqNum += 1;
+              document.getElementById('txtLiquidacion').value = String(liqNum).padStart(3, '0');
+            } else {
+              document.getElementById('txtLiquidacion').value = (d.liquidacion || '') + '_NUEVA';
+            }
+            
+            // Sugerir nombre de pestaña ej: AGROLATINA(SER 23)
+            let match = d.title.match(/(.*)\(SER\s*(\d+)\)/i);
+            if (match) {
+              const prefix = match[1].trim();
+              const sig = parseInt(match[2], 10) + 1;
+              document.getElementById('txtNombrePestana').value = `${prefix}(SER ${sig})`;
+            } else {
+              document.getElementById('txtNombrePestana').value = `${d.title}_COPIA`;
+            }
+            establecerFechaHoy();
+          } else {
+            // Modificar
+            document.getElementById('txtLiquidacion').value = d.liquidacion || '';
+            document.getElementById('txtFecha').value = d.fecha || '';
+            document.getElementById('txtNombrePestana').value = d.title;
+            ultimoGidGuardado = d.id;
+            document.getElementById('btnGenerarPdf').disabled = false;
+          }
+
+          // Cargar items
+          items = d.items && d.items.length > 0 ? d.items : [];
+          renderizarItems();
+          ocultarToast();
+        }
+      } catch (e) {
+        mostrarToast("❌ Error al cargar detalle de la pestaña", "error");
+      }
+    }
+
+    function limpiarFormulario(vaciarItems = false) {
+      document.getElementById('txtCliente').value = '';
+      document.getElementById('txtRuc').value = '';
+      document.getElementById('txtPlanta').value = '';
+      document.getElementById('txtResponsable').value = '';
+      document.getElementById('txtLiquidacion').value = '001';
+      establecerFechaHoy();
+      if (vaciarItems) {
+        items = [
+          { num: "1", descripcion: "SERVICIO DE RECOLECCION Y TRANSPORTE DE RESIDUOS SOLIDOS", fecha: "-", guia: "-", cantidad: 1.0, costo: 1200.0 },
+          { num: "", descripcion: "SERVICIO DE DISPOSICION FINAL DE RESIDUOS SOLIDOS PELIGROSOS", fecha: "-", guia: "-", cantidad: 1.0, costo: 360.0 }
+        ];
+        renderizarItems();
+      }
+    }
+
+    function agregarItem(num = "", desc = "", fecha = "-", guia = "-", cant = 1.0, costo = 0) {
+      items.push({
+        num: num || (items.length === 0 ? "1" : ""),
+        descripcion: desc || "SERVICIO DE RECOLECCION Y TRANSPORTE DE RESIDUOS SOLIDOS",
+        fecha: fecha,
+        guia: guia,
+        cantidad: cant,
+        costo: costo
+      });
+      renderizarItems();
+    }
+
+    function eliminarItem(index) {
+      items.splice(index, 1);
+      renderizarItems();
+    }
+
+    function renderizarItems() {
+      const container = document.getElementById('contenedorItems');
+      container.innerHTML = '';
+      document.getElementById('lblContadorItems').textContent = `${items.length} fila${items.length === 1 ? '' : 's'}`;
+
+      items.forEach((it, idx) => {
+        const itemBox = document.createElement('div');
+        itemBox.className = 'item-box';
+        itemBox.innerHTML = `
+          <div class="item-box-header">
+            <span class="item-tag">Línea #${idx + 1} ${it.num ? `(Servicio N° ${it.num})` : '(Sub-servicio)'}</span>
+            <button class="btn-remove" onclick="eliminarItem(${idx})" title="Eliminar fila">🗑️</button>
+          </div>
+          <div class="form-group">
+            <label>Descripción del Residuo:</label>
+            <input type="text" value="${it.descripcion}" oninput="actualizarItem(${idx}, 'descripcion', this.value)">
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex: 0.5;">
+              <label>N° Serv:</label>
+              <input type="text" value="${it.num || ''}" placeholder="1" oninput="actualizarItem(${idx}, 'num', this.value)">
+            </div>
+            <div class="form-group">
+              <label>Fecha Guía:</label>
+              <input type="text" value="${it.fecha || '-'}" oninput="actualizarItem(${idx}, 'fecha', this.value)">
+            </div>
+            <div class="form-group">
+              <label>N° Guía:</label>
+              <input type="text" value="${it.guia || '-'}" oninput="actualizarItem(${idx}, 'guia', this.value)">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Cantidad (TN):</label>
+              <input type="number" step="0.001" value="${it.cantidad || 1.0}" oninput="actualizarItem(${idx}, 'cantidad', this.value)">
+            </div>
+            <div class="form-group">
+              <label>Costo Unitario (S/):</label>
+              <input type="number" step="0.01" value="${it.costo || 0}" oninput="actualizarItem(${idx}, 'costo', this.value)">
+            </div>
+            <div class="form-group">
+              <label>Total Fila:</label>
+              <input type="text" value="S/ ${((parseFloat(it.cantidad) || 0) * (parseFloat(it.costo) || 0)).toFixed(2)}" disabled style="font-weight:700; color:var(--primary-dark);">
+            </div>
+          </div>
+        `;
+        container.appendChild(itemBox);
+      });
+
+      calcularTotales();
+    }
+
+    function actualizarItem(idx, campo, valor) {
+      if (items[idx]) {
+        items[idx][campo] = valor;
+        calcularTotales();
+      }
+    }
+
+    function calcularTotales() {
+      let subtotal = 0;
+      items.forEach(it => {
+        const c = parseFloat(it.cantidad) || 0;
+        const p = parseFloat(it.costo) || 0;
+        subtotal += (c * p);
+      });
+
+      const igv = subtotal * 0.18;
+      const total = subtotal * 1.18;
+      const detraccion = total * 0.04;
+
+      document.getElementById('lblSubtotal').textContent = `S/ ${subtotal.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      document.getElementById('lblIgv').textContent = `S/ ${igv.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      document.getElementById('lblTotal').textContent = `S/ ${total.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      document.getElementById('lblDetraccion').textContent = `S/ ${detraccion.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+
+    function mostrarToast(mensaje, tipo = "success") {
+      const toast = document.getElementById('toastAlert');
+      toast.textContent = mensaje;
+      toast.className = `toast-alert ${tipo}`;
+    }
+
+    function ocultarToast() {
+      const toast = document.getElementById('toastAlert');
+      toast.style.display = 'none';
+    }
+
+    // 1. Guardar Pestaña (NO CIERRA LA MINI APP)
+    async function guardarPestana() {
+      const btn = document.getElementById('btnGuardar');
+      btn.disabled = true;
+      btn.textContent = "⏳ Guardando...";
+      mostrarToast("⏳ Guardando pestaña en Google Sheets...", "success");
+
+      const payload = {
+        modo: modoActual,
+        fuente_tab: document.getElementById('selectPestana').value,
+        nombre_pestana: document.getElementById('txtNombrePestana').value,
+        cliente: document.getElementById('txtCliente').value,
+        ruc: document.getElementById('txtRuc').value,
+        planta: document.getElementById('txtPlanta').value,
+        responsable: document.getElementById('txtResponsable').value,
+        liquidacion: document.getElementById('txtLiquidacion').value,
+        fecha: document.getElementById('txtFecha').value,
+        items: items
+      };
+
+      try {
+        const resp = await fetch('/api/valorizaciones/guardar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const res = await resp.json();
+
+        if (res.success) {
+          ultimoGidGuardado = res.gid;
+          mostrarToast(`✅ ¡Pestaña '${res.sheet_name}' guardada con éxito en Google Sheets! Ya puedes pulsar 'Generar y Enviar PDF'.`, "success");
+          
+          // Habilitar botón de PDF
+          const btnPdf = document.getElementById('btnGenerarPdf');
+          btnPdf.disabled = false;
+          btnPdf.style.animation = "fadeIn 0.5s";
+        } else {
+          mostrarToast(`❌ Error al guardar: ${res.error || 'Intente nuevamente'}`, "error");
+        }
+      } catch (e) {
+        mostrarToast(`❌ Error de conexión al guardar: ${e.message}`, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "💾 Guardar Pestaña";
+      }
+    }
+
+    // 2. Generar y Enviar PDF (Guarda en Drive y cierra la Mini App)
+    async function generarPdf() {
+      if (!ultimoGidGuardado) {
+        mostrarToast("⚠️ Primero guarda la pestaña antes de generar el PDF.", "error");
+        return;
+      }
+
+      const btn = document.getElementById('btnGenerarPdf');
+      btn.disabled = true;
+      btn.textContent = "⏳ Generando PDF...";
+      mostrarToast("⏳ Renderizando PDF y subiendo a Google Drive...", "success");
+
+      const payload = {
+        gid: ultimoGidGuardado,
+        user_id: userId,
+        cliente: document.getElementById('txtCliente').value,
+        liquidacion: document.getElementById('txtLiquidacion').value,
+        nombre_pestana: document.getElementById('txtNombrePestana').value
+      };
+
+      try {
+        const resp = await fetch('/api/valorizaciones/pdf', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const res = await resp.json();
+
+        if (res.success) {
+          mostrarToast("✅ ¡PDF generado y guardado en Drive con éxito! Se ha enviado a tu chat de Telegram. Cerrando...", "success");
+          setTimeout(() => {
+            cerrarMiniApp();
+          }, 1800);
+        } else {
+          mostrarToast(`❌ Error exportando PDF: ${res.error || 'Verifique conexión'}`, "error");
+          btn.disabled = false;
+          btn.textContent = "📄 Generar y Enviar PDF";
+        }
+      } catch (e) {
+        mostrarToast(`❌ Error de red al generar PDF: ${e.message}`, "error");
+        btn.disabled = false;
+        btn.textContent = "📄 Generar y Enviar PDF";
+      }
+    }
+
+    function cerrarMiniApp() {
+      if (window.Telegram && window.Telegram.WebApp) {
+        window.Telegram.WebApp.close();
+      } else {
+        window.close();
+      }
+    }
+  </script>
+</body>
+</html>

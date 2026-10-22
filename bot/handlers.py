@@ -723,6 +723,7 @@ def get_documentos_menu_keyboard():
         [InlineKeyboardButton("🧾 Facturas SUNAT", callback_data='menu_facturas')],
         [InlineKeyboardButton("📋 Cotizaciones", callback_data='menu_cotizaciones')],
         [InlineKeyboardButton("📜 Certificados", callback_data='menu_certificados')],
+        [InlineKeyboardButton("📊 Valorizaciones", callback_data='menu_valorizaciones')],
         [InlineKeyboardButton("🔙 Volver al Menú Principal", callback_data='volver_inicio')]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -779,6 +780,25 @@ async def certificados_command(update: Update, context: ContextTypes.DEFAULT_TYP
         f"• **✍️ Manual:** Emisión rápida con selectores de catálogos y residuos.\n"
         f"• **🗂️ Repositorio:** Consolidación de guías registradas en Google Sheets.\n"
         f"• **🔄 Modificar:** Sustitución quirúrgica en Google Drive conservando guías intactas."
+    )
+    await update.message.reply_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def valorizaciones_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando directo /valorizaciones o /valorizacion."""
+    if not await check_auth_or_reject(update):
+        return
+    user_id = update.effective_user.id if update.effective_user else None
+    from core.valorizaciones_service import obtener_url_webapp_valorizaciones
+    url_app = obtener_url_webapp_valorizaciones(user_id=user_id)
+    keyboard = [
+        [InlineKeyboardButton("🚀 Abrir Valorizaciones (Mini App)", web_app=WebAppInfo(url=url_app))],
+        [InlineKeyboardButton("🔙 Menú Principal", callback_data='volver_inicio'),
+         InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+    ]
+    texto = (
+        "📊 *Módulo de Valorizaciones - EPMI SAC*\n"
+        "_Formato Oficial LIQ-F-001 (Versión 1.0)_\n\n"
+        "Pulsa el botón abajo para abrir la Mini App y crear, heredar o exportar el PDF de liquidación:"
     )
     await update.message.reply_text(texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -1644,6 +1664,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
         
+    elif query.data == 'menu_valorizaciones':
+        user_states[user_id] = None
+        from core.valorizaciones_service import obtener_url_webapp_valorizaciones
+        url_app = obtener_url_webapp_valorizaciones(user_id=user_id)
+        keyboard = [
+            [InlineKeyboardButton("🚀 Abrir Valorizaciones (Mini App)", web_app=WebAppInfo(url=url_app))],
+            [InlineKeyboardButton("🔙 Volver a Documentos", callback_data='menu_documentos'),
+             InlineKeyboardButton("❌ Cancelar", callback_data='cancelar_start')]
+        ]
+        texto = (
+            "📊 *Módulo de Valorizaciones - EPMI SAC*\n"
+            "_Formato Oficial LIQ-F-001 (Versión 1.0)_\n\n"
+            "• **⚡ Heredar Pestaña:** Duplica cualquier pestaña existente con logos y fórmulas intactas.\n"
+            "• **➕ Nueva:** Genera liquidación desde plantilla en blanco.\n"
+            "• **✏️ Modificar:** Corrige ítems o cantidades en pestañas existentes.\n"
+            "• **📄 Exportar a PDF:** Guarda directamente en Google Drive y envía el formato por Telegram."
+        )
+        await safe_edit_or_reply(query, texto, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
     elif query.data == 'menu_cotizaciones':
         user_states[user_id] = None
         corr_sig = obtener_siguiente_correlativo()

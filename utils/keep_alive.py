@@ -389,6 +389,64 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
                 return
 
+        elif path in ['/valorizaciones', '/valorizaciones.html']:
+            try:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                html_path = os.path.join(base_dir, 'webapp', 'valorizaciones.html')
+                if os.path.exists(html_path):
+                    with open(html_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                    self.send_header('Pragma', 'no-cache')
+                    self.send_header('Expires', '0')
+                    self.end_headers()
+                    self.wfile.write(content.encode('utf-8'))
+                    return
+            except Exception as e:
+                logger.error(f"Error sirviendo /valorizaciones: {e}")
+
+        elif path == '/api/valorizaciones/pestanas':
+            try:
+                from core.valorizaciones_service import listar_pestanas_valorizacion
+                pestanas = listar_pestanas_valorizacion()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'pestanas': pestanas}, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/valorizaciones/pestanas: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/valorizaciones/detalle':
+            try:
+                from core.valorizaciones_service import obtener_detalle_pestana
+                q_params = parse_qs(parsed.query)
+                tab = q_params.get('tab', [''])[0]
+                detalle = obtener_detalle_pestana(tab)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'detalle': detalle}, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en GET /api/valorizaciones/detalle: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+                return
+
         # Default Health Check para UptimeRobot y Render
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
@@ -1037,6 +1095,94 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 return
             except Exception as e:
                 logger.error(f"Error en POST /api/flota/conductores/eliminar: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/valorizaciones/guardar':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                from core.valorizaciones_service import guardar_valorizacion
+                res = guardar_valorizacion(payload)
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(res, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/valorizaciones/guardar: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({'success': False, 'error': str(e)}).encode('utf-8'))
+                return
+
+        elif path == '/api/valorizaciones/pdf':
+            try:
+                content_len = int(self.headers.get('Content-Length', 0))
+                post_body = self.rfile.read(content_len)
+                payload = json.loads(post_body.decode('utf-8'))
+
+                from core.valorizaciones_service import exportar_valorizacion_pdf
+                from config.settings import TELEGRAM_TOKEN, ADMIN_CHAT_ID
+                import html
+
+                gid = payload.get('gid')
+                cliente = payload.get('cliente', '')
+                liq = payload.get('liquidacion', '')
+                pestana = payload.get('nombre_pestana', '')
+                target_user = payload.get('user_id') or ADMIN_CHAT_ID
+
+                nombre_archivo = f"Valorizacion_LIQ-{liq}_{pestana}.pdf"
+                res = exportar_valorizacion_pdf(gid, nombre_archivo=nombre_archivo)
+
+                if res.get('success') and target_user and TELEGRAM_TOKEN:
+                    import requests
+                    c_cliente = html.escape(str(cliente))
+                    c_liq = html.escape(str(liq))
+                    c_pestana = html.escape(str(pestana))
+                    caption = (
+                        f"📊 <b>Valorización de Servicios Generada</b>\n\n"
+                        f"📑 <b>Formato:</b> <code>LIQ-F-001 (Versión 1.0)</code>\n"
+                        f"🏢 <b>Cliente:</b> <code>{c_cliente}</code>\n"
+                        f"🔢 <b>Liquidación:</b> <code>N° {c_liq}</code>\n"
+                        f"📋 <b>Pestaña:</b> <code>{c_pestana}</code>\n\n"
+                        f"📁 Guardado en carpeta Drive: <code>Valorizaciones / Pdf</code>"
+                    )
+                    files = {'document': (res['filename'], res['pdf_bytes'], 'application/pdf')}
+                    data = {
+                        'chat_id': str(target_user),
+                        'caption': caption,
+                        'parse_mode': 'HTML',
+                        'reply_markup': json.dumps({
+                            'inline_keyboard': [
+                                [{'text': '📂 Ver PDF en Drive', 'url': res['drive_link']}],
+                                [{'text': '📊 Menú Documentos', 'callback_data': 'menu_documentos'}]
+                            ]
+                        })
+                    }
+                    try:
+                        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument", data=data, files=files, timeout=30)
+                    except Exception as e_tg:
+                        logger.error(f"Error enviando PDF de valorización por Telegram: {e_tg}")
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps(res, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                logger.error(f"Error en POST /api/valorizaciones/pdf: {e}")
                 self.send_response(500)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')
                 self.send_header('Access-Control-Allow-Origin', '*')

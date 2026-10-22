@@ -23,6 +23,7 @@ from bot.handlers import (
     handle_web_app_data,
     handle_callback_pendientes, job_verificar_alertas_pendientes,
     certificados_command,
+    valorizaciones_command,
     flota_command, handle_callback_flota
 )
 
@@ -115,6 +116,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler(["certificados", "certificado", "cert"], certificados_command))
+    app.add_handler(CommandHandler(["valorizaciones", "valorizacion", "val"], valorizaciones_command))
     app.add_handler(CommandHandler(["flota", "camiones", "camion", "conductores", "conductor", "choferes", "chofer"], flota_command))
     app.add_handler(CallbackQueryHandler(handle_callback_vinculacion, pattern=r"^vinc\|"))
     app.add_handler(CallbackQueryHandler(handle_callback_observacion, pattern=r"^obs\|"))
