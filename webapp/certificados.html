@@ -1254,40 +1254,15 @@
       return s;
     }
 
-    function parsearLineaIndividual(linea) {
-      if (!linea || !linea.trim()) return null;
-      let l = linea.trim();
-      let celdas = [];
-
-      if (l.includes('\t')) {
-        celdas = l.split('\t');
-      } else if (l.includes('|')) {
-        celdas = l.split('|');
-      } else if (l.includes(';')) {
-        celdas = l.split(';');
-      } else if (l.includes(',') && !/^\d+,\d+$/.test(l)) {
-        celdas = l.split(',');
-      } else if (/\s{2,}/.test(l)) {
-        celdas = l.split(/\s{2,}/);
-      } else if (l.includes(' - ') && !/^[A-Z0-9]{3,4}\s*-\s*\d+$/i.test(l)) {
-        celdas = l.split(/\s+-\s+/);
-      } else {
-        const tokens = l.split(/\s+/).filter(Boolean);
-        celdas = tokens.length > 0 ? tokens : [l];
-      }
-
-      return celdas.map(c => c.trim().replace(/^["']|["']$/g, '')).filter(c => c.length > 0);
-    }
-
-    function esFilaEncabezadoLote(fila, totalFilas) {
-      if (!fila || totalFilas <= 1) return false;
-      for (const c of fila) {
+    function esFilaEncabezadoLote(tokens, totalFilas) {
+      if (!tokens || totalFilas <= 1) return false;
+      for (const c of tokens) {
         if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(c.trim())) {
           return false;
         }
       }
       let matches = 0;
-      for (const c of fila) {
+      for (const c of tokens) {
         const clean = c.trim().toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ0-9]/g, '');
         if (['FECHA', 'DATE', 'GUIA', 'FACTURA', 'PLACA', 'DESCRIPCION', 'CANT', 'CANTIDAD', 'UM', 'MEDIDA', 'PESO', 'TOTAL'].includes(clean)) {
           matches++;
@@ -1296,30 +1271,129 @@
       return matches >= 2;
     }
 
+    function parsearLineaSmart(linea) {
+      const l = (linea || '').trim();
+      if (!l) return null;
+
+      // Intentar primero ver si son 6 o 7 columnas bien delimitadas por tabs, pipes, etc.
+      let celdas = [];
+      if (l.includes('\t')) celdas = l.split('\t');
+      else if (l.includes('|')) celdas = l.split('|');
+      else if (l.includes(';')) celdas = l.split(';');
+      else if (l.includes(',') && !/^\d+,\d+$/.test(l)) celdas = l.split(',');
+
+      celdas = celdas.map(c => c.trim().replace(/^["']|["']$/g, ''));
+
+      // Si tiene 6 o 7 celdas claramente separadas y la primera es solo una fecha
+      if ((celdas.length === 6 || celdas.length === 7) && /^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(celdas[0].trim())) {
+        if (celdas.length === 7) {
+          let v1 = celdas[1], v2 = celdas[2];
+          let placa = '', guia = '';
+          if (/^(?:[A-Z0-9]{1,4}[\-_]\d{1,8}|(?:E|T|F|B)\d{3}-\d+)$/i.test(v1)) {
+            guia = v1;
+            placa = v2;
+          } else {
+            placa = v1;
+            guia = v2;
+          }
+          return {
+            fecha: normalizarFechaLote(celdas[0]),
+            placa: placa,
+            guia: limpiarNumeroGuia(guia),
+            desc: celdas[3],
+            cant: celdas[4] || '1',
+            um: (celdas[5] || 'KG').toUpperCase(),
+            peso: celdas[6] || '0.00'
+          };
+        } else {
+          return {
+            fecha: normalizarFechaLote(celdas[0]),
+            placa: '',
+            guia: limpiarNumeroGuia(celdas[1]),
+            desc: celdas[2],
+            cant: celdas[3] || '1',
+            um: (celdas[4] || 'KG').toUpperCase(),
+            peso: celdas[5] || '0.00'
+          };
+        }
+      }
+
+      // Tokenización inteligente (resuelve casos donde la línea viene con espacios, tabs mezclados, o copia de PDF/reporte)
+      const tokens = l.split(/[\t\s]+/).map(t => t.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+      if (tokens.length === 0) return null;
+
+      let item = {
+        fecha: '',
+        placa: '',
+        guia: '',
+        desc: '',
+        cant: '1',
+        um: 'KG',
+        peso: '0.00'
+      };
+
+      const descParts = [];
+      const numbers = [];
+
+      for (const t of tokens) {
+        if (!item.fecha && (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(t) || /^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$/.test(t))) {
+          item.fecha = normalizarFechaLote(t);
+          continue;
+        }
+
+        if (!item.guia && (/^[A-Z0-9]{1,4}[\-_]\d{1,8}$/i.test(t) || /^(?:E|T|F|B)\d{3}-\d+/i.test(t))) {
+          item.guia = limpiarNumeroGuia(t);
+          continue;
+        }
+
+        if (!item.placa && /\d/.test(t) && (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(t) || /^[A-Z]{1,2}\d{1,2}-[A-Z0-9]{2,4}$/i.test(t))) {
+          item.placa = t;
+          continue;
+        }
+
+        if (/^(KG|TN|TM|UND|M3|GLN|LT|GAL|LTS|PZA|KILOS|TON|TONELADAS)$/i.test(t)) {
+          item.um = t.toUpperCase().replace('TONELADAS', 'TN').replace('TON', 'TN').replace('KILOS', 'KG');
+          continue;
+        }
+
+        if (/^\d+(?:[\.,]\d+)?$/.test(t) && parseFloat(t.replace(',', '.')) > 0) {
+          numbers.push(t.replace(',', '.'));
+          continue;
+        }
+
+        descParts.push(t);
+      }
+
+      if (numbers.length === 1) {
+        const num = numbers[0];
+        if (['KG', 'TN', 'TM'].includes(item.um)) {
+          item.peso = num;
+          item.cant = '1';
+        } else {
+          item.cant = num;
+          item.peso = '0.00';
+        }
+      } else if (numbers.length >= 2) {
+        item.cant = numbers[0];
+        item.peso = numbers[1];
+      }
+
+      if (descParts.length > 0) {
+        item.desc = descParts.join(' ');
+      }
+
+      return item;
+    }
+
     function parsearTextoTabular(texto) {
       if (!texto || !texto.trim()) return [];
       const lineas = texto.trim().split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
       if (lineas.length === 0) return [];
 
-      const filasCeldas = lineas.map(parsearLineaIndividual).filter(f => f && f.length > 0);
-      if (filasCeldas.length === 0) return [];
-
+      const primeraLineaTokens = lineas[0].split(/[\t,;|\s]+/).filter(Boolean);
       let filaInicio = 0;
-      let mapaIndices = null;
-
-      if (esFilaEncabezadoLote(filasCeldas[0], filasCeldas.length)) {
+      if (esFilaEncabezadoLote(primeraLineaTokens, lineas.length)) {
         filaInicio = 1;
-        mapaIndices = {};
-        filasCeldas[0].forEach((colName, idx) => {
-          const clean = colName.trim().toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ0-9]/g, '');
-          if (clean.includes('FECHA') || clean.includes('DATE')) mapaIndices.fecha = idx;
-          else if (clean.includes('PLACA') || clean.includes('VEHIC')) mapaIndices.placa = idx;
-          else if (clean.includes('GUIA') || clean.includes('FACTURA') || clean.includes('COMPROBANTE') || clean.includes('GR')) mapaIndices.guia = idx;
-          else if (clean.includes('DESC') || clean.includes('ITEM') || clean.includes('MATERIAL') || clean.includes('RESIDUO')) mapaIndices.desc = idx;
-          else if (clean.includes('CANT')) mapaIndices.cant = idx;
-          else if (clean.includes('UM') || clean.includes('MEDIDA') || clean.includes('UNIDAD')) mapaIndices.um = idx;
-          else if (clean.includes('PESO') || clean.includes('KG') || clean.includes('KILO') || clean.includes('TN') || clean.includes('TOTAL')) mapaIndices.peso = idx;
-        });
       }
 
       const items = [];
@@ -1327,97 +1401,10 @@
       let ultimaGuia = '';
       let ultimaPlaca = '';
 
-      for (let i = filaInicio; i < filasCeldas.length; i++) {
-        const fila = filasCeldas[i];
-        if (!fila || fila.length === 0) continue;
+      for (let i = filaInicio; i < lineas.length; i++) {
+        const item = parsearLineaSmart(lineas[i]);
+        if (!item) continue;
 
-        let item = {
-          fecha: '',
-          placa: '',
-          guia: '',
-          desc: '',
-          cant: '1',
-          um: 'KG',
-          peso: '0.00'
-        };
-
-        if (mapaIndices && Object.keys(mapaIndices).length >= 2) {
-          if (mapaIndices.fecha !== undefined && fila[mapaIndices.fecha]) item.fecha = fila[mapaIndices.fecha];
-          if (mapaIndices.placa !== undefined && fila[mapaIndices.placa]) item.placa = fila[mapaIndices.placa];
-          if (mapaIndices.guia !== undefined && fila[mapaIndices.guia]) item.guia = fila[mapaIndices.guia];
-          if (mapaIndices.desc !== undefined && fila[mapaIndices.desc]) item.desc = fila[mapaIndices.desc];
-          if (mapaIndices.cant !== undefined && fila[mapaIndices.cant]) item.cant = fila[mapaIndices.cant];
-          if (mapaIndices.um !== undefined && fila[mapaIndices.um]) item.um = fila[mapaIndices.um].toUpperCase();
-          if (mapaIndices.peso !== undefined && fila[mapaIndices.peso]) item.peso = fila[mapaIndices.peso];
-        } else if (fila.length === 7) {
-          item.fecha = fila[0];
-          const c1 = fila[1], c2 = fila[2];
-          if (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(c1) && /\d/.test(c1)) {
-            item.placa = c1;
-            item.guia = c2;
-          } else {
-            item.guia = c1;
-            item.placa = c2;
-          }
-          item.desc = fila[3];
-          item.cant = fila[4] || '1';
-          item.um = (fila[5] || 'KG').toUpperCase();
-          item.peso = fila[6] || '0.00';
-        } else if (fila.length === 6) {
-          item.fecha = fila[0];
-          item.guia = fila[1];
-          item.desc = fila[2];
-          item.cant = fila[3] || '1';
-          item.um = (fila[4] || 'KG').toUpperCase();
-          item.peso = fila[5] || '0.00';
-        } else {
-          const descParts = [];
-          const numbers = [];
-          fila.forEach(c => {
-            const trimmed = c.trim();
-            if (!trimmed) return;
-
-            if (!item.fecha && (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/.test(trimmed) || /^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$/.test(trimmed))) {
-              item.fecha = trimmed;
-              return;
-            }
-
-            if (!item.guia && (/^[A-Z0-9]{1,4}[\-\_]\d{1,8}$/i.test(trimmed) || /^(?:E|T|F|B)\d{3}-\d+/i.test(trimmed))) {
-              item.guia = trimmed;
-              return;
-            }
-
-            if (!item.placa && /\d/.test(trimmed) && (/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/i.test(trimmed) || /^[A-Z]{1,2}\d{1,2}-[A-Z0-9]{2,4}$/i.test(trimmed))) {
-              item.placa = trimmed;
-              return;
-            }
-
-            if (/^(KG|TN|TM|UND|M3|GLN|LT|GAL|LTS|PZA|KILOS|TON|TONELADAS)$/i.test(trimmed)) {
-              item.um = trimmed.toUpperCase().replace('TONELADAS', 'TN').replace('TON', 'TN').replace('KILOS', 'KG');
-              return;
-            }
-
-            if (/^\d+(?:[\.,]\d+)?$/.test(trimmed) && parseFloat(trimmed.replace(',', '.')) > 0) {
-              numbers.push(trimmed.replace(',', '.'));
-              return;
-            }
-
-            descParts.push(trimmed);
-          });
-
-          if (numbers.length === 1) {
-            item.peso = numbers[0];
-          } else if (numbers.length >= 2) {
-            item.cant = numbers[0];
-            item.peso = numbers[1];
-          }
-
-          if (descParts.length > 0) {
-            item.desc = descParts.join(' ');
-          }
-        }
-
-        item.fecha = normalizarFechaLote(item.fecha);
         if (item.fecha) ultimaFecha = item.fecha;
         else if (ultimaFecha) item.fecha = ultimaFecha;
 
@@ -1426,8 +1413,6 @@
 
         if (item.placa) ultimaPlaca = item.placa;
         else if (ultimaPlaca) item.placa = ultimaPlaca;
-
-        item.guia = limpiarNumeroGuia(item.guia);
 
         if (item.desc || (item.peso && item.peso !== '0.00') || item.guia || item.fecha) {
           items.push(item);
