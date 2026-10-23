@@ -1132,19 +1132,18 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 post_body = self.rfile.read(content_len)
                 payload = json.loads(post_body.decode('utf-8'))
 
-                from core.valorizaciones_service import exportar_valorizacion_pdf
+                from core.valorizaciones_service import exportar_valorizacion_pdf, formatear_nombre_pdf
                 from config.settings import TELEGRAM_TOKEN, ADMIN_CHAT_ID
                 import html
 
                 gid = payload.get('gid')
+                pestana = payload.get('nombre_pestana') or gid
                 cliente = payload.get('cliente', '')
                 liq = payload.get('liquidacion', '')
-                pestana = payload.get('nombre_pestana', '')
                 target_user = payload.get('user_id') or ADMIN_CHAT_ID
 
-                nombre_archivo = f"Valorizacion_LIQ-{liq}_{pestana}.pdf"
-                target_tab = pestana or gid
-                res = exportar_valorizacion_pdf(target_tab, nombre_archivo=nombre_archivo)
+                nombre_archivo = formatear_nombre_pdf(pestana)
+                res = exportar_valorizacion_pdf(pestana, nombre_archivo=nombre_archivo, datos_pantalla=payload)
 
                 if res.get('success') and target_user and TELEGRAM_TOKEN:
                     import requests

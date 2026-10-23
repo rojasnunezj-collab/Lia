@@ -43,6 +43,15 @@ def obtener_url_webapp_valorizaciones(user_id=None, modo="heredar", tab_fuente=N
     sep = '&' if '?' in base_url else '?'
     return f"{base_url}{sep}{urllib.parse.urlencode(params)}"
 
+def formatear_nombre_pdf(nombre_pestana):
+    """Genera el nombre estándar: VALORIZACION DE SERVICIOS - EPMI - {nombre_pestana}.pdf"""
+    clean_tab = str(nombre_pestana or "VALORIZACION").strip()
+    # Asegurar espacio antes de (SER ej: AGROLATINA(SER 23) -> AGROLATINA (SER 23)
+    clean_tab = re.sub(r'\(SER\s*(\d+)\)', r' (SER \1)', clean_tab, flags=re.IGNORECASE)
+    clean_tab = re.sub(r'\(SERV\s*(\d+)\)', r' (SER \1)', clean_tab, flags=re.IGNORECASE)
+    clean_tab = clean_tab.replace("/", "-").replace("\\", "-").replace(":", "-")
+    return f"VALORIZACION DE SERVICIOS - EPMI - {clean_tab}.pdf"
+
 def descargar_workbook_drive(drive_service, doc_id=None, data_only=False):
     """Descarga el archivo Excel de Google Drive y lo abre con openpyxl."""
     if not doc_id:
@@ -74,7 +83,7 @@ def subir_workbook_drive(drive_service, wb, doc_id=None):
 
 def limpiar_monto_numerico(val):
     """Convierte un valor de celda a float numérico limpio."""
-    if val is None:
+    if val is None or val == "":
         return 0.0
     if isinstance(val, (int, float)):
         return float(val)
@@ -84,18 +93,19 @@ def limpiar_monto_numerico(val):
     elif "," in val_str and "." not in val_str:
         val_str = val_str.replace(",", ".")
     try:
-        return float(re.sub(r"[^\d.-]", "", val_str))
+        clean = re.sub(r"[^\d.-]", "", val_str)
+        return float(clean) if clean else 0.0
     except Exception:
         return 0.0
 
 def formatear_fecha_str(val):
     """Convierte fecha de celda a formato DD/MM/YYYY."""
     if val is None:
-        return "-"
+        return ""
     if isinstance(val, (datetime.datetime, datetime.date)):
         return f"{val.day:02d}/{val.month:02d}/{val.year}"
     val_s = str(val).strip()
-    return val_s if val_s else "-"
+    return val_s if val_s else ""
 
 def listar_pestanas_valorizacion():
     """
@@ -165,6 +175,7 @@ def obtener_detalle_pestana(tab_name):
         liq_raw = ws['C9'].value
         liquidacion = f"{int(liq_raw):03d}" if isinstance(liq_raw, float) else str(liq_raw or "").replace(".0", "").strip()
         fecha = formatear_fecha_str(ws['C10'].value)
+        fecha_doc = formatear_fecha_str(ws['H3'].value) # Celda H3 de metadatos LIQ-F-001
 
         datos = {
             "title": tab_name,
@@ -175,6 +186,7 @@ def obtener_detalle_pestana(tab_name):
             "responsable": responsable,
             "liquidacion": liquidacion,
             "fecha": fecha,
+            "fecha_doc": fecha_doc,
             "items": []
         }
 
@@ -203,7 +215,7 @@ def obtener_detalle_pestana(tab_name):
             datos["items"].append({
                 "num": num_str,
                 "descripcion": desc,
-                "fecha": fecha_item,
+                "fecha": fecha_item if fecha_item else "-",
                 "guia": guia_item,
                 "cantidad": cant_item,
                 "costo": costo_item,
@@ -215,11 +227,89 @@ def obtener_detalle_pestana(tab_name):
         logger.error(f"Error obteniendo detalle de pestaña {tab_name}: {e}", exc_info=True)
         return None
 
+def _set_cell_safe(ws, row, col, val):
+    c = ws.cell(row, col)
+    if type(c).__name__ != 'MergedCell':
+        c.value = val
+
+def _aplicar_datos_en_hoja(target_ws, datos, cliente):
+    """Aplica cabeceras, items con fórmulas y totales a un worksheet de openpyxl."""
+    ruc = str(datos.get("ruc", "")).strip()
+    planta = str(datos.get("planta", "")).strip()
+    responsable = str(datos.get("responsable", "")).strip()
+    liquidacion = str(datos.get("liquidacion", "")).strip()
+    fecha_emision = str(datos.get("fecha", "")).strip() or datetime.datetime.now(PET).strftime("%d/%m/%Y")
+    fecha_doc = str(datos.get("fecha_doc", "")).strip()
+    items = datos.get("items", [])
+
+    # Cabecera
+    _set_cell_safe(target_ws, 5, 3, cliente)
+    _set_cell_safe(target_ws, 6, 3, float(ruc) if ruc.isdigit() else ruc)
+    _set_cell_safe(target_ws, 7, 3, planta)
+    _set_cell_safe(target_ws, 8, 3, responsable)
+    _set_cell_safe(target_ws, 9, 3, liquidacion)
+    _set_cell_safe(target_ws, 10, 3, fecha_emision)
+    _set_cell_safe(target_ws, 3, 8, fecha_doc if fecha_doc else None)
+
+    # Limpiar filas 13 a 36 de forma segura ante celdas combinadas
+    for r in range(13, 37):
+        for col in range(1, 9):
+            _set_cell_safe(target_ws, r, col, None)
+
+    # Escribir items
+    fila_inicio = 13
+    for i, it in enumerate(items):
+        r = fila_inicio + i
+        num_v = str(it.get("num", "")).strip()
+        desc_v = str(it.get("descripcion", "")).strip()
+        fec_v = str(it.get("fecha", "-")).strip()
+        guia_v = str(it.get("guia", "-")).strip()
+        cant_v = limpiar_monto_numerico(it.get("cantidad", 1))
+        costo_v = limpiar_monto_numerico(it.get("costo", 0))
+
+        _set_cell_safe(target_ws, r, 1, float(num_v) if num_v.isdigit() else (num_v if num_v else None))
+        _set_cell_safe(target_ws, r, 2, desc_v)
+        _set_cell_safe(target_ws, r, 4, fec_v)
+        _set_cell_safe(target_ws, r, 5, guia_v)
+        _set_cell_safe(target_ws, r, 6, cant_v)
+        _set_cell_safe(target_ws, r, 7, costo_v)
+        _set_cell_safe(target_ws, r, 8, f"=F{r}*G{r}")
+
+    # Totales
+    n_items = len(items) if items else 1
+    ultima_fila_items = fila_inicio + n_items - 1
+    fila_total_mes = ultima_fila_items + 1
+    fila_subtotal = fila_total_mes + 2
+    fila_igv = fila_subtotal + 1
+    fila_total = fila_igv + 1
+    fila_detraccion = fila_total + 1
+
+    _set_cell_safe(target_ws, fila_total_mes, 1, "TOTAL GENERADO EN EL MESES")
+    _set_cell_safe(target_ws, fila_total_mes, 8, f"=SUM(H{fila_inicio}:H{ultima_fila_items})")
+
+    _set_cell_safe(target_ws, fila_subtotal, 1, "* Metodo de pago: transferencia.")
+    _set_cell_safe(target_ws, fila_subtotal, 7, "SUB TOTAL")
+    _set_cell_safe(target_ws, fila_subtotal, 8, f"=H{fila_total_mes}")
+
+    _set_cell_safe(target_ws, fila_igv, 1, "* Forma de pago: Al contado.")
+    _set_cell_safe(target_ws, fila_igv, 7, "IGV")
+    _set_cell_safe(target_ws, fila_igv, 8, f"=H{fila_total}-H{fila_subtotal}")
+
+    _set_cell_safe(target_ws, fila_total, 1, "* Numero de cuenta Corriente soles en Interbank es: 200-3005602805. ")
+    _set_cell_safe(target_ws, fila_total, 7, "TOTAL")
+    _set_cell_safe(target_ws, fila_total, 8, f"=H{fila_subtotal}*1.18")
+
+    _set_cell_safe(target_ws, fila_detraccion, 1, "* Numero de cuenta de detracción: 00050086984")
+
+    # Firmas
+    fila_firmas = fila_detraccion + 9
+    _set_cell_safe(target_ws, fila_firmas, 3, "______________________________________")
+    _set_cell_safe(target_ws, fila_firmas, 5, "_______________________________________")
+    _set_cell_safe(target_ws, fila_firmas + 1, 3, "EPMI S.A.C.")
+    _set_cell_safe(target_ws, fila_firmas + 1, 5, cliente)
+
 def guardar_valorizacion(datos):
-    """
-    Crea, hereda o modifica una pestaña en el archivo de Google Drive.
-    Garantiza fórmulas automáticas (=F*G, SUM, IGV 18%, TOTAL).
-    """
+    """Crea, hereda o modifica una pestaña en el archivo de Google Drive."""
     try:
         creds = obtener_credenciales()
         drive = build('drive', 'v3', credentials=creds)
@@ -229,19 +319,13 @@ def guardar_valorizacion(datos):
         fuente_tab = str(datos.get("fuente_tab", "")).strip()
         nombre_pestana = str(datos.get("nombre_pestana", "")).strip()
         cliente = str(datos.get("cliente", "")).strip().upper()
-        ruc = str(datos.get("ruc", "")).strip()
-        planta = str(datos.get("planta", "")).strip()
-        responsable = str(datos.get("responsable", "")).strip()
         liquidacion = str(datos.get("liquidacion", "")).strip()
-        fecha_emision = str(datos.get("fecha", "")).strip() or datetime.datetime.now(PET).strftime("%d/%m/%Y")
-        items = datos.get("items", [])
 
         if not nombre_pestana:
             sigla = cliente.replace("CORPORACION ", "").replace("S.A.C.", "").replace("S.A.", "").strip()[:10]
             nombre_pestana = f"{sigla}(SER {liquidacion.lstrip('0') or '1'})"
 
         target_ws = None
-
         if modo == "modificar" and nombre_pestana in wb.sheetnames:
             target_ws = wb[nombre_pestana]
         else:
@@ -259,72 +343,7 @@ def guardar_valorizacion(datos):
             target_ws.title = final_title
             nombre_pestana = final_title
 
-        # 1. Cabecera
-        target_ws['C5'] = cliente
-        target_ws['C6'] = float(ruc) if ruc.isdigit() else ruc
-        target_ws['C7'] = planta
-        target_ws['C8'] = responsable
-        target_ws['C9'] = liquidacion
-        target_ws['C10'] = fecha_emision
-
-        # 2. Limpiar filas de servicios previas (filas 13 a 35)
-        for r in range(13, 36):
-            for col in range(1, 9):
-                target_ws.cell(r, col).value = None
-
-        # 3. Escribir items con fórmulas
-        fila_inicio = 13
-        for i, it in enumerate(items):
-            r = fila_inicio + i
-            num_v = str(it.get("num", "")).strip()
-            desc_v = str(it.get("descripcion", "")).strip()
-            fec_v = str(it.get("fecha", "-")).strip()
-            guia_v = str(it.get("guia", "-")).strip()
-            cant_v = limpiar_monto_numerico(it.get("cantidad", 1))
-            costo_v = limpiar_monto_numerico(it.get("costo", 0))
-
-            target_ws.cell(r, 1).value = float(num_v) if num_v.isdigit() else (num_v if num_v else None)
-            target_ws.cell(r, 2).value = desc_v
-            target_ws.cell(r, 4).value = fec_v
-            target_ws.cell(r, 5).value = guia_v
-            target_ws.cell(r, 6).value = cant_v
-            target_ws.cell(r, 7).value = costo_v
-            target_ws.cell(r, 8).value = f"=F{r}*G{r}"
-
-        # 4. Bloque de Totales
-        n_items = len(items) if items else 1
-        ultima_fila_items = fila_inicio + n_items - 1
-        fila_total_mes = ultima_fila_items + 1
-        fila_subtotal = fila_total_mes + 2
-        fila_igv = fila_subtotal + 1
-        fila_total = fila_igv + 1
-        fila_detraccion = fila_total + 1
-
-        target_ws.cell(fila_total_mes, 1).value = "TOTAL GENERADO EN EL MESES"
-        target_ws.cell(fila_total_mes, 8).value = f"=SUM(H{fila_inicio}:H{ultima_fila_items})"
-
-        target_ws.cell(fila_subtotal, 1).value = "* Metodo de pago: transferencia."
-        target_ws.cell(fila_subtotal, 7).value = "SUB TOTAL"
-        target_ws.cell(fila_subtotal, 8).value = f"=H{fila_total_mes}"
-
-        target_ws.cell(fila_igv, 1).value = "* Forma de pago: Al contado."
-        target_ws.cell(fila_igv, 7).value = "IGV"
-        target_ws.cell(fila_igv, 8).value = f"=H{fila_total}-H{fila_subtotal}"
-
-        target_ws.cell(fila_total, 1).value = "* Numero de cuenta Corriente soles en Interbank es: 200-3005602805. "
-        target_ws.cell(fila_total, 7).value = "TOTAL"
-        target_ws.cell(fila_total, 8).value = f"=H{fila_subtotal}*1.18"
-
-        target_ws.cell(fila_detraccion, 1).value = "* Numero de cuenta de detracción: 00050086984"
-
-        # Firmas al pie
-        fila_firmas = fila_detraccion + 9
-        target_ws.cell(fila_firmas, 3).value = "______________________________________"
-        target_ws.cell(fila_firmas, 5).value = "_______________________________________"
-        target_ws.cell(fila_firmas + 1, 3).value = "EPMI S.A.C."
-        target_ws.cell(fila_firmas + 1, 5).value = cliente
-
-        # 5. Guardar en Google Drive
+        _aplicar_datos_en_hoja(target_ws, datos, cliente)
         subir_workbook_drive(drive, wb)
 
         return {
@@ -342,10 +361,11 @@ def guardar_valorizacion(datos):
             "error": str(e)
         }
 
-def exportar_valorizacion_pdf(sheet_name, nombre_archivo=None):
+def exportar_valorizacion_pdf(sheet_name, nombre_archivo=None, datos_pantalla=None):
     """
-    Exporta la pestaña seleccionada del archivo Excel a PDF nativo,
-    guardándolo en la carpeta de Drive designada y retornando bytes y link.
+    Exporta la pestaña a PDF. Si se envían 'datos_pantalla', aplica los cambios
+    en memoria para que el PDF refleje los datos actuales de la pantalla
+    incluso si no se guardaron previamente en la hoja original.
     """
     try:
         creds = obtener_credenciales()
@@ -354,7 +374,7 @@ def exportar_valorizacion_pdf(sheet_name, nombre_archivo=None):
 
         drive = build('drive', 'v3', credentials=creds)
 
-        # 1. Descargar el archivo Excel actual
+        # 1. Descargar el archivo Excel actual a memoria
         request = drive.files().get_media(fileId=SHEET_VALORIZACIONES_ID)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
@@ -363,9 +383,36 @@ def exportar_valorizacion_pdf(sheet_name, nombre_archivo=None):
             _, done = downloader.next_chunk()
         fh.seek(0)
 
-        # 2. Subir como Google Sheet temporal para conversión perfecta a PDF
+        # 2. Abrir en memoria para renderizado
+        wb = openpyxl.load_workbook(fh, data_only=False)
+
+        target_ws = None
+        if sheet_name in wb.sheetnames:
+            target_ws = wb[sheet_name]
+        else:
+            # Buscar coincidencia o clonar
+            matched = [s for s in wb.sheetnames if str(sheet_name).upper() in s.upper()]
+            if matched:
+                sheet_name = matched[0]
+                target_ws = wb[sheet_name]
+            else:
+                target_ws = wb.copy_worksheet(wb[wb.sheetnames[-1]])
+                target_ws.title = str(sheet_name)
+
+        # Si el usuario modificó datos en pantalla (o agregó items) sin guardar en el Sheet,
+        # los aplicamos en memoria para que el PDF salga con toda su información:
+        if datos_pantalla:
+            c_nom = str(datos_pantalla.get("cliente") or target_ws['C5'].value or "").strip().upper()
+            _aplicar_datos_en_hoja(target_ws, datos_pantalla, c_nom)
+
+        # Guardar el workbook modificado en memoria
+        render_fh = io.BytesIO()
+        wb.save(render_fh)
+        render_fh.seek(0)
+
+        # 3. Subir como Google Sheet temporal
         media = MediaIoBaseUpload(
-            fh,
+            render_fh,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             resumable=True
         )
@@ -377,7 +424,7 @@ def exportar_valorizacion_pdf(sheet_name, nombre_archivo=None):
         temp_file = drive.files().create(body=temp_body, media_body=media, fields='id').execute()
         temp_id = temp_file['id']
 
-        # 3. Obtener el GID de la hoja solicitada
+        # 4. Obtener GID de la hoja
         import gspread
         import requests
         gc = gspread.authorize(creds)
@@ -390,7 +437,7 @@ def exportar_valorizacion_pdf(sheet_name, nombre_archivo=None):
 
         target_gid = ws.id
 
-        # 4. Descargar PDF renderizado
+        # 5. Descargar PDF renderizado
         url_export = (
             f"https://docs.google.com/spreadsheets/d/{temp_id}/export"
             f"?format=pdf&gid={target_gid}&size=A4&portrait=true&fitw=true&gridlines=false"
@@ -398,7 +445,7 @@ def exportar_valorizacion_pdf(sheet_name, nombre_archivo=None):
         headers = {'Authorization': f'Bearer {creds.token}'}
         resp = requests.get(url_export, headers=headers, timeout=40)
 
-        # 5. Eliminar archivo temporal
+        # 6. Eliminar archivo temporal de Google Drive
         try:
             drive.files().delete(fileId=temp_id).execute()
         except Exception:
@@ -409,12 +456,13 @@ def exportar_valorizacion_pdf(sheet_name, nombre_archivo=None):
 
         pdf_bytes = resp.content
 
+        # Nombre oficial solicitado: VALORIZACION DE SERVICIOS - EPMI - {nombre_pestana}.pdf
         if not nombre_archivo:
-            nombre_archivo = f"Valorizacion_{sheet_name}.pdf"
-        if not nombre_archivo.lower().endswith(".pdf"):
+            nombre_archivo = formatear_nombre_pdf(sheet_name)
+        elif not nombre_archivo.lower().endswith(".pdf"):
             nombre_archivo += ".pdf"
 
-        # 6. Subir PDF final a la carpeta de PDFs
+        # 7. Subir PDF final a la carpeta de PDFs en Drive
         meta_pdf = {
             'name': nombre_archivo,
             'parents': [DRIVE_FOLDER_VALORIZACIONES_PDF],

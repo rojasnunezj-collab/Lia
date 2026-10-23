@@ -10,13 +10,11 @@
       --primary: #198754;
       --primary-dark: #0f5132;
       --primary-light: #e8f5e9;
-      --sheet-border: #a0aec0;
-      --sheet-grid: #cbd5e0;
+      --sheet-border: #94a3b8;
       --header-bg: #e2e8f0;
       --yellow-highlight: #fff3cd;
-      --yellow-border: #ffe69c;
       --danger: #dc3545;
-      --bg: #f1f5f9;
+      --bg: #f8fafc;
     }
 
     * {
@@ -28,7 +26,7 @@
 
     body {
       background-color: var(--bg);
-      color: #1e293b;
+      color: #0f172a;
       padding: 8px;
       padding-bottom: 95px;
     }
@@ -60,7 +58,7 @@
     }
 
     select, .input-tab-name {
-      padding: 5px 8px;
+      padding: 6px 8px;
       font-size: 12px;
       border: 1px solid var(--sheet-border);
       border-radius: 6px;
@@ -80,7 +78,7 @@
 
     .mode-tab {
       flex: 1;
-      padding: 5px 2px;
+      padding: 6px 2px;
       text-align: center;
       font-size: 11px;
       font-weight: 700;
@@ -111,7 +109,7 @@
     /* Document Sheet Wrapper (Simula exactamente la hoja de cálculo) */
     .sheet-paper {
       background: #ffffff;
-      border: 1px solid #94a3b8;
+      border: 1.5px solid #64748b;
       box-shadow: 0 2px 6px rgba(0,0,0,0.06);
       border-radius: 4px;
       overflow-x: auto;
@@ -119,7 +117,7 @@
     }
 
     .sheet-inner {
-      min-width: 680px; /* Ancho fijo para mantener cuadrícula exacta */
+      min-width: 680px;
       padding: 10px;
     }
 
@@ -150,13 +148,13 @@
     .doc-title-box {
       text-align: center;
       font-weight: 800;
-      font-size: 12px;
+      font-size: 11.5px;
       color: #0f172a;
-      line-height: 1.2;
+      line-height: 1.25;
     }
 
     .doc-meta-box {
-      width: 130px;
+      width: 140px;
       padding: 0 !important;
     }
 
@@ -174,6 +172,16 @@
 
     .meta-subtable tr:last-child td {
       border-bottom: none !important;
+    }
+
+    .input-meta-fecha {
+      width: 100%;
+      border: none;
+      background: transparent;
+      font-size: 9.5px;
+      outline: none;
+      font-weight: 700;
+      color: #0f172a;
     }
 
     /* Tabla de Datos de Cliente / Liquidación */
@@ -242,6 +250,7 @@
       font-size: 10.5px;
       outline: none;
       padding: 2px;
+      color: #0f172a;
     }
 
     .table-grid input:focus {
@@ -267,8 +276,8 @@
     .cell-payment-info {
       font-size: 9.5px;
       color: #334155;
-      line-height: 1.3;
-      padding: 4px 6px !important;
+      line-height: 1.35;
+      padding: 5px 6px !important;
       vertical-align: top;
     }
 
@@ -280,6 +289,7 @@
       font-size: 12px;
       cursor: pointer;
       padding: 1px 3px;
+      font-weight: 800;
     }
 
     /* Botones de edición rápida de tabla */
@@ -292,7 +302,7 @@
     .btn-tool {
       background: #e2e8f0;
       border: 1px solid #cbd5e1;
-      padding: 4px 8px;
+      padding: 5px 10px;
       font-size: 11px;
       font-weight: 700;
       border-radius: 4px;
@@ -306,7 +316,7 @@
 
     /* Firmas */
     .signatures-box {
-      margin-top: 18px;
+      margin-top: 20px;
       display: flex;
       justify-content: space-around;
       text-align: center;
@@ -315,7 +325,7 @@
     }
 
     .signature-line {
-      width: 180px;
+      width: 190px;
       border-top: 1px solid #000;
       padding-top: 4px;
     }
@@ -336,6 +346,13 @@
       background: #dcfce7;
       color: #166534;
       border: 1px solid #bbf7d0;
+    }
+
+    .toast-msg.warning {
+      display: block;
+      background: #fef3c7;
+      color: #92400e;
+      border: 1px solid #fde68a;
     }
 
     .toast-msg.error {
@@ -384,12 +401,6 @@
       color: #fff;
     }
 
-    .btn-export-pdf:disabled {
-      background: #94a3b8;
-      cursor: not-allowed;
-      opacity: 0.6;
-    }
-
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(-3px); }
       to { opacity: 1; transform: translateY(0); }
@@ -423,7 +434,7 @@
       </div>
       <div style="flex: 1;">
         <span class="control-label">Nombre Pestaña a Guardar:</span>
-        <input type="text" id="txtNombrePestana" class="input-tab-name" style="width: 100%;" placeholder="AGROLATINA(SER 24)">
+        <input type="text" id="txtNombrePestana" class="input-tab-name" style="width: 100%;" placeholder="AGROLATINA(SER 24)" oninput="marcarCambio()">
       </div>
     </div>
   </div>
@@ -458,7 +469,9 @@
               </tr>
               <tr>
                 <td style="font-weight: 700;">FECHA</td>
-                <td id="metaFechaDoc">22/10/2026</td>
+                <td>
+                  <input type="text" id="cellMetaFechaDoc" class="input-meta-fecha" placeholder="(vacío)" oninput="marcarCambio()">
+                </td>
               </tr>
             </table>
           </td>
@@ -472,23 +485,23 @@
       <table class="table-client-info">
         <tr>
           <td class="cell-label">RAZON SOCIAL:</td>
-          <td colspan="3"><input type="text" id="cellCliente" placeholder="CORPORACION AGROLATINA S.A.C."></td>
+          <td colspan="3"><input type="text" id="cellCliente" placeholder="CORPORACION AGROLATINA S.A.C." oninput="alEditarCliente(this.value)"></td>
         </tr>
         <tr>
           <td class="cell-label">RUC:</td>
-          <td><input type="text" id="cellRuc" placeholder="20176770474"></td>
+          <td><input type="text" id="cellRuc" placeholder="20176770474" oninput="marcarCambio()"></td>
           <td class="cell-label" style="width: 90px;">LIQUIDACION:</td>
-          <td><input type="text" id="cellLiq" style="font-weight: 800; color: #b45309;" placeholder="023"></td>
+          <td><input type="text" id="cellLiq" style="font-weight: 800; color: #b45309;" placeholder="023" oninput="marcarCambio()"></td>
         </tr>
         <tr>
           <td class="cell-label">PLANTA:</td>
-          <td colspan="3"><input type="text" id="cellPlanta" placeholder="Av. Manuel Olguin Nro. 335 - Santiago de Surco - Lima"></td>
+          <td colspan="3"><input type="text" id="cellPlanta" placeholder="Av. Manuel Olguin Nro. 335 - Santiago de Surco - Lima" oninput="marcarCambio()"></td>
         </tr>
         <tr>
           <td class="cell-label">RESPONSABLE:</td>
-          <td><input type="text" id="cellResponsable" placeholder="LUIS MIGUEL PALOMINO"></td>
+          <td><input type="text" id="cellResponsable" placeholder="LUIS MIGUEL PALOMINO" oninput="marcarCambio()"></td>
           <td class="cell-label">FECHA:</td>
-          <td><input type="text" id="cellFecha" placeholder="22/10/2026"></td>
+          <td><input type="text" id="cellFecha" placeholder="22/10/2026" oninput="marcarCambio()"></td>
         </tr>
       </table>
 
@@ -513,7 +526,7 @@
           </tr>
         </thead>
         <tbody id="tbodyServicios">
-          <!-- Se llena dinámicamente con las filas -->
+          <!-- Filas dinámicas -->
         </tbody>
         <tfoot>
           <!-- Total Generado en el Mes -->
@@ -579,10 +592,11 @@
   </div>
 
   <script>
-    let modoActual = "heredar"; // 'heredar', 'modificar', 'nueva'
+    let modoActual = "heredar";
     let pestanasList = [];
     let items = [];
     let userId = null;
+    let hayCambiosSinGuardar = false;
 
     if (window.Telegram && window.Telegram.WebApp) {
       window.Telegram.WebApp.ready();
@@ -602,6 +616,15 @@
       cargarPestanas();
     });
 
+    function marcarCambio() {
+      hayCambiosSinGuardar = true;
+    }
+
+    function alEditarCliente(val) {
+      document.getElementById('sigCliente').textContent = val || 'CLIENTE';
+      marcarCambio();
+    }
+
     function seleccionarModo(nuevoModo) {
       modoActual = nuevoModo;
       document.getElementById('tabHeredar').classList.toggle('active', nuevoModo === 'heredar');
@@ -620,11 +643,14 @@
         document.getElementById('cellResponsable').value = "";
         document.getElementById('cellLiq').value = "001";
         document.getElementById('cellFecha').value = new Date().toLocaleDateString('es-PE');
+        document.getElementById('cellMetaFechaDoc').value = "";
+        document.getElementById('sigCliente').textContent = "CLIENTE";
         items = [
           { num: "1", descripcion: "SERVICIO DE RECOLECCION Y TRANSPORTE DE RESIDUOS SOLIDOS", fecha: "-", guia: "-", cantidad: 1.0, costo: 1200.0 },
           { num: "", descripcion: "SERVICIO DE DISPOSICION FINAL DE RESIDUOS SOLIDOS PELIGROSOS", fecha: "-", guia: "-", cantidad: 1.0, costo: 360.0 }
         ];
         renderizarTabla();
+        marcarCambio();
       } else {
         lblSelect.textContent = nuevoModo === 'heredar' ? "Pestaña a Duplicar:" : "Pestaña a Modificar:";
         alCambiarPestanaSeleccionada();
@@ -640,7 +666,6 @@
           const select = document.getElementById('selectPestana');
           select.innerHTML = '';
 
-          // Mostrar las más recientes primero en el dropdown
           pestanasList.slice().reverse().forEach(p => {
             const opt = document.createElement('option');
             opt.value = p.title;
@@ -648,7 +673,6 @@
             select.appendChild(opt);
           });
 
-          // Seleccionar la última creada por defecto
           select.value = pestanasList[pestanasList.length - 1].title;
           alCambiarPestanaSeleccionada();
         }
@@ -676,8 +700,10 @@
           document.getElementById('cellResponsable').value = d.responsable || '';
           document.getElementById('sigCliente').textContent = d.cliente || 'CLIENTE';
 
+          // Fecha del encabezado LIQ-F-001 (Celda H3)
+          document.getElementById('cellMetaFechaDoc').value = d.fecha_doc || '';
+
           if (modoActual === 'heredar') {
-            // Incrementar liquidación correlativa
             let liqNum = parseInt(d.liquidacion, 10);
             if (!isNaN(liqNum)) {
               liqNum += 1;
@@ -686,7 +712,6 @@
               document.getElementById('cellLiq').value = (d.liquidacion || '') + '_NUEVA';
             }
 
-            // Sugerir nombre de pestaña ej: AGROLATINA(SER 23) -> AGROLATINA(SER 24)
             const match = d.title.match(/(.*)\(SER\s*(\d+)\)/i);
             if (match) {
               const prefix = match[1].trim();
@@ -697,7 +722,6 @@
             }
             document.getElementById('cellFecha').value = new Date().toLocaleDateString('es-PE');
           } else {
-            // Modificar pestaña actual
             document.getElementById('cellLiq').value = d.liquidacion || '';
             document.getElementById('cellFecha').value = d.fecha || '';
             document.getElementById('txtNombrePestana').value = d.title;
@@ -705,6 +729,7 @@
 
           items = d.items && d.items.length > 0 ? d.items : [];
           renderizarTabla();
+          hayCambiosSinGuardar = false;
           ocultarToast();
         }
       } catch (e) {
@@ -731,6 +756,7 @@
         costo: 360.0
       });
       renderizarTabla();
+      marcarCambio();
     }
 
     function agregarFilaSimple() {
@@ -743,6 +769,7 @@
         costo: 0.0
       });
       renderizarTabla();
+      marcarCambio();
     }
 
     function calcularSiguienteNumeroServicio() {
@@ -757,36 +784,42 @@
     function eliminarFila(index) {
       items.splice(index, 1);
       renderizarTabla();
+      marcarCambio();
     }
 
+    // Renderiza la tabla completa (solo al cargar, cambiar pestaña o agregar/eliminar filas)
     function renderizarTabla() {
       const tbody = document.getElementById('tbodyServicios');
       tbody.innerHTML = '';
 
       items.forEach((it, idx) => {
         const tr = document.createElement('tr');
-        const totalFila = (parseFloat(it.cantidad) || 0) * (parseFloat(it.costo) || 0);
+        tr.dataset.idx = idx;
+
+        const cantNum = parseFloat(it.cantidad) || 0;
+        const costoNum = parseFloat(it.costo) || 0;
+        const totalFila = cantNum * costoNum;
 
         tr.innerHTML = `
           <td class="text-center font-bold">
-            <input type="text" class="text-center font-bold" value="${it.num || ''}" oninput="actualizarItem(${idx}, 'num', this.value)">
+            <input type="text" class="text-center font-bold" value="${it.num || ''}" oninput="actualizarTexto(${idx}, 'num', this.value)">
           </td>
           <td>
-            <input type="text" value="${it.descripcion || ''}" oninput="actualizarItem(${idx}, 'descripcion', this.value)">
+            <input type="text" value="${it.descripcion || ''}" oninput="actualizarTexto(${idx}, 'descripcion', this.value)">
           </td>
           <td class="text-center">
-            <input type="text" class="text-center" value="${it.fecha || '-'}" oninput="actualizarItem(${idx}, 'fecha', this.value)">
+            <input type="text" class="text-center" value="${it.fecha || '-'}" oninput="actualizarTexto(${idx}, 'fecha', this.value)">
           </td>
           <td class="text-center">
-            <input type="text" class="text-center font-bold" value="${it.guia || '-'}" oninput="actualizarItem(${idx}, 'guia', this.value)">
+            <input type="text" class="text-center font-bold" value="${it.guia || '-'}" oninput="actualizarTexto(${idx}, 'guia', this.value)">
           </td>
           <td class="text-right">
-            <input type="number" step="0.001" class="text-right" value="${it.cantidad !== undefined ? it.cantidad : 1.0}" oninput="actualizarItem(${idx}, 'cantidad', this.value)">
+            <input type="text" inputmode="decimal" class="text-right" value="${it.cantidad !== undefined ? it.cantidad : 1.0}" oninput="actualizarNumero(${idx}, 'cantidad', this)">
           </td>
           <td class="text-right">
-            <input type="number" step="0.01" class="text-right" value="${it.costo !== undefined ? it.costo : 0.0}" oninput="actualizarItem(${idx}, 'costo', this.value)">
+            <input type="text" inputmode="decimal" class="text-right" value="${it.costo !== undefined ? it.costo : 0.0}" oninput="actualizarNumero(${idx}, 'costo', this)">
           </td>
-          <td class="text-right font-bold" style="color: var(--primary-dark);">
+          <td class="text-right font-bold row-total-cell" style="color: var(--primary-dark);">
             S/ ${totalFila.toFixed(2)}
           </td>
           <td class="text-center">
@@ -799,16 +832,31 @@
       calcularTotales();
     }
 
-    function actualizarItem(idx, campo, valor) {
+    function actualizarTexto(idx, campo, valor) {
       if (items[idx]) {
-        if (campo === 'cantidad' || campo === 'costo') {
-          items[idx][campo] = parseFloat(valor) || 0;
-          // Actualizar celda total en el DOM sin re-renderizar todo el DOM
-          renderizarTabla();
-        } else {
-          items[idx][campo] = valor;
+        items[idx][campo] = valor;
+        marcarCambio();
+      }
+    }
+
+    // Actualiza cantidad o costo SIN RECONSTRUIR el DOM para que no se bloquee ni pierda foco
+    function actualizarNumero(idx, campo, inputEl) {
+      if (!items[idx]) return;
+      const rawVal = inputEl.value;
+      items[idx][campo] = rawVal;
+      marcarCambio();
+
+      const tr = inputEl.closest('tr');
+      if (tr) {
+        const c = parseFloat(items[idx].cantidad) || 0;
+        const p = parseFloat(items[idx].costo) || 0;
+        const tot = c * p;
+        const cellTot = tr.querySelector('.row-total-cell');
+        if (cellTot) {
+          cellTot.textContent = `S/ ${tot.toFixed(2)}`;
         }
       }
+      calcularTotales();
     }
 
     function calcularTotales() {
@@ -863,6 +911,7 @@
         responsable: document.getElementById('cellResponsable').value,
         liquidacion: document.getElementById('cellLiq').value,
         fecha: document.getElementById('cellFecha').value,
+        fecha_doc: document.getElementById('cellMetaFechaDoc').value,
         items: items
       };
 
@@ -875,6 +924,7 @@
         const res = await resp.json();
 
         if (res.success) {
+          hayCambiosSinGuardar = false;
           mostrarToast(`✅ ¡Pestaña '${res.sheet_name}' guardada con éxito en Google Sheets! Ya puedes pulsar 'Generar y Enviar PDF'.`, "success");
           document.getElementById('txtNombrePestana').value = res.sheet_name;
         } else {
@@ -888,12 +938,21 @@
       }
     }
 
-    // 2. Exportar PDF (Sube a Drive y Cierra la Mini App)
+    // 2. Exportar PDF (Con advertencia si hay cambios sin guardar, pero genera el PDF con los datos actuales)
     async function exportarPdf() {
       const pestana = document.getElementById('txtNombrePestana').value;
       if (!pestana) {
         mostrarToast("⚠️ Indica el nombre de la pestaña a exportar.", "error");
         return;
+      }
+
+      // Si el usuario agregó ítems o modificó datos sin guardar en el Sheet:
+      if (hayCambiosSinGuardar) {
+        const confirmar = confirm("⚠️ Aviso: Tienes cambios que no se han guardado en la hoja de cálculo.\n\n¿Deseas generar el PDF de prueba con estos datos de la pantalla sin modificar el archivo original?");
+        if (!confirmar) {
+          mostrarToast("ℹ️ Operación cancelada. Guarda la pestaña antes de generar el PDF.", "warning");
+          return;
+        }
       }
 
       const btn = document.getElementById('btnExportarPdf');
@@ -905,7 +964,13 @@
         nombre_pestana: pestana,
         user_id: userId,
         cliente: document.getElementById('cellCliente').value,
-        liquidacion: document.getElementById('cellLiq').value
+        ruc: document.getElementById('cellRuc').value,
+        planta: document.getElementById('cellPlanta').value,
+        responsable: document.getElementById('cellResponsable').value,
+        liquidacion: document.getElementById('cellLiq').value,
+        fecha: document.getElementById('cellFecha').value,
+        fecha_doc: document.getElementById('cellMetaFechaDoc').value,
+        items: items
       };
 
       try {
