@@ -236,7 +236,8 @@ def _set_cell_safe(ws, row, col, val):
 def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     """
     Aplica cabeceras, items con fórmulas, totales dinámicos, firmas y reposiciona la imagen
-    del sello oficial. Descombina rangos inferiores para permitir agregar cualquier número de servicios.
+    del sello oficial. Descombina rangos inferiores y replica exactamente el modelo de márgenes,
+    anchos de columna y alturas de fila del formato oficial (modelo SER 21).
     """
     ruc = str(datos.get("ruc", "")).strip()
     planta = str(datos.get("planta", "")).strip()
@@ -246,7 +247,30 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     fecha_doc = str(datos.get("fecha_doc", "")).strip()
     items = datos.get("items", [])
 
-    # Cabecera
+    # 1. Ajuste exacto de anchos de columna (según modelo oficial SER 21)
+    col_widths = {
+        'A': 8.14,
+        'B': 14.57,
+        'C': 38.86,
+        'D': 14.57,
+        'E': 13.0,
+        'F': 13.0,
+        'G': 13.0,
+        'H': 13.0,
+        'I': 11.43
+    }
+    for col_letter, width in col_widths.items():
+        target_ws.column_dimensions[col_letter].width = width
+
+    # 2. Configuración de página y márgenes exactos de impresión (modelo SER 21)
+    target_ws.page_margins.left = 0.24
+    target_ws.page_margins.right = 0.12
+    target_ws.page_margins.top = 0.3937007874015748
+    target_ws.page_margins.bottom = 0.7480314960629921
+    target_ws.page_setup.orientation = target_ws.ORIENTATION_PORTRAIT
+    target_ws.page_setup.paperSize = target_ws.PAPERSIZE_A4
+
+    # 3. Cabecera Ficha LIQ-F-001
     _set_cell_safe(target_ws, 5, 3, cliente)
     _set_cell_safe(target_ws, 6, 3, float(ruc) if ruc.isdigit() else ruc)
     _set_cell_safe(target_ws, 7, 3, planta)
@@ -255,12 +279,12 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     _set_cell_safe(target_ws, 10, 3, fecha_emision)
     _set_cell_safe(target_ws, 3, 8, fecha_doc if fecha_doc else None)
 
-    # 1. Descombinar todas las celdas previas desde la fila 13 hacia abajo
+    # 4. Descombinar todas las celdas previas desde la fila 13 hacia abajo
     ranges_to_unmerge = [m for m in list(target_ws.merged_cells.ranges) if m.min_row >= 13]
     for m in ranges_to_unmerge:
         target_ws.unmerge_cells(str(m))
 
-    # 2. Limpiar celdas previas desde la fila 13 hasta la fila 65
+    # 5. Limpiar celdas previas desde la fila 13 hasta la fila 65
     for r in range(13, 66):
         for col in range(1, 9):
             cell = target_ws.cell(r, col)
@@ -278,16 +302,18 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     yellow_fill = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
     gray_fill = PatternFill(start_color="FFF2F2F2", end_color="FFF2F2F2", fill_type="solid")
 
-    align_center = Alignment(horizontal='center', vertical='center')
-    align_left = Alignment(horizontal='left', vertical='center')
-    align_right = Alignment(horizontal='right', vertical='center')
+    align_center_wrap = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    align_center = Alignment(horizontal='center', vertical='center', wrap_text=False)
+    align_left = Alignment(horizontal='left', vertical='center', wrap_text=False)
 
-    # 3. Escribir items
+    # 6. Escribir items con altura exacta (43.5 pt) y ajuste de texto (wrap_text=True)
     fila_inicio = 13
     n_items = len(items) if items else 1
 
     for i, it in enumerate(items):
         r = fila_inicio + i
+        target_ws.row_dimensions[r].height = 43.5  # Altura exacta modelo SER 21
+
         num_v = str(it.get("num", "")).strip()
         desc_v = str(it.get("descripcion", "")).strip()
         fec_v = str(it.get("fecha", "-")).strip()
@@ -301,43 +327,45 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
         c1.font = font_bold if num_v else font_normal
         c1.alignment = align_center
 
-        # Col 2: Descripción (B y C combinados)
+        # Col 2: Descripción (B y C combinados, wrap_text=True para no cortar texto)
         c2 = target_ws.cell(r, 2)
         c2.value = desc_v
         c2.font = font_normal
-        c2.alignment = align_left
+        c2.alignment = align_center_wrap
+
+        target_ws.cell(r, 3).alignment = align_center_wrap
 
         # Col 4: Fecha
         c4 = target_ws.cell(r, 4)
         c4.value = fec_v
         c4.font = font_normal
-        c4.alignment = align_center
+        c4.alignment = align_center_wrap
 
         # Col 5: Guía
         c5 = target_ws.cell(r, 5)
         c5.value = guia_v
         c5.font = font_bold
-        c5.alignment = align_center
+        c5.alignment = align_center_wrap
 
         # Col 6: Cantidad
         c6 = target_ws.cell(r, 6)
         c6.value = cant_v
         c6.font = font_normal
-        c6.alignment = align_right
-        c6.number_format = '0.00'
+        c6.alignment = align_center
+        c6.number_format = '0.000'
 
         # Col 7: Costo
         c7 = target_ws.cell(r, 7)
         c7.value = costo_v
         c7.font = font_normal
-        c7.alignment = align_right
+        c7.alignment = align_center
         c7.number_format = currency_fmt
 
         # Col 8: Total
         c8 = target_ws.cell(r, 8)
         c8.value = f"=F{r}*G{r}"
         c8.font = font_normal
-        c8.alignment = align_right
+        c8.alignment = align_center
         c8.number_format = currency_fmt
 
         # Bordes para cols 1..8
@@ -369,7 +397,7 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
         if len(grp) > 1:
             target_ws.merge_cells(start_row=grp[0], start_column=1, end_row=grp[-1], end_column=1)
 
-    # 4. Totales
+    # 7. Totales con alturas exactas modelo SER 21
     ultima_fila_items = fila_inicio + n_items - 1
     fila_total_mes = ultima_fila_items + 1
     fila_vacia = fila_total_mes + 1
@@ -379,6 +407,7 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     fila_detraccion = fila_total + 1
 
     # TOTAL GENERADO EN EL MESES (A-G combinados)
+    target_ws.row_dimensions[fila_total_mes].height = 15.0
     c_tot_lbl = target_ws.cell(fila_total_mes, 1)
     c_tot_lbl.value = "TOTAL GENERADO EN EL MESES"
     c_tot_lbl.font = font_bold
@@ -387,7 +416,7 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     c_tot_val = target_ws.cell(fila_total_mes, 8)
     c_tot_val.value = f"=SUM(H{fila_inicio}:H{ultima_fila_items})"
     c_tot_val.font = font_bold
-    c_tot_val.alignment = align_right
+    c_tot_val.alignment = align_center
     c_tot_val.number_format = currency_fmt
 
     for c in range(1, 9):
@@ -397,9 +426,11 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     target_ws.merge_cells(start_row=fila_total_mes, start_column=1, end_row=fila_total_mes, end_column=7)
 
     # Fila vacía separadora
+    target_ws.row_dimensions[fila_vacia].height = 14.25
     target_ws.merge_cells(start_row=fila_vacia, start_column=1, end_row=fila_vacia, end_column=8)
 
     # SUB TOTAL
+    target_ws.row_dimensions[fila_subtotal].height = 14.25
     c_sub_lbl = target_ws.cell(fila_subtotal, 1)
     c_sub_lbl.value = "* Metodo de pago: transferencia."
     c_sub_lbl.font = font_note
@@ -415,11 +446,12 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     c_sub_val = target_ws.cell(fila_subtotal, 8)
     c_sub_val.value = f"=H{fila_total_mes}"
     c_sub_val.font = font_bold
-    c_sub_val.alignment = align_right
+    c_sub_val.alignment = align_center
     c_sub_val.number_format = currency_fmt
     c_sub_val.border = cell_border
 
     # IGV
+    target_ws.row_dimensions[fila_igv].height = 14.25
     c_igv_lbl = target_ws.cell(fila_igv, 1)
     c_igv_lbl.value = "* Forma de pago: Al contado."
     c_igv_lbl.font = font_note
@@ -435,11 +467,12 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     c_igv_val = target_ws.cell(fila_igv, 8)
     c_igv_val.value = f"=H{fila_total}-H{fila_subtotal}"
     c_igv_val.font = font_bold
-    c_igv_val.alignment = align_right
+    c_igv_val.alignment = align_center
     c_igv_val.number_format = currency_fmt
     c_igv_val.border = cell_border
 
     # TOTAL (Resaltado en amarillo)
+    target_ws.row_dimensions[fila_total].height = 14.25
     c_tot_lbl2 = target_ws.cell(fila_total, 1)
     c_tot_lbl2.value = "* Numero de cuenta Corriente soles en Interbank es: 200-3005602805. "
     c_tot_lbl2.font = font_note
@@ -456,21 +489,26 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     c_total_val = target_ws.cell(fila_total, 8)
     c_total_val.value = f"=H{fila_subtotal}*1.18"
     c_total_val.font = font_bold
-    c_total_val.alignment = align_right
+    c_total_val.alignment = align_center
     c_total_val.number_format = currency_fmt
     c_total_val.border = cell_border
     c_total_val.fill = yellow_fill
 
     # DETRACCION
+    target_ws.row_dimensions[fila_detraccion].height = 14.25
     c_det_lbl = target_ws.cell(fila_detraccion, 1)
     c_det_lbl.value = "* Numero de cuenta de detracción: 00050086984"
     c_det_lbl.font = font_note
     c_det_lbl.alignment = align_left
 
-    # 5. Firmas al Pie
+    # 8. Firmas al Pie
     fila_firmas = fila_detraccion + 8
     fila_firmas_nom = fila_firmas + 1
 
+    for r_space in range(fila_detraccion + 1, fila_firmas):
+        target_ws.row_dimensions[r_space].height = 14.25
+
+    target_ws.row_dimensions[fila_firmas].height = 14.25
     c_sig_epmi = target_ws.cell(fila_firmas, 3)
     c_sig_epmi.value = "______________________________________"
     c_sig_epmi.alignment = align_center
@@ -480,6 +518,7 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     c_sig_cli.alignment = align_center
     target_ws.merge_cells(start_row=fila_firmas, start_column=5, end_row=fila_firmas, end_column=7)
 
+    target_ws.row_dimensions[fila_firmas_nom].height = 14.25
     c_nom_epmi = target_ws.cell(fila_firmas_nom, 3)
     c_nom_epmi.value = "EPMI S.A.C."
     c_nom_epmi.font = font_normal
@@ -491,7 +530,10 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     c_nom_cli.alignment = align_center
     target_ws.merge_cells(start_row=fila_firmas_nom, start_column=5, end_row=fila_firmas_nom, end_column=7)
 
-    # 6. Reposición Dinámica del Sello (Imagen de Firma Oficial)
+    for r_ext in range(fila_firmas_nom + 1, fila_firmas_nom + 6):
+        target_ws.row_dimensions[r_ext].height = 14.25
+
+    # 9. Reposición Dinámica del Sello (Imagen de Firma Oficial)
     try:
         if hasattr(target_ws, '_images') and target_ws._images:
             for img in target_ws._images:
@@ -636,6 +678,7 @@ def exportar_valorizacion_pdf(sheet_name, nombre_archivo=None, datos_pantalla=No
         url_export = (
             f"https://docs.google.com/spreadsheets/d/{temp_id}/export"
             f"?format=pdf&gid={target_gid}&size=A4&portrait=true&fitw=true&gridlines=false"
+            f"&top_margin=0.39&bottom_margin=0.75&left_margin=0.24&right_margin=0.12"
         )
         headers = {'Authorization': f'Bearer {creds.token}'}
         resp = requests.get(url_export, headers=headers, timeout=40)

@@ -243,6 +243,26 @@
       vertical-align: middle;
     }
 
+    .input-desc {
+      width: 100%;
+      border: none;
+      background: transparent;
+      font-size: 10px;
+      font-family: inherit;
+      outline: none;
+      padding: 2px;
+      resize: none;
+      color: #0f172a;
+      line-height: 1.25;
+      text-align: center;
+      display: block;
+      overflow: hidden;
+    }
+
+    .input-desc:focus {
+      background: #f0fdf4;
+    }
+
     .table-grid input {
       width: 100%;
       border: none;
@@ -862,7 +882,7 @@
             <input type="text" class="text-center font-bold" value="${it.num || ''}" oninput="actualizarTexto(${idx}, 'num', this.value)">
           </td>
           <td>
-            <input type="text" value="${it.descripcion || ''}" oninput="actualizarTexto(${idx}, 'descripcion', this.value)">
+            <textarea rows="2" class="input-desc" oninput="actualizarTexto(${idx}, 'descripcion', this.value)">${it.descripcion || ''}</textarea>
           </td>
           <td class="text-center">
             <input type="text" class="text-center" value="${it.fecha || '-'}" oninput="actualizarTexto(${idx}, 'fecha', this.value)">
