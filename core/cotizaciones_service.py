@@ -398,8 +398,15 @@ def poblar_tabla_en_doc(docs_service, doc_id, target_table_idx, items):
             style_reqs.append({
                 'updateTextStyle': {
                     'range': {'startIndex': row['startIndex'], 'endIndex': row['endIndex']},
-                    'textStyle': {'bold': False},
-                    'fields': 'bold'
+                    'textStyle': {
+                        'bold': False,
+                        'foregroundColor': {
+                            'color': {
+                                'rgbColor': {'red': 0.1, 'green': 0.1, 'blue': 0.1}
+                            }
+                        }
+                    },
+                    'fields': 'bold,foregroundColor'
                 }
             })
         if style_reqs:
