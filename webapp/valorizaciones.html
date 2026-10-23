@@ -405,9 +405,66 @@
       from { opacity: 0; transform: translateY(-3px); }
       to { opacity: 1; transform: translateY(0); }
     }
+
+    /* Modal de Bloqueo Anti-Doble Clic / Loading Overlay */
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.82);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 99999;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      color: #ffffff;
+      user-select: none;
+      pointer-events: all;
+    }
+
+    .loading-spinner {
+      width: 50px;
+      height: 50px;
+      border: 4px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #22c55e;
+      border-radius: 50%;
+      animation: spinOverlay 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+
+    @keyframes spinOverlay {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-title {
+      font-size: 16px;
+      font-weight: 800;
+      margin-bottom: 6px;
+      letter-spacing: -0.3px;
+    }
+
+    .loading-subtitle {
+      font-size: 12.5px;
+      color: #cbd5e1;
+      max-width: 300px;
+      line-height: 1.45;
+    }
   </style>
 </head>
 <body>
+
+  <!-- Modal de Bloqueo y Spinner Anti Doble Clic -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-title" id="loadingTitle">Procesando...</div>
+    <div class="loading-subtitle" id="loadingSubtitle">Por favor espera un momento, no cierres esta ventana.</div>
+  </div>
 
   <!-- Barra de Configuración y Modos -->
   <div class="control-panel">
@@ -894,11 +951,25 @@
       toast.style.display = 'none';
     }
 
+    function mostrarBloqueo(titulo, subtitulo) {
+      const overlay = document.getElementById('loadingOverlay');
+      document.getElementById('loadingTitle').textContent = titulo || 'Procesando...';
+      document.getElementById('loadingSubtitle').textContent = subtitulo || 'Por favor espera un momento...';
+      overlay.style.display = 'flex';
+      document.getElementById('btnGuardar').disabled = true;
+      document.getElementById('btnExportarPdf').disabled = true;
+    }
+
+    function ocultarBloqueo() {
+      const overlay = document.getElementById('loadingOverlay');
+      overlay.style.display = 'none';
+      document.getElementById('btnGuardar').disabled = false;
+      document.getElementById('btnExportarPdf').disabled = false;
+    }
+
     // 1. Guardar Pestaña (NO SE CIERRA LA MINI APP)
     async function guardarPestana() {
-      const btn = document.getElementById('btnGuardar');
-      btn.disabled = true;
-      btn.textContent = "⏳ Guardando...";
+      mostrarBloqueo("💾 Guardando en Google Sheets...", "Guardando los datos, fórmulas y estructura oficial LIQ-F-001. Por favor espera...");
       mostrarToast("⏳ Guardando en Google Sheets...", "success");
 
       const payload = {
@@ -925,7 +996,7 @@
 
         if (res.success) {
           hayCambiosSinGuardar = false;
-          mostrarToast(`✅ ¡Pestaña '${res.sheet_name}' guardada con éxito en Google Sheets! Ya puedes pulsar 'Generar y Enviar PDF'.`, "success");
+          mostrarToast(`✅ ¡Pestaña '${res.sheet_name}' guardada con éxito en Google Sheets! Ya puedes generar el PDF.`, "success");
           document.getElementById('txtNombrePestana').value = res.sheet_name;
         } else {
           mostrarToast(`❌ Error al guardar: ${res.error || 'Intente nuevamente'}`, "error");
@@ -933,8 +1004,7 @@
       } catch (e) {
         mostrarToast(`❌ Error de conexión: ${e.message}`, "error");
       } finally {
-        btn.disabled = false;
-        btn.textContent = "💾 Guardar Pestaña";
+        ocultarBloqueo();
       }
     }
 
@@ -948,16 +1018,16 @@
 
       // Si el usuario agregó ítems o modificó datos sin guardar en el Sheet:
       if (hayCambiosSinGuardar) {
-        const confirmar = confirm("⚠️ Aviso: Tienes cambios que no se han guardado en la hoja de cálculo.\n\n¿Deseas generar el PDF de prueba con estos datos de la pantalla sin modificar el archivo original?");
+        const confirmar = confirm(`⚠️ ADVERTENCIA: Has modificado o agregado información que aún NO se ha guardado en el archivo de Google Sheets.
+
+¿Deseas generar el PDF de todas formas con los datos actuales que ves en pantalla?`);
         if (!confirmar) {
-          mostrarToast("ℹ️ Operación cancelada. Guarda la pestaña antes de generar el PDF.", "warning");
+          mostrarToast("ℹ️ Operación cancelada. Guarda la pestaña antes de generar el PDF si deseas conservarla en la hoja.", "warning");
           return;
         }
       }
 
-      const btn = document.getElementById('btnExportarPdf');
-      btn.disabled = true;
-      btn.textContent = "⏳ Generando PDF...";
+      mostrarBloqueo("📄 Generando PDF Oficial...", "Calculando totales, posicionando el sello oficial y exportando a Google Drive / Telegram...");
       mostrarToast("⏳ Renderizando PDF y subiendo a Google Drive...", "success");
 
       const payload = {
@@ -983,18 +1053,18 @@
 
         if (res.success) {
           mostrarToast("✅ ¡PDF generado y guardado en Drive con éxito! Se ha enviado a tu chat de Telegram. Cerrando...", "success");
+          document.getElementById('loadingTitle').textContent = "✅ ¡PDF Generado con Éxito!";
+          document.getElementById('loadingSubtitle').textContent = "Enviado a tu chat de Telegram y guardado en Google Drive. Cerrando ventana...";
           setTimeout(() => {
             cerrarMiniApp();
           }, 1800);
         } else {
+          ocultarBloqueo();
           mostrarToast(`❌ Error exportando PDF: ${res.error || 'Verifique el servidor'}`, "error");
-          btn.disabled = false;
-          btn.textContent = "📄 Generar y Enviar PDF";
         }
       } catch (e) {
+        ocultarBloqueo();
         mostrarToast(`❌ Error de red al generar PDF: ${e.message}`, "error");
-        btn.disabled = false;
-        btn.textContent = "📄 Generar y Enviar PDF";
       }
     }
 

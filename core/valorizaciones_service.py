@@ -10,6 +10,7 @@ from datetime import timezone, timedelta
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload, MediaInMemoryUpload
 from google.auth.transport.requests import Request
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 import openpyxl
 
 from config.settings import (
@@ -233,7 +234,10 @@ def _set_cell_safe(ws, row, col, val):
         c.value = val
 
 def _aplicar_datos_en_hoja(target_ws, datos, cliente):
-    """Aplica cabeceras, items con fórmulas y totales a un worksheet de openpyxl."""
+    """
+    Aplica cabeceras, items con fórmulas, totales dinámicos, firmas y reposiciona la imagen
+    del sello oficial. Descombina rangos inferiores para permitir agregar cualquier número de servicios.
+    """
     ruc = str(datos.get("ruc", "")).strip()
     planta = str(datos.get("planta", "")).strip()
     responsable = str(datos.get("responsable", "")).strip()
@@ -251,13 +255,37 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
     _set_cell_safe(target_ws, 10, 3, fecha_emision)
     _set_cell_safe(target_ws, 3, 8, fecha_doc if fecha_doc else None)
 
-    # Limpiar filas 13 a 36 de forma segura ante celdas combinadas
-    for r in range(13, 37):
-        for col in range(1, 9):
-            _set_cell_safe(target_ws, r, col, None)
+    # 1. Descombinar todas las celdas previas desde la fila 13 hacia abajo
+    ranges_to_unmerge = [m for m in list(target_ws.merged_cells.ranges) if m.min_row >= 13]
+    for m in ranges_to_unmerge:
+        target_ws.unmerge_cells(str(m))
 
-    # Escribir items
+    # 2. Limpiar celdas previas desde la fila 13 hasta la fila 65
+    for r in range(13, 66):
+        for col in range(1, 9):
+            cell = target_ws.cell(r, col)
+            cell.value = None
+            cell.border = Border()
+            cell.fill = PatternFill(fill_type=None)
+
+    # Estilos estándar LIQ-F-001
+    thin_side = Side(border_style='thin', color='000000')
+    cell_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    font_normal = Font(name='Calibri', size=10, bold=False)
+    font_bold = Font(name='Calibri', size=10, bold=True)
+    font_note = Font(name='Calibri', size=11, bold=False)
+    currency_fmt = r'_ "S/."* #,##0.00_ ;_ "S/."* \-#,##0.00_ ;_ "S/."* "-"??_ ;_ @_ '
+    yellow_fill = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
+    gray_fill = PatternFill(start_color="FFF2F2F2", end_color="FFF2F2F2", fill_type="solid")
+
+    align_center = Alignment(horizontal='center', vertical='center')
+    align_left = Alignment(horizontal='left', vertical='center')
+    align_right = Alignment(horizontal='right', vertical='center')
+
+    # 3. Escribir items
     fila_inicio = 13
+    n_items = len(items) if items else 1
+
     for i, it in enumerate(items):
         r = fila_inicio + i
         num_v = str(it.get("num", "")).strip()
@@ -267,46 +295,213 @@ def _aplicar_datos_en_hoja(target_ws, datos, cliente):
         cant_v = limpiar_monto_numerico(it.get("cantidad", 1))
         costo_v = limpiar_monto_numerico(it.get("costo", 0))
 
-        _set_cell_safe(target_ws, r, 1, float(num_v) if num_v.isdigit() else (num_v if num_v else None))
-        _set_cell_safe(target_ws, r, 2, desc_v)
-        _set_cell_safe(target_ws, r, 4, fec_v)
-        _set_cell_safe(target_ws, r, 5, guia_v)
-        _set_cell_safe(target_ws, r, 6, cant_v)
-        _set_cell_safe(target_ws, r, 7, costo_v)
-        _set_cell_safe(target_ws, r, 8, f"=F{r}*G{r}")
+        # Col 1: N°
+        c1 = target_ws.cell(r, 1)
+        c1.value = float(num_v) if num_v.isdigit() else (num_v if num_v else None)
+        c1.font = font_bold if num_v else font_normal
+        c1.alignment = align_center
 
-    # Totales
-    n_items = len(items) if items else 1
+        # Col 2: Descripción (B y C combinados)
+        c2 = target_ws.cell(r, 2)
+        c2.value = desc_v
+        c2.font = font_normal
+        c2.alignment = align_left
+
+        # Col 4: Fecha
+        c4 = target_ws.cell(r, 4)
+        c4.value = fec_v
+        c4.font = font_normal
+        c4.alignment = align_center
+
+        # Col 5: Guía
+        c5 = target_ws.cell(r, 5)
+        c5.value = guia_v
+        c5.font = font_bold
+        c5.alignment = align_center
+
+        # Col 6: Cantidad
+        c6 = target_ws.cell(r, 6)
+        c6.value = cant_v
+        c6.font = font_normal
+        c6.alignment = align_right
+        c6.number_format = '0.00'
+
+        # Col 7: Costo
+        c7 = target_ws.cell(r, 7)
+        c7.value = costo_v
+        c7.font = font_normal
+        c7.alignment = align_right
+        c7.number_format = currency_fmt
+
+        # Col 8: Total
+        c8 = target_ws.cell(r, 8)
+        c8.value = f"=F{r}*G{r}"
+        c8.font = font_normal
+        c8.alignment = align_right
+        c8.number_format = currency_fmt
+
+        # Bordes para cols 1..8
+        for c in range(1, 9):
+            target_ws.cell(r, c).border = cell_border
+
+        # Combinar B{r}:C{r} para la descripción del residuo
+        target_ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
+
+    # Combinar celdas de Col A para números de servicio con subfilas (ej: Recolección y Disposición)
+    service_groups = []
+    curr_group = []
+    for i, it in enumerate(items):
+        r = fila_inicio + i
+        num_v = str(it.get("num", "")).strip()
+        if num_v:
+            if curr_group:
+                service_groups.append(curr_group)
+            curr_group = [r]
+        else:
+            if curr_group:
+                curr_group.append(r)
+            else:
+                curr_group = [r]
+    if curr_group:
+        service_groups.append(curr_group)
+
+    for grp in service_groups:
+        if len(grp) > 1:
+            target_ws.merge_cells(start_row=grp[0], start_column=1, end_row=grp[-1], end_column=1)
+
+    # 4. Totales
     ultima_fila_items = fila_inicio + n_items - 1
     fila_total_mes = ultima_fila_items + 1
-    fila_subtotal = fila_total_mes + 2
+    fila_vacia = fila_total_mes + 1
+    fila_subtotal = fila_vacia + 1
     fila_igv = fila_subtotal + 1
     fila_total = fila_igv + 1
     fila_detraccion = fila_total + 1
 
-    _set_cell_safe(target_ws, fila_total_mes, 1, "TOTAL GENERADO EN EL MESES")
-    _set_cell_safe(target_ws, fila_total_mes, 8, f"=SUM(H{fila_inicio}:H{ultima_fila_items})")
+    # TOTAL GENERADO EN EL MESES (A-G combinados)
+    c_tot_lbl = target_ws.cell(fila_total_mes, 1)
+    c_tot_lbl.value = "TOTAL GENERADO EN EL MESES"
+    c_tot_lbl.font = font_bold
+    c_tot_lbl.alignment = align_center
 
-    _set_cell_safe(target_ws, fila_subtotal, 1, "* Metodo de pago: transferencia.")
-    _set_cell_safe(target_ws, fila_subtotal, 7, "SUB TOTAL")
-    _set_cell_safe(target_ws, fila_subtotal, 8, f"=H{fila_total_mes}")
+    c_tot_val = target_ws.cell(fila_total_mes, 8)
+    c_tot_val.value = f"=SUM(H{fila_inicio}:H{ultima_fila_items})"
+    c_tot_val.font = font_bold
+    c_tot_val.alignment = align_right
+    c_tot_val.number_format = currency_fmt
 
-    _set_cell_safe(target_ws, fila_igv, 1, "* Forma de pago: Al contado.")
-    _set_cell_safe(target_ws, fila_igv, 7, "IGV")
-    _set_cell_safe(target_ws, fila_igv, 8, f"=H{fila_total}-H{fila_subtotal}")
+    for c in range(1, 9):
+        target_ws.cell(fila_total_mes, c).border = cell_border
+        target_ws.cell(fila_total_mes, c).fill = gray_fill
 
-    _set_cell_safe(target_ws, fila_total, 1, "* Numero de cuenta Corriente soles en Interbank es: 200-3005602805. ")
-    _set_cell_safe(target_ws, fila_total, 7, "TOTAL")
-    _set_cell_safe(target_ws, fila_total, 8, f"=H{fila_subtotal}*1.18")
+    target_ws.merge_cells(start_row=fila_total_mes, start_column=1, end_row=fila_total_mes, end_column=7)
 
-    _set_cell_safe(target_ws, fila_detraccion, 1, "* Numero de cuenta de detracción: 00050086984")
+    # Fila vacía separadora
+    target_ws.merge_cells(start_row=fila_vacia, start_column=1, end_row=fila_vacia, end_column=8)
 
-    # Firmas
-    fila_firmas = fila_detraccion + 9
-    _set_cell_safe(target_ws, fila_firmas, 3, "______________________________________")
-    _set_cell_safe(target_ws, fila_firmas, 5, "_______________________________________")
-    _set_cell_safe(target_ws, fila_firmas + 1, 3, "EPMI S.A.C.")
-    _set_cell_safe(target_ws, fila_firmas + 1, 5, cliente)
+    # SUB TOTAL
+    c_sub_lbl = target_ws.cell(fila_subtotal, 1)
+    c_sub_lbl.value = "* Metodo de pago: transferencia."
+    c_sub_lbl.font = font_note
+    c_sub_lbl.alignment = align_left
+    target_ws.merge_cells(start_row=fila_subtotal, start_column=1, end_row=fila_subtotal, end_column=6)
+
+    c_sub_tag = target_ws.cell(fila_subtotal, 7)
+    c_sub_tag.value = "SUB TOTAL"
+    c_sub_tag.font = font_bold
+    c_sub_tag.alignment = align_center
+    c_sub_tag.border = cell_border
+
+    c_sub_val = target_ws.cell(fila_subtotal, 8)
+    c_sub_val.value = f"=H{fila_total_mes}"
+    c_sub_val.font = font_bold
+    c_sub_val.alignment = align_right
+    c_sub_val.number_format = currency_fmt
+    c_sub_val.border = cell_border
+
+    # IGV
+    c_igv_lbl = target_ws.cell(fila_igv, 1)
+    c_igv_lbl.value = "* Forma de pago: Al contado."
+    c_igv_lbl.font = font_note
+    c_igv_lbl.alignment = align_left
+    target_ws.merge_cells(start_row=fila_igv, start_column=1, end_row=fila_igv, end_column=6)
+
+    c_igv_tag = target_ws.cell(fila_igv, 7)
+    c_igv_tag.value = "IGV"
+    c_igv_tag.font = font_bold
+    c_igv_tag.alignment = align_center
+    c_igv_tag.border = cell_border
+
+    c_igv_val = target_ws.cell(fila_igv, 8)
+    c_igv_val.value = f"=H{fila_total}-H{fila_subtotal}"
+    c_igv_val.font = font_bold
+    c_igv_val.alignment = align_right
+    c_igv_val.number_format = currency_fmt
+    c_igv_val.border = cell_border
+
+    # TOTAL (Resaltado en amarillo)
+    c_tot_lbl2 = target_ws.cell(fila_total, 1)
+    c_tot_lbl2.value = "* Numero de cuenta Corriente soles en Interbank es: 200-3005602805. "
+    c_tot_lbl2.font = font_note
+    c_tot_lbl2.alignment = align_left
+    target_ws.merge_cells(start_row=fila_total, start_column=1, end_row=fila_total, end_column=6)
+
+    c_total_tag = target_ws.cell(fila_total, 7)
+    c_total_tag.value = "TOTAL"
+    c_total_tag.font = font_bold
+    c_total_tag.alignment = align_center
+    c_total_tag.border = cell_border
+    c_total_tag.fill = yellow_fill
+
+    c_total_val = target_ws.cell(fila_total, 8)
+    c_total_val.value = f"=H{fila_subtotal}*1.18"
+    c_total_val.font = font_bold
+    c_total_val.alignment = align_right
+    c_total_val.number_format = currency_fmt
+    c_total_val.border = cell_border
+    c_total_val.fill = yellow_fill
+
+    # DETRACCION
+    c_det_lbl = target_ws.cell(fila_detraccion, 1)
+    c_det_lbl.value = "* Numero de cuenta de detracción: 00050086984"
+    c_det_lbl.font = font_note
+    c_det_lbl.alignment = align_left
+
+    # 5. Firmas al Pie
+    fila_firmas = fila_detraccion + 8
+    fila_firmas_nom = fila_firmas + 1
+
+    c_sig_epmi = target_ws.cell(fila_firmas, 3)
+    c_sig_epmi.value = "______________________________________"
+    c_sig_epmi.alignment = align_center
+
+    c_sig_cli = target_ws.cell(fila_firmas, 5)
+    c_sig_cli.value = "_______________________________________"
+    c_sig_cli.alignment = align_center
+    target_ws.merge_cells(start_row=fila_firmas, start_column=5, end_row=fila_firmas, end_column=7)
+
+    c_nom_epmi = target_ws.cell(fila_firmas_nom, 3)
+    c_nom_epmi.value = "EPMI S.A.C."
+    c_nom_epmi.font = font_normal
+    c_nom_epmi.alignment = align_center
+
+    c_nom_cli = target_ws.cell(fila_firmas_nom, 5)
+    c_nom_cli.value = cliente
+    c_nom_cli.font = font_normal
+    c_nom_cli.alignment = align_center
+    target_ws.merge_cells(start_row=fila_firmas_nom, start_column=5, end_row=fila_firmas_nom, end_column=7)
+
+    # 6. Reposición Dinámica del Sello (Imagen de Firma Oficial)
+    try:
+        if hasattr(target_ws, '_images') and target_ws._images:
+            for img in target_ws._images:
+                # El logo está en fila 0, la firma está abajo (fila >= 10)
+                if hasattr(img, 'anchor') and hasattr(img.anchor, '_from'):
+                    if img.anchor._from.row >= 10:
+                        img.anchor._from.row = fila_firmas - 7
+                        img.anchor._from.col = 2
+    except Exception as e_img:
+        logger.warning(f"No se pudo reposicionar imagen de firma: {e_img}")
 
 def guardar_valorizacion(datos):
     """Crea, hereda o modifica una pestaña en el archivo de Google Drive."""
