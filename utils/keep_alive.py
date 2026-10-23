@@ -1143,7 +1143,8 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
                 target_user = payload.get('user_id') or ADMIN_CHAT_ID
 
                 nombre_archivo = f"Valorizacion_LIQ-{liq}_{pestana}.pdf"
-                res = exportar_valorizacion_pdf(gid, nombre_archivo=nombre_archivo)
+                target_tab = pestana or gid
+                res = exportar_valorizacion_pdf(target_tab, nombre_archivo=nombre_archivo)
 
                 if res.get('success') and target_user and TELEGRAM_TOKEN:
                     import requests

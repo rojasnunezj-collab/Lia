@@ -3,299 +3,369 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Valorización de Servicios - EPMI SAC</title>
+  <title>Liquidación de Servicios - EPMI SAC</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
       --primary: #198754;
-      --primary-dark: #146c43;
+      --primary-dark: #0f5132;
       --primary-light: #e8f5e9;
-      --accent: #0284c7;
-      --accent-light: #f0f9ff;
-      --bg: #f8f9fa;
-      --card-bg: #ffffff;
-      --text: #212529;
-      --text-muted: #6c757d;
-      --border: #dee2e6;
+      --sheet-border: #a0aec0;
+      --sheet-grid: #cbd5e0;
+      --header-bg: #e2e8f0;
+      --yellow-highlight: #fff3cd;
+      --yellow-border: #ffe69c;
       --danger: #dc3545;
-      --warning: #ffc107;
-      --warning-bg: #fff9db;
+      --bg: #f1f5f9;
     }
 
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     }
 
     body {
       background-color: var(--bg);
-      color: var(--text);
-      padding: 12px;
-      padding-bottom: 110px;
+      color: #1e293b;
+      padding: 8px;
+      padding-bottom: 95px;
     }
 
-    .top-bar {
+    /* Barra Superior de Control */
+    .control-panel {
+      background: #ffffff;
+      border: 1px solid var(--sheet-border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .control-row {
       display: flex;
       justify-content: space-between;
-      align-items: center;
-      background: #fff;
-      padding: 10px 14px;
-      border-radius: 10px;
-      margin-bottom: 10px;
-      border: 1px solid var(--border);
-    }
-
-    .brand {
-      display: flex;
       align-items: center;
       gap: 8px;
     }
 
-    .brand-logo {
-      width: 32px;
-      height: 32px;
-      background: var(--primary);
-      color: #fff;
-      font-weight: 800;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 6px;
-    }
-
-    .brand-title {
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--primary-dark);
-      line-height: 1.2;
-    }
-
-    .brand-sub {
+    .control-label {
       font-size: 11px;
-      color: var(--text-muted);
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
     }
 
-    .btn-close {
-      background: #f1f3f5;
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 6px 12px;
-      border-radius: 6px;
+    select, .input-tab-name {
+      padding: 5px 8px;
       font-size: 12px;
+      border: 1px solid var(--sheet-border);
+      border-radius: 6px;
+      background: #fff;
       font-weight: 600;
+      outline: none;
+    }
+
+    .mode-switch-group {
+      display: flex;
+      gap: 4px;
+      background: #f1f5f9;
+      padding: 3px;
+      border-radius: 6px;
+      width: 100%;
+    }
+
+    .mode-tab {
+      flex: 1;
+      padding: 5px 2px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 700;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      color: #64748b;
+    }
+
+    .mode-tab.active {
+      background: #ffffff;
+      color: var(--primary-dark);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+
+    .btn-exit {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      color: #334155;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
       cursor: pointer;
     }
 
-    /* Selector de Modos */
-    .mode-switch {
-      display: flex;
-      gap: 6px;
-      background: #e9ecef;
-      padding: 4px;
-      border-radius: 8px;
+    /* Document Sheet Wrapper (Simula exactamente la hoja de cálculo) */
+    .sheet-paper {
+      background: #ffffff;
+      border: 1px solid #94a3b8;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+      border-radius: 4px;
+      overflow-x: auto;
       margin-bottom: 12px;
     }
 
-    .mode-btn {
-      flex: 1;
-      padding: 7px 4px;
-      text-align: center;
-      font-size: 12px;
-      font-weight: 600;
-      background: transparent;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      color: #495057;
-      transition: all 0.2s;
+    .sheet-inner {
+      min-width: 680px; /* Ancho fijo para mantener cuadrícula exacta */
+      padding: 10px;
     }
 
-    .mode-btn.active {
-      background: #fff;
-      color: var(--primary-dark);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-
-    .card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px;
-      margin-bottom: 10px;
-    }
-
-    .card-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--primary-dark);
-      margin-bottom: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .form-group {
-      margin-bottom: 8px;
-    }
-
-    .form-row {
-      display: flex;
-      gap: 8px;
-    }
-
-    .form-row .form-group {
-      flex: 1;
-    }
-
-    label {
-      display: block;
-      font-size: 10px;
-      font-weight: 600;
-      color: var(--text-muted);
-      margin-bottom: 3px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    input, select, textarea {
+    /* Tabla Encabezado LIQ-F-001 */
+    .table-doc-header {
       width: 100%;
-      padding: 8px 10px;
-      font-size: 13px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: #fafafa;
-      outline: none;
-      box-sizing: border-box;
-    }
-
-    input:focus, select:focus, textarea:focus {
-      border-color: var(--primary);
-      background: #fff;
-    }
-
-    /* Tarjetas de Residuos */
-    .item-box {
-      background: #fdfdfd;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 8px;
+      border-collapse: collapse;
+      border: 1.5px solid #000;
       margin-bottom: 8px;
-      position: relative;
     }
 
-    .item-box-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-    }
-
-    .item-tag {
+    .table-doc-header td {
+      border: 1px solid #000;
+      padding: 4px 6px;
       font-size: 11px;
-      font-weight: 700;
-      color: var(--primary-dark);
     }
 
-    .btn-remove {
+    .logo-epmi-box {
+      width: 110px;
+      text-align: center;
+      background: #ffffff;
+      font-weight: 900;
+      color: #198754;
+      font-size: 20px;
+      letter-spacing: -1px;
+    }
+
+    .doc-title-box {
+      text-align: center;
+      font-weight: 800;
+      font-size: 12px;
+      color: #0f172a;
+      line-height: 1.2;
+    }
+
+    .doc-meta-box {
+      width: 130px;
+      padding: 0 !important;
+    }
+
+    .meta-subtable {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .meta-subtable td {
+      border: none !important;
+      border-bottom: 1px solid #000 !important;
+      padding: 2px 4px !important;
+      font-size: 9.5px;
+    }
+
+    .meta-subtable tr:last-child td {
+      border-bottom: none !important;
+    }
+
+    /* Tabla de Datos de Cliente / Liquidación */
+    .table-client-info {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1.5px solid #000;
+      margin-bottom: 8px;
+      font-size: 11px;
+    }
+
+    .table-client-info td {
+      border: 1px solid #000;
+      padding: 3px 5px;
+    }
+
+    .table-client-info .cell-label {
+      background: #f8fafc;
+      font-weight: 700;
+      width: 110px;
+    }
+
+    .table-client-info input {
+      width: 100%;
+      border: none;
       background: transparent;
+      font-size: 11px;
+      font-weight: 600;
+      outline: none;
+      color: #0f172a;
+    }
+
+    .table-client-info input:focus {
+      background: #f0fdf4;
+    }
+
+    /* Grilla de Residuos y Servicios */
+    .table-grid {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1.5px solid #000;
+      margin-bottom: 6px;
+      font-size: 10.5px;
+    }
+
+    .table-grid th {
+      border: 1px solid #000;
+      background: var(--header-bg);
+      color: #000;
+      padding: 4px 3px;
+      font-size: 10px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .table-grid td {
+      border: 1px solid #000;
+      padding: 2px 4px;
+      vertical-align: middle;
+    }
+
+    .table-grid input {
+      width: 100%;
+      border: none;
+      background: transparent;
+      font-size: 10.5px;
+      outline: none;
+      padding: 2px;
+    }
+
+    .table-grid input:focus {
+      background: #f0fdf4;
+    }
+
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .font-bold { font-weight: 700; }
+
+    /* Fila de Totales */
+    .row-total-mes {
+      background: #f8fafc;
+      font-weight: 800;
+    }
+
+    .row-highlight-total {
+      background: var(--yellow-highlight) !important;
+      font-weight: 800;
+      font-size: 11.5px;
+    }
+
+    .cell-payment-info {
+      font-size: 9.5px;
+      color: #334155;
+      line-height: 1.3;
+      padding: 4px 6px !important;
+      vertical-align: top;
+    }
+
+    /* Botón eliminar fila */
+    .btn-del-row {
+      background: none;
       border: none;
       color: var(--danger);
-      font-size: 14px;
+      font-size: 12px;
       cursor: pointer;
-      padding: 2px 6px;
+      padding: 1px 3px;
     }
 
-    .btn-add-item {
-      width: 100%;
-      padding: 8px;
-      background: var(--accent-light);
-      border: 1px dashed var(--accent);
-      color: var(--accent);
-      font-weight: 600;
-      font-size: 12px;
-      border-radius: 6px;
-      cursor: pointer;
+    /* Botones de edición rápida de tabla */
+    .grid-tools {
       display: flex;
-      align-items: center;
-      justify-content: center;
       gap: 6px;
-    }
-
-    /* Banner de Totales */
-    .totals-box {
-      background: #fdfbf7;
-      border: 1px solid #fde68a;
-      border-radius: 8px;
-      padding: 10px;
-      margin-top: 8px;
-    }
-
-    .total-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 12px;
-      margin-bottom: 4px;
-      color: #555;
-    }
-
-    .total-row.main {
-      font-size: 14px;
-      font-weight: 700;
-      color: #111;
-      border-top: 1px dashed #cbd5e1;
-      padding-top: 6px;
-      margin-top: 4px;
-    }
-
-    /* Mensaje Toast / Banner */
-    .toast-alert {
-      display: none;
-      padding: 10px;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 600;
       margin-bottom: 10px;
-      animation: fadeIn 0.3s ease;
     }
 
-    .toast-alert.success {
+    .btn-tool {
+      background: #e2e8f0;
+      border: 1px solid #cbd5e1;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 4px;
+      cursor: pointer;
+      color: #1e293b;
+    }
+
+    .btn-tool:hover {
+      background: #cbd5e1;
+    }
+
+    /* Firmas */
+    .signatures-box {
+      margin-top: 18px;
+      display: flex;
+      justify-content: space-around;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .signature-line {
+      width: 180px;
+      border-top: 1px solid #000;
+      padding-top: 4px;
+    }
+
+    /* Toast Alert */
+    .toast-msg {
+      display: none;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .toast-msg.success {
       display: block;
-      background: #d1e7dd;
-      color: #0f5132;
-      border: 1px solid #badbcc;
+      background: #dcfce7;
+      color: #166534;
+      border: 1px solid #bbf7d0;
     }
 
-    .toast-alert.error {
+    .toast-msg.error {
       display: block;
-      background: #f8d7da;
-      color: #842029;
-      border: 1px solid #f5c2c7;
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
     }
 
-    /* Botones de acción flotantes */
-    .sticky-actions {
+    /* Barra Inferior Fija */
+    .footer-bar {
       position: fixed;
       bottom: 0;
       left: 0;
       right: 0;
       background: #ffffff;
-      padding: 10px 14px;
-      border-top: 1px solid var(--border);
-      box-shadow: 0 -2px 10px rgba(0,0,0,0.06);
+      padding: 8px 12px;
+      border-top: 1px solid var(--sheet-border);
+      box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
       display: flex;
       gap: 8px;
-      z-index: 100;
+      z-index: 99;
     }
 
-    .btn-action {
+    .btn-footer {
       flex: 1;
-      padding: 10px;
-      font-size: 13px;
-      font-weight: 700;
-      border-radius: 8px;
+      padding: 9px;
+      font-size: 12.5px;
+      font-weight: 800;
+      border-radius: 6px;
       border: none;
       cursor: pointer;
       display: flex;
@@ -304,158 +374,216 @@
       gap: 6px;
     }
 
-    .btn-save {
+    .btn-save-sheet {
       background: var(--primary);
-      color: white;
+      color: #fff;
     }
 
-    .btn-save:hover {
-      background: var(--primary-dark);
+    .btn-export-pdf {
+      background: #0284c7;
+      color: #fff;
     }
 
-    .btn-pdf {
-      background: var(--accent);
-      color: white;
-    }
-
-    .btn-pdf:disabled {
-      background: #adb5bd;
+    .btn-export-pdf:disabled {
+      background: #94a3b8;
       cursor: not-allowed;
       opacity: 0.6;
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-4px); }
+      from { opacity: 0; transform: translateY(-3px); }
       to { opacity: 1; transform: translateY(0); }
     }
   </style>
 </head>
 <body>
 
-  <!-- Barra Superior -->
-  <div class="top-bar">
-    <div class="brand">
-      <div class="brand-logo">E</div>
-      <div>
-        <div class="brand-title">Valorizaciones EPMI</div>
-        <div class="brand-sub">LIQ-F-001 (Versión 1.0)</div>
+  <!-- Barra de Configuración y Modos -->
+  <div class="control-panel">
+    <div class="control-row">
+      <div style="font-weight: 800; font-size: 13px; color: var(--primary-dark);">
+        📊 Mini App Valorizaciones EPMI
       </div>
-    </div>
-    <button class="btn-close" onclick="cerrarMiniApp()">✕ Salir</button>
-  </div>
-
-  <!-- Selector de Modo -->
-  <div class="mode-switch">
-    <button class="mode-btn active" id="btnModoHeredar" onclick="cambiarModo('heredar')">⚡ Heredar Pestaña</button>
-    <button class="mode-btn" id="btnModoNueva" onclick="cambiarModo('nueva')">➕ Nueva</button>
-    <button class="mode-btn" id="btnModoModificar" onclick="cambiarModo('modificar')">✏️ Modificar</button>
-  </div>
-
-  <!-- Alerta / Mensaje de Estado -->
-  <div id="toastAlert" class="toast-alert"></div>
-
-  <!-- Selección de Pestaña Origen / Destino -->
-  <div class="card" id="cardSelectorPestana">
-    <div class="card-title">
-      <span id="lblTituloSelector">1. Pestaña Base a Duplicar</span>
-    </div>
-    <div class="form-group">
-      <label id="lblSelector">Selecciona pestaña existente:</label>
-      <select id="selectPestana" onchange="cargarDatosPestanaSeleccionada()">
-        <option value="">Cargando pestañas del libro...</option>
-      </select>
-    </div>
-    <div class="form-group">
-      <label>Nombre de la Pestaña a Guardar:</label>
-      <input type="text" id="txtNombrePestana" placeholder="ej: AGROLATINA(SER 23)">
-    </div>
-  </div>
-
-  <!-- Datos de la Liquidación -->
-  <div class="card">
-    <div class="card-title">2. Datos de la Liquidación</div>
-    <div class="form-group">
-      <label>Razón Social (Cliente):</label>
-      <input type="text" id="txtCliente" placeholder="CORPORACION AGROLATINA S.A.C.">
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>RUC:</label>
-        <input type="text" id="txtRuc" placeholder="20176770474">
-      </div>
-      <div class="form-group">
-        <label>N° Liquidación:</label>
-        <input type="text" id="txtLiquidacion" placeholder="023">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>Fecha Emisión:</label>
-        <input type="text" id="txtFecha" placeholder="22/10/2026">
-      </div>
-      <div class="form-group">
-        <label>Responsable:</label>
-        <input type="text" id="txtResponsable" placeholder="LUIS MIGUEL PALOMINO">
-      </div>
-    </div>
-    <div class="form-group">
-      <label>Planta / Domicilio:</label>
-      <input type="text" id="txtPlanta" placeholder="Av. Manuel Olguin Nro. 335 - Surco">
-    </div>
-  </div>
-
-  <!-- Tabla Dinámica de Residuos -->
-  <div class="card">
-    <div class="card-title">
-      <span>3. Residuos y Servicios</span>
-      <span style="font-size: 11px; color: var(--text-muted);" id="lblContadorItems">0 filas</span>
+      <button class="btn-exit" onclick="cerrarMiniApp()">✕ Cerrar</button>
     </div>
 
-    <div id="contenedorItems"></div>
+    <!-- Modos: Heredar / Modificar / Nueva -->
+    <div class="mode-switch-group">
+      <button class="mode-tab active" id="tabHeredar" onclick="seleccionarModo('heredar')">⚡ Heredar a Nueva</button>
+      <button class="mode-tab" id="tabModificar" onclick="seleccionarModo('modificar')">✏️ Modificar Actual</button>
+      <button class="mode-tab" id="tabNueva" onclick="seleccionarModo('nueva')">➕ Formato Limpio</button>
+    </div>
 
-    <button class="btn-add-item" onclick="agregarItem()">
-      ➕ Agregar Fila de Residuo
-    </button>
-
-    <!-- Resumen de Totales en Tiempo Real -->
-    <div class="totals-box">
-      <div class="total-row">
-        <span>SUB TOTAL (Generado en el mes):</span>
-        <span id="lblSubtotal">S/ 0.00</span>
+    <div class="control-row">
+      <div style="flex: 1;">
+        <span class="control-label" id="lblPestanaSelect">Pestaña a cargar:</span>
+        <select id="selectPestana" style="width: 100%;" onchange="alCambiarPestanaSeleccionada()">
+          <option value="">Cargando pestañas desde Google Drive...</option>
+        </select>
       </div>
-      <div class="total-row">
-        <span>IGV (18%):</span>
-        <span id="lblIgv">S/ 0.00</span>
-      </div>
-      <div class="total-row main">
-        <span>TOTAL LIQUIDACIÓN:</span>
-        <span id="lblTotal" style="color: var(--primary-dark);">S/ 0.00</span>
-      </div>
-      <div class="total-row" style="font-size: 10px; color: #888; margin-top: 3px;">
-        <span>Detracción referencial (4%):</span>
-        <span id="lblDetraccion">S/ 0.00</span>
+      <div style="flex: 1;">
+        <span class="control-label">Nombre Pestaña a Guardar:</span>
+        <input type="text" id="txtNombrePestana" class="input-tab-name" style="width: 100%;" placeholder="AGROLATINA(SER 24)">
       </div>
     </div>
   </div>
 
-  <!-- Barra Inferior Fija de Acciones -->
-  <div class="sticky-actions">
-    <button class="btn-action btn-save" id="btnGuardar" onclick="guardarPestana()">
+  <!-- Alerta / Mensajes -->
+  <div id="toastAlert" class="toast-msg"></div>
+
+  <!-- Contenedor Estilo Sheet (Idéntico a la cuadrícula de Google Sheets) -->
+  <div class="sheet-paper">
+    <div class="sheet-inner">
+
+      <!-- Encabezado LIQ-F-001 -->
+      <table class="table-doc-header">
+        <tr>
+          <td class="logo-epmi-box" rowspan="2">
+            EPMI
+            <div style="font-size: 8px; font-weight: 700; color: #333;">S.A.C.</div>
+          </td>
+          <td style="text-align: center; font-size: 10px; font-weight: 700; width: 60px;">FORMATO</td>
+          <td class="doc-title-box" rowspan="2">
+            LIQUIDACION DE SERVICIOS DE RECOLECCION, TRANSPORTE Y DISPOSICION FINAL DE RESIDUOS
+          </td>
+          <td class="doc-meta-box" rowspan="2">
+            <table class="meta-subtable">
+              <tr>
+                <td style="font-weight: 700; width: 50%;">CODIGO</td>
+                <td style="font-weight: 800;">LIQ-F-001</td>
+              </tr>
+              <tr>
+                <td style="font-weight: 700;">VERSION</td>
+                <td>1.0</td>
+              </tr>
+              <tr>
+                <td style="font-weight: 700;">FECHA</td>
+                <td id="metaFechaDoc">22/10/2026</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="text-align: center; font-size: 9px; font-weight: 600;">OFICIAL</td>
+        </tr>
+      </table>
+
+      <!-- Datos del Cliente / Ficha -->
+      <table class="table-client-info">
+        <tr>
+          <td class="cell-label">RAZON SOCIAL:</td>
+          <td colspan="3"><input type="text" id="cellCliente" placeholder="CORPORACION AGROLATINA S.A.C."></td>
+        </tr>
+        <tr>
+          <td class="cell-label">RUC:</td>
+          <td><input type="text" id="cellRuc" placeholder="20176770474"></td>
+          <td class="cell-label" style="width: 90px;">LIQUIDACION:</td>
+          <td><input type="text" id="cellLiq" style="font-weight: 800; color: #b45309;" placeholder="023"></td>
+        </tr>
+        <tr>
+          <td class="cell-label">PLANTA:</td>
+          <td colspan="3"><input type="text" id="cellPlanta" placeholder="Av. Manuel Olguin Nro. 335 - Santiago de Surco - Lima"></td>
+        </tr>
+        <tr>
+          <td class="cell-label">RESPONSABLE:</td>
+          <td><input type="text" id="cellResponsable" placeholder="LUIS MIGUEL PALOMINO"></td>
+          <td class="cell-label">FECHA:</td>
+          <td><input type="text" id="cellFecha" placeholder="22/10/2026"></td>
+        </tr>
+      </table>
+
+      <!-- Herramientas Rápidas para la Tabla -->
+      <div class="grid-tools">
+        <button class="btn-tool" onclick="agregarParServicio()">➕ Añadir Servicio (Recolección + Disposición)</button>
+        <button class="btn-tool" onclick="agregarFilaSimple()">➕ Añadir Fila Simple</button>
+      </div>
+
+      <!-- Cuadrícula de Residuos -->
+      <table class="table-grid" id="gridServicios">
+        <thead>
+          <tr>
+            <th style="width: 32px;">N°</th>
+            <th>DESCRIPCIÓN DEL RESIDUO</th>
+            <th style="width: 82px;">FECHA</th>
+            <th style="width: 90px;">N° DE GUIA</th>
+            <th style="width: 65px;">CANTIDAD</th>
+            <th style="width: 80px;">COSTO</th>
+            <th style="width: 90px;">TOTAL</th>
+            <th style="width: 25px;"></th>
+          </tr>
+        </thead>
+        <tbody id="tbodyServicios">
+          <!-- Se llena dinámicamente con las filas -->
+        </tbody>
+        <tfoot>
+          <!-- Total Generado en el Mes -->
+          <tr class="row-total-mes">
+            <td colspan="6" style="padding: 4px 6px; font-weight: 800;">TOTAL GENERADO EN EL MESES</td>
+            <td class="text-right font-bold" id="cellTotalMes">S/ 0.00</td>
+            <td></td>
+          </tr>
+
+          <!-- Bloque Financiero y Bancario -->
+          <tr>
+            <td colspan="5" rowspan="4" class="cell-payment-info">
+              <div>* Metodo de pago: transferencia.</div>
+              <div>* Forma de pago: Al contado.</div>
+              <div>* Numero de cuenta Corriente soles en Interbank es: 200-3005602805.</div>
+              <div>* Numero de cuenta de detracción: 00050086984</div>
+            </td>
+            <td class="font-bold text-right" style="background: #f8fafc;">SUB TOTAL</td>
+            <td class="text-right font-bold" id="cellSubtotal">S/ 0.00</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="font-bold text-right" style="background: #f8fafc;">IGV (18%)</td>
+            <td class="text-right font-bold" id="cellIgv">S/ 0.00</td>
+            <td></td>
+          </tr>
+          <tr class="row-highlight-total">
+            <td class="font-bold text-right">TOTAL</td>
+            <td class="text-right font-bold" id="cellTotalFinal" style="color: #92400e;">S/ 0.00</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td class="font-bold text-right" style="font-size: 9px; color: #64748b;">Detracción (4%)</td>
+            <td class="text-right" style="font-size: 9.5px;" id="cellDetraccion">S/ 0.00</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <!-- Firmas al pie -->
+      <div class="signatures-box">
+        <div>
+          <div class="signature-line">EPMI S.A.C.</div>
+          <div style="font-size: 8px; color: #64748b;">Gerencia General</div>
+        </div>
+        <div>
+          <div class="signature-line" id="sigCliente">CORPORACION AGROLATINA S.A.C.</div>
+          <div style="font-size: 8px; color: #64748b;">Conformidad del Cliente</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Barra Fija Inferior -->
+  <div class="footer-bar">
+    <button class="btn-footer btn-save-sheet" id="btnGuardar" onclick="guardarPestana()">
       💾 Guardar Pestaña
     </button>
-    <button class="btn-action btn-pdf" id="btnGenerarPdf" onclick="generarPdf()" disabled>
+    <button class="btn-footer btn-export-pdf" id="btnExportarPdf" onclick="exportarPdf()">
       📄 Generar y Enviar PDF
     </button>
   </div>
 
   <script>
-    let modoActual = "heredar";
+    let modoActual = "heredar"; // 'heredar', 'modificar', 'nueva'
     let pestanasList = [];
     let items = [];
-    let ultimoGidGuardado = null;
     let userId = null;
 
-    // Inicializar Telegram WebApp
     if (window.Telegram && window.Telegram.WebApp) {
       window.Telegram.WebApp.ready();
       window.Telegram.WebApp.expand();
@@ -470,51 +598,40 @@
       userId = urlParams.get('uid');
     }
 
-    // Inicialización al cargar la página
     window.addEventListener('DOMContentLoaded', () => {
-      establecerFechaHoy();
-      cargarListadoPestanas();
+      cargarPestanas();
     });
 
-    function establecerFechaHoy() {
-      const hoy = new Date();
-      const dd = String(hoy.getDate()).padStart(2, '0');
-      const mm = String(hoy.getMonth() + 1).padStart(2, '0');
-      const yyyy = hoy.getFullYear();
-      document.getElementById('txtFecha').value = `${dd}/${mm}/${yyyy}`;
-    }
-
-    function cambiarModo(nuevoModo) {
+    function seleccionarModo(nuevoModo) {
       modoActual = nuevoModo;
-      document.getElementById('btnModoHeredar').classList.toggle('active', nuevoModo === 'heredar');
-      document.getElementById('btnModoNueva').classList.toggle('active', nuevoModo === 'nueva');
-      document.getElementById('btnModoModificar').classList.toggle('active', nuevoModo === 'modificar');
+      document.getElementById('tabHeredar').classList.toggle('active', nuevoModo === 'heredar');
+      document.getElementById('tabModificar').classList.toggle('active', nuevoModo === 'modificar');
+      document.getElementById('tabNueva').classList.toggle('active', nuevoModo === 'nueva');
 
-      const cardSelector = document.getElementById('cardSelectorPestana');
-      const lblTituloSelector = document.getElementById('lblTituloSelector');
-      const lblSelector = document.getElementById('lblSelector');
+      const select = document.getElementById('selectPestana');
+      const lblSelect = document.getElementById('lblPestanaSelect');
 
       if (nuevoModo === 'nueva') {
-        lblTituloSelector.textContent = "1. Formato Base Vacío";
-        lblSelector.textContent = "Plantilla limpia:";
-        document.getElementById('selectPestana').disabled = true;
+        lblSelect.textContent = "Plantilla base:";
         document.getElementById('txtNombrePestana').value = "NUEVA_VALORIZACION";
-        limpiarFormulario(true);
-      } else if (nuevoModo === 'modificar') {
-        lblTituloSelector.textContent = "1. Pestaña a Modificar";
-        lblSelector.textContent = "Selecciona pestaña a editar:";
-        document.getElementById('selectPestana').disabled = false;
-        cargarDatosPestanaSeleccionada();
+        document.getElementById('cellCliente').value = "";
+        document.getElementById('cellRuc').value = "";
+        document.getElementById('cellPlanta').value = "";
+        document.getElementById('cellResponsable').value = "";
+        document.getElementById('cellLiq').value = "001";
+        document.getElementById('cellFecha').value = new Date().toLocaleDateString('es-PE');
+        items = [
+          { num: "1", descripcion: "SERVICIO DE RECOLECCION Y TRANSPORTE DE RESIDUOS SOLIDOS", fecha: "-", guia: "-", cantidad: 1.0, costo: 1200.0 },
+          { num: "", descripcion: "SERVICIO DE DISPOSICION FINAL DE RESIDUOS SOLIDOS PELIGROSOS", fecha: "-", guia: "-", cantidad: 1.0, costo: 360.0 }
+        ];
+        renderizarTabla();
       } else {
-        // Heredar
-        lblTituloSelector.textContent = "1. Pestaña Base a Duplicar";
-        lblSelector.textContent = "Selecciona pestaña existente:";
-        document.getElementById('selectPestana').disabled = false;
-        cargarDatosPestanaSeleccionada();
+        lblSelect.textContent = nuevoModo === 'heredar' ? "Pestaña a Duplicar:" : "Pestaña a Modificar:";
+        alCambiarPestanaSeleccionada();
       }
     }
 
-    async function cargarListadoPestanas() {
+    async function cargarPestanas() {
       try {
         const resp = await fetch('/api/valorizaciones/pestanas');
         const data = await resp.json();
@@ -522,161 +639,161 @@
           pestanasList = data.pestanas;
           const select = document.getElementById('selectPestana');
           select.innerHTML = '';
-          
-          // Ordenar las más recientes primero
+
+          // Mostrar las más recientes primero en el dropdown
           pestanasList.slice().reverse().forEach(p => {
             const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = `${p.title} - ${p.cliente || 'Sin cliente'} (Liq ${p.liquidacion || '-'})`;
+            opt.value = p.title;
+            opt.textContent = `${p.title} (${p.cliente || 'Sin cliente'} - Liq ${p.liquidacion || '-'})`;
             select.appendChild(opt);
           });
 
-          // Seleccionar la última por defecto
-          if (pestanasList.length > 0) {
-            select.value = pestanasList[pestanasList.length - 1].id;
-            cargarDatosPestanaSeleccionada();
-          }
+          // Seleccionar la última creada por defecto
+          select.value = pestanasList[pestanasList.length - 1].title;
+          alCambiarPestanaSeleccionada();
         }
       } catch (e) {
         console.error("Error cargando pestañas:", e);
+        mostrarToast("❌ Error al conectar con el archivo en Google Drive", "error");
       }
     }
 
-    async function cargarDatosPestanaSeleccionada() {
+    async function alCambiarPestanaSeleccionada() {
       const select = document.getElementById('selectPestana');
-      const tabId = select.value;
-      if (!tabId || modoActual === 'nueva') return;
+      const tabTitle = select.value;
+      if (!tabTitle || modoActual === 'nueva') return;
 
-      mostrarToast("⏳ Cargando datos de la pestaña...", "success");
+      mostrarToast("⏳ Cargando datos de " + tabTitle + "...", "success");
+
       try {
-        const resp = await fetch(`/api/valorizaciones/detalle?tab=${tabId}`);
+        const resp = await fetch(`/api/valorizaciones/detalle?tab=${encodeURIComponent(tabTitle)}`);
         const data = await resp.json();
         if (data.detalle) {
           const d = data.detalle;
-          document.getElementById('txtCliente').value = d.cliente || '';
-          document.getElementById('txtRuc').value = d.ruc || '';
-          document.getElementById('txtPlanta').value = d.planta || '';
-          document.getElementById('txtResponsable').value = d.responsable || '';
+          document.getElementById('cellCliente').value = d.cliente || '';
+          document.getElementById('cellRuc').value = d.ruc || '';
+          document.getElementById('cellPlanta').value = d.planta || '';
+          document.getElementById('cellResponsable').value = d.responsable || '';
+          document.getElementById('sigCliente').textContent = d.cliente || 'CLIENTE';
 
           if (modoActual === 'heredar') {
-            // Incrementar correlativo si es numérico
+            // Incrementar liquidación correlativa
             let liqNum = parseInt(d.liquidacion, 10);
             if (!isNaN(liqNum)) {
               liqNum += 1;
-              document.getElementById('txtLiquidacion').value = String(liqNum).padStart(3, '0');
+              document.getElementById('cellLiq').value = String(liqNum).padStart(3, '0');
             } else {
-              document.getElementById('txtLiquidacion').value = (d.liquidacion || '') + '_NUEVA';
+              document.getElementById('cellLiq').value = (d.liquidacion || '') + '_NUEVA';
             }
-            
-            // Sugerir nombre de pestaña ej: AGROLATINA(SER 23)
-            let match = d.title.match(/(.*)\(SER\s*(\d+)\)/i);
+
+            // Sugerir nombre de pestaña ej: AGROLATINA(SER 23) -> AGROLATINA(SER 24)
+            const match = d.title.match(/(.*)\(SER\s*(\d+)\)/i);
             if (match) {
               const prefix = match[1].trim();
               const sig = parseInt(match[2], 10) + 1;
               document.getElementById('txtNombrePestana').value = `${prefix}(SER ${sig})`;
             } else {
-              document.getElementById('txtNombrePestana').value = `${d.title}_COPIA`;
+              document.getElementById('txtNombrePestana').value = `${d.title}_NUEVA`;
             }
-            establecerFechaHoy();
+            document.getElementById('cellFecha').value = new Date().toLocaleDateString('es-PE');
           } else {
-            // Modificar
-            document.getElementById('txtLiquidacion').value = d.liquidacion || '';
-            document.getElementById('txtFecha').value = d.fecha || '';
+            // Modificar pestaña actual
+            document.getElementById('cellLiq').value = d.liquidacion || '';
+            document.getElementById('cellFecha').value = d.fecha || '';
             document.getElementById('txtNombrePestana').value = d.title;
-            ultimoGidGuardado = d.id;
-            document.getElementById('btnGenerarPdf').disabled = false;
           }
 
-          // Cargar items
           items = d.items && d.items.length > 0 ? d.items : [];
-          renderizarItems();
+          renderizarTabla();
           ocultarToast();
         }
       } catch (e) {
-        mostrarToast("❌ Error al cargar detalle de la pestaña", "error");
+        mostrarToast("❌ Error al obtener detalle de la pestaña", "error");
       }
     }
 
-    function limpiarFormulario(vaciarItems = false) {
-      document.getElementById('txtCliente').value = '';
-      document.getElementById('txtRuc').value = '';
-      document.getElementById('txtPlanta').value = '';
-      document.getElementById('txtResponsable').value = '';
-      document.getElementById('txtLiquidacion').value = '001';
-      establecerFechaHoy();
-      if (vaciarItems) {
-        items = [
-          { num: "1", descripcion: "SERVICIO DE RECOLECCION Y TRANSPORTE DE RESIDUOS SOLIDOS", fecha: "-", guia: "-", cantidad: 1.0, costo: 1200.0 },
-          { num: "", descripcion: "SERVICIO DE DISPOSICION FINAL DE RESIDUOS SOLIDOS PELIGROSOS", fecha: "-", guia: "-", cantidad: 1.0, costo: 360.0 }
-        ];
-        renderizarItems();
-      }
-    }
-
-    function agregarItem(num = "", desc = "", fecha = "-", guia = "-", cant = 1.0, costo = 0) {
+    function agregarParServicio() {
+      const nextNum = String(calcularSiguienteNumeroServicio());
       items.push({
-        num: num || (items.length === 0 ? "1" : ""),
-        descripcion: desc || "SERVICIO DE RECOLECCION Y TRANSPORTE DE RESIDUOS SOLIDOS",
-        fecha: fecha,
-        guia: guia,
-        cantidad: cant,
-        costo: costo
+        num: nextNum,
+        descripcion: "SERVICIO DE RECOLECCION Y TRANSPORTE DE RESIDUOS SOLIDOS (FUNDO ...)",
+        fecha: new Date().toLocaleDateString('es-PE'),
+        guia: "EG07-",
+        cantidad: 1.0,
+        costo: 1200.0
       });
-      renderizarItems();
+      items.push({
+        num: "",
+        descripcion: "SERVICIO DE DISPOSICION FINAL DE RESIDUOS SOLIDOS PELIGROSOS",
+        fecha: "-",
+        guia: "-",
+        cantidad: 1.0,
+        costo: 360.0
+      });
+      renderizarTabla();
     }
 
-    function eliminarItem(index) {
+    function agregarFilaSimple() {
+      items.push({
+        num: "",
+        descripcion: "SERVICIO DE RESIDUOS",
+        fecha: "-",
+        guia: "-",
+        cantidad: 1.0,
+        costo: 0.0
+      });
+      renderizarTabla();
+    }
+
+    function calcularSiguienteNumeroServicio() {
+      let maxNum = 0;
+      items.forEach(it => {
+        const n = parseInt(it.num, 10);
+        if (!isNaN(n) && n > maxNum) maxNum = n;
+      });
+      return maxNum + 1;
+    }
+
+    function eliminarFila(index) {
       items.splice(index, 1);
-      renderizarItems();
+      renderizarTabla();
     }
 
-    function renderizarItems() {
-      const container = document.getElementById('contenedorItems');
-      container.innerHTML = '';
-      document.getElementById('lblContadorItems').textContent = `${items.length} fila${items.length === 1 ? '' : 's'}`;
+    function renderizarTabla() {
+      const tbody = document.getElementById('tbodyServicios');
+      tbody.innerHTML = '';
 
       items.forEach((it, idx) => {
-        const itemBox = document.createElement('div');
-        itemBox.className = 'item-box';
-        itemBox.innerHTML = `
-          <div class="item-box-header">
-            <span class="item-tag">Línea #${idx + 1} ${it.num ? `(Servicio N° ${it.num})` : '(Sub-servicio)'}</span>
-            <button class="btn-remove" onclick="eliminarItem(${idx})" title="Eliminar fila">🗑️</button>
-          </div>
-          <div class="form-group">
-            <label>Descripción del Residuo:</label>
-            <input type="text" value="${it.descripcion}" oninput="actualizarItem(${idx}, 'descripcion', this.value)">
-          </div>
-          <div class="form-row">
-            <div class="form-group" style="flex: 0.5;">
-              <label>N° Serv:</label>
-              <input type="text" value="${it.num || ''}" placeholder="1" oninput="actualizarItem(${idx}, 'num', this.value)">
-            </div>
-            <div class="form-group">
-              <label>Fecha Guía:</label>
-              <input type="text" value="${it.fecha || '-'}" oninput="actualizarItem(${idx}, 'fecha', this.value)">
-            </div>
-            <div class="form-group">
-              <label>N° Guía:</label>
-              <input type="text" value="${it.guia || '-'}" oninput="actualizarItem(${idx}, 'guia', this.value)">
-            </div>
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Cantidad (TN):</label>
-              <input type="number" step="0.001" value="${it.cantidad || 1.0}" oninput="actualizarItem(${idx}, 'cantidad', this.value)">
-            </div>
-            <div class="form-group">
-              <label>Costo Unitario (S/):</label>
-              <input type="number" step="0.01" value="${it.costo || 0}" oninput="actualizarItem(${idx}, 'costo', this.value)">
-            </div>
-            <div class="form-group">
-              <label>Total Fila:</label>
-              <input type="text" value="S/ ${((parseFloat(it.cantidad) || 0) * (parseFloat(it.costo) || 0)).toFixed(2)}" disabled style="font-weight:700; color:var(--primary-dark);">
-            </div>
-          </div>
+        const tr = document.createElement('tr');
+        const totalFila = (parseFloat(it.cantidad) || 0) * (parseFloat(it.costo) || 0);
+
+        tr.innerHTML = `
+          <td class="text-center font-bold">
+            <input type="text" class="text-center font-bold" value="${it.num || ''}" oninput="actualizarItem(${idx}, 'num', this.value)">
+          </td>
+          <td>
+            <input type="text" value="${it.descripcion || ''}" oninput="actualizarItem(${idx}, 'descripcion', this.value)">
+          </td>
+          <td class="text-center">
+            <input type="text" class="text-center" value="${it.fecha || '-'}" oninput="actualizarItem(${idx}, 'fecha', this.value)">
+          </td>
+          <td class="text-center">
+            <input type="text" class="text-center font-bold" value="${it.guia || '-'}" oninput="actualizarItem(${idx}, 'guia', this.value)">
+          </td>
+          <td class="text-right">
+            <input type="number" step="0.001" class="text-right" value="${it.cantidad !== undefined ? it.cantidad : 1.0}" oninput="actualizarItem(${idx}, 'cantidad', this.value)">
+          </td>
+          <td class="text-right">
+            <input type="number" step="0.01" class="text-right" value="${it.costo !== undefined ? it.costo : 0.0}" oninput="actualizarItem(${idx}, 'costo', this.value)">
+          </td>
+          <td class="text-right font-bold" style="color: var(--primary-dark);">
+            S/ ${totalFila.toFixed(2)}
+          </td>
+          <td class="text-center">
+            <button class="btn-del-row" onclick="eliminarFila(${idx})" title="Eliminar fila">✕</button>
+          </td>
         `;
-        container.appendChild(itemBox);
+        tbody.appendChild(tr);
       });
 
       calcularTotales();
@@ -684,8 +801,13 @@
 
     function actualizarItem(idx, campo, valor) {
       if (items[idx]) {
-        items[idx][campo] = valor;
-        calcularTotales();
+        if (campo === 'cantidad' || campo === 'costo') {
+          items[idx][campo] = parseFloat(valor) || 0;
+          // Actualizar celda total en el DOM sin re-renderizar todo el DOM
+          renderizarTabla();
+        } else {
+          items[idx][campo] = valor;
+        }
       }
     }
 
@@ -701,16 +823,22 @@
       const total = subtotal * 1.18;
       const detraccion = total * 0.04;
 
-      document.getElementById('lblSubtotal').textContent = `S/ ${subtotal.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      document.getElementById('lblIgv').textContent = `S/ ${igv.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      document.getElementById('lblTotal').textContent = `S/ ${total.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      document.getElementById('lblDetraccion').textContent = `S/ ${detraccion.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const fSub = subtotal.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fIgv = igv.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fTot = total.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fDet = detraccion.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+      document.getElementById('cellTotalMes').textContent = `S/ ${fSub}`;
+      document.getElementById('cellSubtotal').textContent = `S/ ${fSub}`;
+      document.getElementById('cellIgv').textContent = `S/ ${fIgv}`;
+      document.getElementById('cellTotalFinal').textContent = `S/ ${fTot}`;
+      document.getElementById('cellDetraccion').textContent = `S/ ${fDet}`;
     }
 
     function mostrarToast(mensaje, tipo = "success") {
       const toast = document.getElementById('toastAlert');
       toast.textContent = mensaje;
-      toast.className = `toast-alert ${tipo}`;
+      toast.className = `toast-msg ${tipo}`;
     }
 
     function ocultarToast() {
@@ -718,23 +846,23 @@
       toast.style.display = 'none';
     }
 
-    // 1. Guardar Pestaña (NO CIERRA LA MINI APP)
+    // 1. Guardar Pestaña (NO SE CIERRA LA MINI APP)
     async function guardarPestana() {
       const btn = document.getElementById('btnGuardar');
       btn.disabled = true;
       btn.textContent = "⏳ Guardando...";
-      mostrarToast("⏳ Guardando pestaña en Google Sheets...", "success");
+      mostrarToast("⏳ Guardando en Google Sheets...", "success");
 
       const payload = {
         modo: modoActual,
         fuente_tab: document.getElementById('selectPestana').value,
         nombre_pestana: document.getElementById('txtNombrePestana').value,
-        cliente: document.getElementById('txtCliente').value,
-        ruc: document.getElementById('txtRuc').value,
-        planta: document.getElementById('txtPlanta').value,
-        responsable: document.getElementById('txtResponsable').value,
-        liquidacion: document.getElementById('txtLiquidacion').value,
-        fecha: document.getElementById('txtFecha').value,
+        cliente: document.getElementById('cellCliente').value,
+        ruc: document.getElementById('cellRuc').value,
+        planta: document.getElementById('cellPlanta').value,
+        responsable: document.getElementById('cellResponsable').value,
+        liquidacion: document.getElementById('cellLiq').value,
+        fecha: document.getElementById('cellFecha').value,
         items: items
       };
 
@@ -747,42 +875,37 @@
         const res = await resp.json();
 
         if (res.success) {
-          ultimoGidGuardado = res.gid;
           mostrarToast(`✅ ¡Pestaña '${res.sheet_name}' guardada con éxito en Google Sheets! Ya puedes pulsar 'Generar y Enviar PDF'.`, "success");
-          
-          // Habilitar botón de PDF
-          const btnPdf = document.getElementById('btnGenerarPdf');
-          btnPdf.disabled = false;
-          btnPdf.style.animation = "fadeIn 0.5s";
+          document.getElementById('txtNombrePestana').value = res.sheet_name;
         } else {
           mostrarToast(`❌ Error al guardar: ${res.error || 'Intente nuevamente'}`, "error");
         }
       } catch (e) {
-        mostrarToast(`❌ Error de conexión al guardar: ${e.message}`, "error");
+        mostrarToast(`❌ Error de conexión: ${e.message}`, "error");
       } finally {
         btn.disabled = false;
         btn.textContent = "💾 Guardar Pestaña";
       }
     }
 
-    // 2. Generar y Enviar PDF (Guarda en Drive y cierra la Mini App)
-    async function generarPdf() {
-      if (!ultimoGidGuardado) {
-        mostrarToast("⚠️ Primero guarda la pestaña antes de generar el PDF.", "error");
+    // 2. Exportar PDF (Sube a Drive y Cierra la Mini App)
+    async function exportarPdf() {
+      const pestana = document.getElementById('txtNombrePestana').value;
+      if (!pestana) {
+        mostrarToast("⚠️ Indica el nombre de la pestaña a exportar.", "error");
         return;
       }
 
-      const btn = document.getElementById('btnGenerarPdf');
+      const btn = document.getElementById('btnExportarPdf');
       btn.disabled = true;
       btn.textContent = "⏳ Generando PDF...";
       mostrarToast("⏳ Renderizando PDF y subiendo a Google Drive...", "success");
 
       const payload = {
-        gid: ultimoGidGuardado,
+        nombre_pestana: pestana,
         user_id: userId,
-        cliente: document.getElementById('txtCliente').value,
-        liquidacion: document.getElementById('txtLiquidacion').value,
-        nombre_pestana: document.getElementById('txtNombrePestana').value
+        cliente: document.getElementById('cellCliente').value,
+        liquidacion: document.getElementById('cellLiq').value
       };
 
       try {
@@ -799,7 +922,7 @@
             cerrarMiniApp();
           }, 1800);
         } else {
-          mostrarToast(`❌ Error exportando PDF: ${res.error || 'Verifique conexión'}`, "error");
+          mostrarToast(`❌ Error exportando PDF: ${res.error || 'Verifique el servidor'}`, "error");
           btn.disabled = false;
           btn.textContent = "📄 Generar y Enviar PDF";
         }
