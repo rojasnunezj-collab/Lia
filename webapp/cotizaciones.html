@@ -1290,19 +1290,39 @@
       const modal = document.getElementById('modalCargaRapida');
       const titulo = document.getElementById('modalTitulo');
       const ejemplos = document.getElementById('modalEjemplos');
+      const txt = document.getElementById('txtCargaRapida');
+
       if (target === 'comercializacion') {
-        titulo.innerText = "⚡ Carga Rápida de Residuos";
-        ejemplos.innerHTML = "Pega o escribe varios residuos (uno por línea):<br><code>CARTON 0.10</code> | <code>PLASTICO FILM 0.80 KG</code> | <code>CHATARRA 450 TN</code>";
+        titulo.innerText = "⚡ Carga Rápida de Residuos (Comercialización)";
+        ejemplos.innerHTML = `
+          <b>Separa con coma (,) el residuo y el precio:</b><br>
+          • <code>PLÁSTICO, 0.20</code><br>
+          • <code>PLÁSTICO FILM, KG, 0.80</code><br>
+          • <code>CHATARRA, 450</code><br>
+          <span style="color:#0369a1;">💡 Puedes pegar varios ítems (uno por línea o en un párrafo con comas):</span><br>
+          <code>PLÁSTICO, 0.20, CARTÓN, 0.10, FIERRO, 0.50</code>
+        `;
+        if (txt) txt.placeholder = "Escribe o pega aquí la lista...\nEjemplos:\nPLÁSTICO, 0.20\nCARTÓN, 0.10\nCHATARRA, 450\nO en una sola línea:\nPLÁSTICO, 0.20, CARTÓN, 0.10";
       } else if (target === 'transporte') {
         titulo.innerText = "⚡ Carga Rápida de Transporte";
-        ejemplos.innerHTML = "Pega servicios de transporte (uno por línea):<br><code>TRANSPORTE 1 VIAJE FURGON 5 TN 850</code>";
+        ejemplos.innerHTML = `
+          <b>Separa con coma (,) la descripción y el precio:</b><br>
+          • <code>RECOLECCIÓN Y TRANSPORTE, 850</code><br>
+          • <code>TRANSPORTE, 1 SERVICIO, FURGÓN, 850</code>
+        `;
+        if (txt) txt.placeholder = "RECOLECCIÓN Y TRANSPORTE, 850\nTRANSPORTE FURGÓN, 900";
       } else if (target === 'disposicion') {
         titulo.innerText = "⚡ Carga Rápida de Disposición Final";
-        ejemplos.innerHTML = "Pega ítems para disposición final (uno por línea):<br><code>DISPOSICION EN RELLENO 5 TN 150.00</code>";
+        ejemplos.innerHTML = `
+          <b>Separa con coma (,) la descripción y el precio:</b><br>
+          • <code>DISPOSICIÓN FINAL, 150.00</code><br>
+          • <code>DISPOSICIÓN EN RELLENO, 1 TN, 180.00</code>
+        `;
+        if (txt) txt.placeholder = "DISPOSICIÓN FINAL, 150.00\nTRATAMIENTO EN RELLENO, 180";
       }
+
       if (modal) {
         modal.style.display = 'flex';
-        const txt = document.getElementById('txtCargaRapida');
         if (txt) setTimeout(() => txt.focus(), 100);
       }
     }
@@ -1320,44 +1340,224 @@
         return;
       }
 
-      const lineas = val.split('\n');
-      lineas.forEach(linea => {
-        let l = linea.trim();
+      // 1. Proteger comas decimales entre dígitos (ej: 0,2 -> 0.2)
+      let text = val.replace(/(\d+),(\d+)/g, (m, a, b) => a + '.' + b);
+
+      // 2. Dividir inicialmente por saltos de línea o punto y coma
+      let rawChunks = text.split(/[\r\n;]+/);
+      let itemStrings = [];
+
+      rawChunks.forEach(chunk => {
+        let l = chunk.trim();
         if (!l) return;
+
+        // Normalizar pipes a comas
+        let norm = l.replace(/[|\t]/g, ',');
+        let tokens = norm.split(',').map(t => t.trim()).filter(Boolean);
+        if (tokens.length === 0) return;
+
+        // Caso A: Si todos los tokens contienen su propio precio (ej: 'plástico 0.2, cartón 0.1')
+        let allTokensHavePrice = tokens.length > 1 && tokens.every(t => /(?:S\/\.?\s*|\$\s*)?\d+(?:\.\d+)?/i.test(t));
+        if (allTokensHavePrice) {
+          tokens.forEach(t => itemStrings.push(t));
+          return;
+        }
+
+        // Caso B: Si tokens son pares o tríos [desc, precio] o [desc, unidad, precio]
+        if (tokens.length === 2) {
+          itemStrings.push(tokens.join(', '));
+          return;
+        }
+        if (tokens.length === 3 && /^(KG|TN|UNID|UND|PZAS?|M3|GL|GAL)$/i.test(tokens[1])) {
+          itemStrings.push(tokens.join(', '));
+          return;
+        }
+
+        // Caso C: Múltiples ítems en cadena larga separados por coma (ej: 'plástico, 0.2, cartón, 0.1')
+        if (tokens.length > 2) {
+          let currentItem = [];
+          tokens.forEach(tok => {
+            currentItem.push(tok);
+            let isPrice = /(?:S\/\.?\s*|\$\s*)?\d+(?:\.\d+)?/i.test(tok) && !/^[a-zA-Z\s]+$/.test(tok);
+            if (isPrice && currentItem.length >= 2) {
+              itemStrings.push(currentItem.join(', '));
+              currentItem = [];
+            }
+          });
+          if (currentItem.length > 0) {
+            itemStrings.push(currentItem.join(', '));
+          }
+          return;
+        }
+
+        // Caso D: 1 solo ítem sin comas (ej: 'plástico 0.2')
+        itemStrings.push(tokens[0]);
+      });
+
+      // Si la tabla actualmente tiene una única fila vacía inicial, removerla para que no quede vacía
+      if (modalTarget === 'comercializacion') {
+        const rows = document.querySelectorAll('#itemsContainer .item-card');
+        if (rows.length === 1) {
+          const dVal = rows[0].querySelector('.item-desc').value.trim();
+          const pVal = rows[0].querySelector('.item-precio').value.trim();
+          if (!dVal && (!pVal || pVal === 'S/.0.00' || pVal === 'S/. 0.00')) {
+            rows[0].remove();
+          }
+        }
+      } else if (modalTarget === 'transporte') {
+        const rows = document.querySelectorAll('#itemsTransporteContainer .item-card');
+        if (rows.length === 1) {
+          const pVal = rows[0].querySelector('.it-precio').value.trim();
+          if (!pVal || pVal === 'S/.0.00' || pVal === 'S/. 0.00') {
+            rows[0].remove();
+          }
+        }
+      } else if (modalTarget === 'disposicion') {
+        const rows = document.querySelectorAll('#itemsDisposicionContainer .item-card');
+        if (rows.length === 1) {
+          const pVal = rows[0].querySelector('.id-precio').value.trim();
+          if (!pVal || pVal === 'S/.0.00' || pVal === 'S/. 0.00') {
+            rows[0].remove();
+          }
+        }
+      }
+
+      // Procesar cada ítem
+      itemStrings.forEach(rawItem => {
+        let l = rawItem.trim();
+        if (!l) return;
+        // Quitar viñetas iniciales como '1.', '- ', '• ', '* '
         l = l.replace(/^[-*•\d+.)\s]+/, '').trim();
         if (!l) return;
 
-        // Detectar Precio
+        let desc = '';
+        let unidad = 'KG';
         let precio = '';
-        const mPrecio = l.match(/(?:S\/\.?\s*|\$\s*)?(\d+(?:[.,]\d+)?)/i);
-        if (mPrecio) {
-          let num = mPrecio[1].replace(',', '.');
-          let nVal = parseFloat(num);
-          if (!isNaN(nVal)) {
-            precio = 'S/.' + (num.includes('.') ? nVal.toFixed(2) : nVal.toString());
-          }
-          l = l.replace(mPrecio[0], ' ');
-        }
 
         if (modalTarget === 'comercializacion') {
-          let unidad = 'KG';
-          const mUnidad = l.match(/\b(TONELADAS?|TN|TON|KILOS?|KG|UNIDADES?|UNID|UND|PZAS?|M3|GALONES?|GL|GAL|LITROS?|LT)\b/i);
-          if (mUnidad) {
-            const uRaw = mUnidad[1].toUpperCase();
-            if (uRaw.startsWith('TON') || uRaw === 'TN') unidad = 'TN';
-            else if (uRaw.startsWith('UN') || uRaw.startsWith('PZ')) unidad = 'UNID';
-            else if (uRaw === 'M3') unidad = 'M3';
-            else if (uRaw.startsWith('GL') || uRaw.startsWith('GAL') || uRaw.startsWith('L')) unidad = 'GL';
-            l = l.replace(mUnidad[0], ' ');
+          // Si tiene coma separando residuo y precio/unidad
+          if (l.includes(',')) {
+            let parts = l.split(',').map(p => p.trim()).filter(Boolean);
+            if (parts.length >= 2) {
+              let lastPart = parts[parts.length - 1];
+              let mP = lastPart.match(/(?:S\/\.?\s*|\$\s*)?(\d+(?:\.\d+)?)/i);
+              if (mP) {
+                let nVal = parseFloat(mP[1]);
+                if (!isNaN(nVal)) precio = 'S/. ' + nVal.toFixed(2);
+              }
+
+              if (parts.length >= 3) {
+                let midPart = parts[parts.length - 2].toUpperCase();
+                let mU = midPart.match(/\b(TONELADAS?|TN|TON|KILOS?|KG|UNIDADES?|UNID|UND|PZAS?|M3|GALONES?|GL|GAL|LITROS?|LT)\b/i);
+                if (mU) {
+                  let uRaw = mU[1].toUpperCase();
+                  if (uRaw.startsWith('TON') || uRaw === 'TN') unidad = 'TN';
+                  else if (uRaw.startsWith('UN') || uRaw.startsWith('PZ')) unidad = 'UNID';
+                  else if (uRaw === 'M3') unidad = 'M3';
+                  else if (uRaw.startsWith('GL') || uRaw.startsWith('GAL') || uRaw.startsWith('L')) unidad = 'GL';
+                  desc = parts.slice(0, -2).join(' ');
+                } else {
+                  desc = parts.slice(0, -1).join(' ');
+                }
+              } else {
+                desc = parts[0];
+              }
+            }
           }
-          let desc = l.replace(/[,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-          if (desc) agregarItem(desc, unidad, precio || 'S/.0.00');
+
+          // Si no se extrajo precio con comas (o formato sin comas como 'PLÁSTICO 0.2')
+          if (!precio) {
+            let mUnidad = l.match(/\b(TONELADAS?|TN|TON|KILOS?|KG|UNIDADES?|UNID|UND|PZAS?|M3|GALONES?|GL|GAL|LITROS?|LT)\b/i);
+            if (mUnidad) {
+              let uRaw = mUnidad[1].toUpperCase();
+              if (uRaw.startsWith('TON') || uRaw === 'TN') unidad = 'TN';
+              else if (uRaw.startsWith('UN') || uRaw.startsWith('PZ')) unidad = 'UNID';
+              else if (uRaw === 'M3') unidad = 'M3';
+              else if (uRaw.startsWith('GL') || uRaw.startsWith('GAL') || uRaw.startsWith('L')) unidad = 'GL';
+              l = l.replace(mUnidad[0], ' ');
+            }
+
+            let mPrecioMoneda = l.match(/(?:S\/\.?\s*|\$\s*)(\d+(?:\.\d+)?)/i);
+            if (mPrecioMoneda) {
+              let nVal = parseFloat(mPrecioMoneda[1]);
+              if (!isNaN(nVal)) {
+                precio = 'S/. ' + nVal.toFixed(2);
+                l = l.replace(mPrecioMoneda[0], ' ');
+              }
+            } else {
+              let allNums = [...l.matchAll(/(\d+(?:\.\d+)?)/g)];
+              if (allNums.length > 0) {
+                let lastNum = allNums[allNums.length - 1];
+                let nVal = parseFloat(lastNum[1]);
+                if (!isNaN(nVal)) {
+                  precio = 'S/. ' + nVal.toFixed(2);
+                  let idx = lastNum.index;
+                  l = l.substring(0, idx) + ' ' + l.substring(idx + lastNum[0].length);
+                }
+              }
+            }
+            desc = l;
+          }
+
+          desc = desc.replace(/[|,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+          if (desc) agregarItem(desc, unidad, precio || 'S/. 0.00');
+
         } else if (modalTarget === 'transporte') {
-          let desc = l.replace(/[,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-          if (desc) agregarItemTransporte(desc, "1 SERVICIO", "FURGÓN", precio || 'S/.0.00');
+          let cant = "1 SERVICIO";
+          let veh = "FURGÓN";
+          if (l.includes(',')) {
+            let parts = l.split(',').map(p => p.trim()).filter(Boolean);
+            if (parts.length >= 2) {
+              let last = parts[parts.length - 1];
+              let mP = last.match(/(?:S\/\.?\s*|\$\s*)?(\d+(?:\.\d+)?)/i);
+              if (mP) precio = 'S/. ' + parseFloat(mP[1]).toFixed(2);
+              if (parts.length === 4) {
+                desc = parts[0]; cant = parts[1]; veh = parts[2];
+              } else if (parts.length === 3) {
+                desc = parts[0]; cant = parts[1];
+              } else {
+                desc = parts[0];
+              }
+            }
+          } else {
+            let allNums = [...l.matchAll(/(\d+(?:\.\d+)?)/g)];
+            if (allNums.length > 0) {
+              let lastNum = allNums[allNums.length - 1];
+              precio = 'S/. ' + parseFloat(lastNum[1]).toFixed(2);
+              let idx = lastNum.index;
+              l = l.substring(0, idx) + ' ' + l.substring(idx + lastNum[0].length);
+            }
+            desc = l;
+          }
+          desc = desc.replace(/[|,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+          if (desc) agregarItemTransporte(desc, cant, veh, precio || 'S/. 0.00');
+
         } else if (modalTarget === 'disposicion') {
-          let desc = l.replace(/[,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-          if (desc) agregarItemDisposicion(desc, "1 TN", precio || 'S/.0.00');
+          let cant = "1 TN";
+          if (l.includes(',')) {
+            let parts = l.split(',').map(p => p.trim()).filter(Boolean);
+            if (parts.length >= 2) {
+              let last = parts[parts.length - 1];
+              let mP = last.match(/(?:S\/\.?\s*|\$\s*)?(\d+(?:\.\d+)?)/i);
+              if (mP) precio = 'S/. ' + parseFloat(mP[1]).toFixed(2);
+              if (parts.length >= 3) {
+                desc = parts[0]; cant = parts[1];
+              } else {
+                desc = parts[0];
+              }
+            }
+          } else {
+            let allNums = [...l.matchAll(/(\d+(?:\.\d+)?)/g)];
+            if (allNums.length > 0) {
+              let lastNum = allNums[allNums.length - 1];
+              precio = 'S/. ' + parseFloat(lastNum[1]).toFixed(2);
+              let idx = lastNum.index;
+              l = l.substring(0, idx) + ' ' + l.substring(idx + lastNum[0].length);
+            }
+            desc = l;
+          }
+          desc = desc.replace(/[|,;:\-\/]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+          if (desc) agregarItemDisposicion(desc, cant, precio || 'S/. 0.00');
         }
       });
 
@@ -1401,7 +1601,15 @@
           const unidad = row.querySelector('.item-unidad').value.trim();
           let precio = row.querySelector('.item-precio').value.trim();
           if (!desc || !precio) valid = false;
-          if (precio && !precio.startsWith("S/")) precio = "S/." + precio.replace(/^[^\d]+/, '');
+          if (precio) {
+            let m = precio.match(/(\d+(?:[.,]\d+)?)/);
+            if (m) {
+              let valNum = parseFloat(m[1].replace(',', '.'));
+              precio = 'S/. ' + valNum.toFixed(2);
+            } else if (!precio.startsWith("S/")) {
+              precio = "S/. " + precio;
+            }
+          }
           itemsComercial.push({ item: String(idx + 1), descripcion: desc, unidad: unidad, precio: precio });
         });
         if (!valid) {

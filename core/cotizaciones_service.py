@@ -5,6 +5,7 @@ import os
 import json
 import time
 import asyncio
+import threading
 from datetime import datetime, timezone, timedelta
 import gspread
 from googleapiclient.discovery import build
@@ -14,6 +15,7 @@ from config.settings import logger, SHEET_ID, DRIVE_FOLDER_ID
 from core.sheets_client import obtener_credenciales
 
 PET = timezone(timedelta(hours=-5))
+_COTIZACIONES_LOCK = threading.Lock()
 PLANTILLAS_COTIZACION = {
     "COMERCIALIZACION": {
         "id": os.getenv("TEMPLATE_COTIZACION_ID", "1-Umk538IEr1MCYvWHf2Pp7KmEPHNcTpxSvTxbDZk4oQ"),
@@ -406,6 +408,10 @@ def poblar_tabla_en_doc(docs_service, doc_id, target_table_idx, items):
         logger.warning(f"Aviso reseteando negrita en tabla {target_table_idx}: {e_st}")
 
 def procesar_generacion_cotizacion(datos):
+    with _COTIZACIONES_LOCK:
+        return _ejecutar_generacion_cotizacion(datos)
+
+def _ejecutar_generacion_cotizacion(datos):
     """
     datos: dict con:
       - correlativo: '081' (o se autocalcula)
@@ -440,6 +446,8 @@ def procesar_generacion_cotizacion(datos):
 
     fecha = datos.get("fecha") or get_fecha_formato_peru()
     cliente = str(datos.get("cliente", "")).strip().upper()
+    if not cliente:
+        raise ValueError("El cliente o razón social es obligatorio para generar la cotización.")
     ruc = str(datos.get("ruc", "")).strip()
     direccion = str(datos.get("direccion", "")).strip().upper()
     responsable = str(datos.get("responsable") or "Alexander Chamochumbi Chávez").strip()
@@ -478,6 +486,23 @@ def procesar_generacion_cotizacion(datos):
     items = datos.get("items", [])
     items_transporte = datos.get("items_transporte", [])
     items_disposicion = datos.get("items_disposicion", [])
+
+    # Normalizar formato de precios en items
+    import re
+    def _normalizar_precio_item(it_list):
+        for it in it_list:
+            p_val = str(it.get("precio", "")).strip()
+            if p_val:
+                m_p = re.search(r"(\d+(?:[.,]\d+)?)", p_val)
+                if m_p:
+                    num_f = float(m_p.group(1).replace(",", "."))
+                    it["precio"] = f"S/. {num_f:.2f}"
+                elif not p_val.startswith("S/"):
+                    it["precio"] = f"S/. {p_val}"
+
+    _normalizar_precio_item(items)
+    _normalizar_precio_item(items_transporte)
+    _normalizar_precio_item(items_disposicion)
 
     # Compatibilidad: si en disposición final enviaron solo 'items'
     if template_key != "COMERCIALIZACION" and not items_transporte and not items_disposicion and items:
@@ -988,7 +1013,7 @@ INSTRUCCIONES DE EXTRACCIÓN:
 4. "items": Lista de residuos/ítems cotizados. Para cada residuo:
    - "descripcion": Nombre formal del residuo en MAYÚSCULAS (ej: CARTÓN, PLÁSTICO FILM, CHATARRA METÁLICA, PARIHUELAS DE MADERA, GALONERAS, ACEITE USADO, etc.).
    - "unidad": Una de las siguientes unidades válidas: "KG", "TN", "UNID", "M3", "GL". Si no especificó unidad o mencionó kilos, usa "KG". Si mencionó toneladas, "TN". Si mencionó unidades, parihuelas, cilindros o sacos, "UNID". Si metros cúbicos, "M3". Si galones, "GL".
-   - "precio": Formato estándar con moneda "S/. 0.00" o "S/.0.00" (ej. "S/.0.10", "S/.450.00", "S/.15.00").
+   - "precio": Formato estándar con moneda "S/. 0.00" o "S/.0.00" (ej. "S/.0.10", "S/.450.00", "S/.15.00"). Si el usuario indica un número como 0.2 o 0.20 junto a un residuo (ej. "plástico 0.2"), dicho número corresponde estrictamente al precio unitario ("S/. 0.20") y NUNCA debe incluirse en la descripción del residuo.
 5. "observaciones": Notas relevantes o aclaraciones breves si faltó algún dato.
 
 RESPONDE ÚNICAMENTE CON UN OBJETO JSON VÁLIDO CON ESTA ESTRUCTURA EXACTA:
