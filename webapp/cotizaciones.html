@@ -440,9 +440,66 @@
       font-size: 32px;
       margin-bottom: 6px;
     }
+
+    /* Modal de Bloqueo Anti-Doble Clic / Loading Overlay */
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(15, 23, 42, 0.82);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 99999;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      color: #ffffff;
+      user-select: none;
+      pointer-events: all;
+    }
+
+    .loading-spinner {
+      width: 50px;
+      height: 50px;
+      border: 4px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #198754;
+      border-radius: 50%;
+      animation: spinOverlay 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+
+    @keyframes spinOverlay {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-title {
+      font-size: 16px;
+      font-weight: 800;
+      margin-bottom: 6px;
+      letter-spacing: -0.3px;
+    }
+
+    .loading-subtitle {
+      font-size: 12.5px;
+      color: #cbd5e1;
+      max-width: 300px;
+      line-height: 1.45;
+    }
   </style>
 </head>
 <body>
+
+  <!-- Modal de Bloqueo y Spinner Anti Doble Clic -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-title" id="loadingTitle">Procesando...</div>
+    <div class="loading-subtitle" id="loadingSubtitle">Por favor espera un momento, no cierres esta ventana.</div>
+  </div>
 
   <div class="header">
     <div class="header-logo">E</div>
@@ -1565,6 +1622,27 @@
       cerrarModalCargaRapida();
     }
 
+    function mostrarBloqueo(titulo, subtitulo) {
+      const overlay = document.getElementById('loadingOverlay');
+      if (overlay) {
+        document.getElementById('loadingTitle').textContent = titulo || 'Procesando...';
+        document.getElementById('loadingSubtitle').textContent = subtitulo || 'Por favor espera un momento...';
+        overlay.style.display = 'flex';
+      }
+      const btn = document.getElementById('btnSubmit');
+      if (btn) btn.disabled = true;
+    }
+
+    function ocultarBloqueo() {
+      const overlay = document.getElementById('loadingOverlay');
+      if (overlay) overlay.style.display = 'none';
+      const btn = document.getElementById('btnSubmit');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerText = "🚀 Generar Cotización en PDF";
+      }
+    }
+
     function enviarCotizacion() {
       const tipoServicio = document.getElementById('tipo_servicio').value;
       const subtipoFinal = document.getElementById('subtipo_final').value;
@@ -1671,8 +1749,10 @@
       if (window.editingPdfId) payload.pdf_id = window.editingPdfId;
 
       const btn = document.getElementById('btnSubmit');
-      btn.disabled = true;
-      btn.innerText = "⏳ Generando documento y PDF en Drive...";
+      mostrarBloqueo(
+        "⏳ Generando Cotización...",
+        "Clonando plantilla oficial, redactando tablas y exportando PDF en Google Drive. Por favor espera..."
+      );
 
       const urlParams = new URLSearchParams(window.location.search);
       let userId = tg?.initDataUnsafe?.user?.id || urlParams.get('uid');
@@ -1691,6 +1771,10 @@
           throw new Error("Respuesta no válida del servidor (HTTP " + r.status + ")");
         }
         if (r.ok && res.success) {
+          mostrarBloqueo(
+            "✅ ¡Listo! Cotización Generada",
+            "Documento y PDF registrados en Drive y Google Sheets. Enviando a Telegram..."
+          );
           btn.innerText = "✅ ¡Listo! Cotización enviada a Telegram";
           btn.style.background = "#198754";
           try {
@@ -1703,18 +1787,19 @@
             if (tg && typeof tg.close === 'function') {
               try { tg.close(); } catch(e){}
             } else {
+              ocultarBloqueo();
               alert("✅ ¡Cotización N°" + res.codigo + " generada exitosamente!\nRevisa tu chat en Telegram.");
             }
           }, 1500);
         } else {
+          ocultarBloqueo();
           throw new Error(res.error || "No se pudo generar la cotización");
         }
       })
       .catch(err => {
+        ocultarBloqueo();
         console.error("Error enviando cotización:", err);
         alert("❌ Error: " + (err.message || err));
-        btn.disabled = false;
-        btn.innerText = "🚀 Generar Cotización en PDF";
       });
     }
 

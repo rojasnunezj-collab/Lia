@@ -549,16 +549,11 @@ def _ejecutar_generacion_cotizacion(datos):
             {'replaceAllText': {'containsText': {'text': 'Responsable Técnico', 'matchCase': True}, 'replaceText': cargo}},
         ]
 
-        # Reemplazo de Asunto si fue editado
-        if asunto:
+        # Reemplazo de Asunto si fue editado (evitar bucle sobre otras plantillas que duplica subcadenas como 'peligrosos')
+        if asunto and asunto.strip().lower() != cfg_plantilla['asunto_defecto'].strip().lower():
             requests.append({
                 'replaceAllText': {'containsText': {'text': cfg_plantilla['asunto_defecto'], 'matchCase': False}, 'replaceText': asunto}
             })
-            for k, o_cfg in PLANTILLAS_COTIZACION.items():
-                if o_cfg['asunto_defecto'] != cfg_plantilla['asunto_defecto']:
-                    requests.append({
-                        'replaceAllText': {'containsText': {'text': o_cfg['asunto_defecto'], 'matchCase': False}, 'replaceText': asunto}
-                    })
 
         # Reemplazo de Personal / Operarios si fue editado
         if personal and personal != cfg_plantilla['personal_defecto']:
