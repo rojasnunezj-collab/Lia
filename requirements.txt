@@ -9,6 +9,7 @@ python-telegram-bot[job-queue]
 Pillow
 requests
 pytz
+openpyxl
 
 pytest==8.1.1
 
