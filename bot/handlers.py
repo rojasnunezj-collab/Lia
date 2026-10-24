@@ -11,7 +11,9 @@ from datetime import datetime, timezone, timedelta
 
 from google.genai import types
 from google.oauth2 import service_account  # <--- Agregado para las llaves
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, CopyTextButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, CopyTextButton, ReplyKeyboardMarkup, KeyboardButton
+from bot.keyboards import get_persistent_main_keyboard, TODOS_LOS_BOTONES_MENU
+from bot.menu_router import route_persistent_button
 from telegram.ext import ContextTypes
 import gspread
 
@@ -732,7 +734,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_auth_or_reject(update):
         return
     user_id = update.effective_user.id if update.effective_user else None
-    await update.message.reply_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
+    await update.message.reply_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_persistent_main_keyboard(user_id))
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Pong!")
@@ -2501,6 +2503,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = update.message.text.strip()
     user_id = update.effective_user.id
+
+    # Interceptar botones del teclado inferior persistente
+    if text in TODOS_LOS_BOTONES_MENU:
+        if await route_persistent_button(
+            update, context, text, user_id,
+            user_states, user_data_cache,
+            render_cotizaciones_func=_render_cotizaciones_telegram
+        ):
+            return
+
     modo = user_states.get(user_id)
 
     if modo == MODO_PENDIENTE_ADD:
