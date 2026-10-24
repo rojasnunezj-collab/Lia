@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 
 from google.genai import types
 from google.oauth2 import service_account  # <--- Agregado para las llaves
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, CopyTextButton, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, CopyTextButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from bot.keyboards import get_persistent_main_keyboard, TODOS_LOS_BOTONES_MENU
 from bot.menu_router import route_persistent_button
 from telegram.ext import ContextTypes
@@ -303,7 +303,39 @@ import core.sheets_client as rc
 # ====================================================================
 user_states = {}
 user_data_cache = {}
+user_last_action = {}
+user_active_prompts = {}
 MEMORIA_VINCULACION = load_memoria_vinculacion() or {}
+
+async def safe_delete_message(bot, chat_id: int, message_id: int) -> bool:
+    """Elimina de forma segura un mensaje sin lanzar excepciones si ya no existe."""
+    if not bot or not chat_id or not message_id:
+        return False
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        return True
+    except Exception:
+        return False
+
+async def job_check_idle_sessions(context: ContextTypes.DEFAULT_TYPE):
+    """Job de limpieza automatica (cada 60s): auto-cancela flujos inactivos tras 10 min y desintegra prompts huerfanos."""
+    import time as _t
+    now = _t.time()
+    TIMEOUT_SECS = 600  # 10 minutos
+    a_limpiar = []
+    for u_id, modo in list(user_states.items()):
+        if modo is not None:
+            last_act = user_last_action.get(u_id, 0)
+            if (now - last_act) > TIMEOUT_SECS:
+                a_limpiar.append(u_id)
+
+    for u_id in a_limpiar:
+        user_states[u_id] = None
+        user_data_cache[u_id] = {}
+        old_prompt = user_active_prompts.pop(u_id, None)
+        if old_prompt and len(old_prompt) == 2:
+            await safe_delete_message(context.bot, old_prompt[1], old_prompt[0])
+        logger.info(f"Sesion inactiva auto-cancelada para usuario {u_id} tras 10 min. Prompt desintegrado.")
 
 # ====================================================================
 # --- TAREAS PROGRAMADAS (JOBS) ---
@@ -425,7 +457,11 @@ async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAU
         await query.answer()
     except Exception:
         pass
+    import time as _t
     user_id = query.from_user.id
+    user_last_action[user_id] = _t.time()
+    if query.message:
+        user_active_prompts[user_id] = (query.message.message_id, query.message.chat_id)
     data = query.data
 
     if data == 'pnd_add':
@@ -737,8 +773,50 @@ def get_documentos_menu_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_auth_or_reject(update):
         return
+    import time as _t
     user_id = update.effective_user.id if update.effective_user else None
-    await update.message.reply_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_persistent_main_keyboard(user_id))
+    if user_id:
+        user_states[user_id] = None
+        user_data_cache[user_id] = {}
+        user_last_action[user_id] = _t.time()
+        old_prompt = user_active_prompts.pop(user_id, None)
+        if old_prompt and len(old_prompt) == 2:
+            await safe_delete_message(context.bot, old_prompt[1], old_prompt[0])
+
+    # Remover cualquier teclado inferior persistente residual (para que no aparezca en PC ni celular)
+    try:
+        rm = await update.message.reply_text("✨", reply_markup=ReplyKeyboardRemove())
+        await rm.delete()
+    except Exception:
+        pass
+
+    await update.message.reply_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
+
+async def cancelar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando directo /cancelar o /cancel para reiniciar el estado y limpiar."""
+    if not await check_auth_or_reject(update):
+        return
+    import time as _t
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id:
+        user_states[user_id] = None
+        user_data_cache[user_id] = {}
+        user_last_action[user_id] = _t.time()
+        old_prompt = user_active_prompts.pop(user_id, None)
+        if old_prompt and len(old_prompt) == 2:
+            await safe_delete_message(context.bot, old_prompt[1], old_prompt[0])
+
+    try:
+        rm = await update.message.reply_text("🧹", reply_markup=ReplyKeyboardRemove())
+        await rm.delete()
+    except Exception:
+        pass
+
+    await update.message.reply_text(
+        "✨ **Operación cancelada.**\nEl chat está limpio y listo para una nueva consulta.",
+        parse_mode='Markdown',
+        reply_markup=get_main_menu_keyboard(user_id)
+    )
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Pong!")
@@ -1194,7 +1272,11 @@ async def handle_callback_flota(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer()
     except Exception:
         pass
+    import time as _t
     user_id = query.from_user.id
+    user_last_action[user_id] = _t.time()
+    if query.message:
+        user_active_prompts[user_id] = (query.message.message_id, query.message.chat_id)
     data = query.data
 
     if data == 'menu_flota':
@@ -1608,9 +1690,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Ignorando error al responder query (posiblemente muy antiguo): {e}")
     if not await check_auth_or_reject(update):
         return
+    import time as _t
     user_id = query.from_user.id
+    user_last_action[user_id] = _t.time()
+    if query.message:
+        user_active_prompts[user_id] = (query.message.message_id, query.message.chat_id)
     
     if query.data == 'cancelar_start':
+        user_active_prompts.pop(user_id, None)
         user_states[user_id] = None
         user_data_cache[user_id] = {}
         await safe_edit_or_reply(query, "👍 Entendido. Me quedo atenta cuando me necesites. ¡Que tengas un excelente día! 👋", reply_markup=None)
@@ -2507,10 +2594,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
     if not await check_auth_or_reject(update):
         return
+    import time as _t
     text = update.message.text.strip()
     user_id = update.effective_user.id
 
-    # Interceptar botones del teclado inferior persistente
+    # Control de inactividad de 10 minutos (600 segundos)
+    now = _t.time()
+    last_act = user_last_action.get(user_id, now)
+    modo = user_states.get(user_id)
+
+    if modo is not None and (now - last_act) > 600:
+        user_states[user_id] = None
+        user_data_cache[user_id] = {}
+        old_prompt = user_active_prompts.pop(user_id, None)
+        if old_prompt and len(old_prompt) == 2:
+            await safe_delete_message(context.bot, old_prompt[1], old_prompt[0])
+        modo = None
+        logger.info(f"Sesion expirada por inactividad (10 min) para usuario {user_id}.")
+
+    user_last_action[user_id] = now
+
+    # Interceptar botones del teclado inferior persistente (si aún existieran)
     if text in TODOS_LOS_BOTONES_MENU:
         if await route_persistent_button(
             update, context, text, user_id,
@@ -3945,7 +4049,12 @@ async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
     if not await check_auth_or_reject(update):
         return
+    import time as _t
     user_id = update.effective_user.id
+    user_last_action[user_id] = _t.time()
+    old_prompt = user_active_prompts.pop(user_id, None)
+    if old_prompt and len(old_prompt) == 2:
+        await safe_delete_message(context.bot, old_prompt[1], old_prompt[0])
     modo = user_states.get(user_id)
 
     # Modo Pendientes (Audio, Nota de voz o Imagen con instrucción explícita)

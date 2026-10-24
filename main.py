@@ -24,7 +24,8 @@ from bot.handlers import (
     handle_callback_pendientes, job_verificar_alertas_pendientes,
     certificados_command,
     valorizaciones_command,
-    flota_command, handle_callback_flota
+    flota_command, handle_callback_flota,
+    cancelar_command, job_check_idle_sessions
 )
 
 # ====================================================================
@@ -68,13 +69,27 @@ def hard_shutdown_handler(signum, frame):
     sys.exit(0)
 
 async def post_init(application: Application):
-    """Mensaje de Arranque."""
+    """Mensaje de Arranque y Registro de Comandos de Menú."""
     admin_id = os.getenv("ADMIN_CHAT_ID")
     if admin_id:
         try:
             await application.bot.send_message(chat_id=admin_id, text="🚀 Sistema Lía reiniciado y en línea.")
         except Exception as e:
             logger.error(f"No se pudo enviar msj de inicio: {e}")
+
+    try:
+        from telegram import BotCommand
+        commands = [
+            BotCommand("start", "🏠 Menú Principal"),
+            BotCommand("certificados", "📜 Certificados IA"),
+            BotCommand("valorizaciones", "📊 Valorizaciones"),
+            BotCommand("flota", "🚚 Flota & Choferes"),
+            BotCommand("cancelar", "❌ Cancelar y limpiar chat"),
+            BotCommand("ping", "🏓 Estado del servidor")
+        ]
+        await application.bot.set_my_commands(commands)
+    except Exception as e:
+        logger.error(f"Error configurando comandos de bot: {e}")
 
 # ====================================================================
 # --- PUNTO DE ENTRADA PRINCIPAL ---
@@ -112,8 +127,11 @@ def main():
     app.job_queue.run_daily(daily_certificate_reminder, time=hora_aviso)
     # Tarea periódica de revisión de alertas de pendientes cada 2 minutos
     app.job_queue.run_repeating(job_verificar_alertas_pendientes, interval=120, first=15)
+    # Tarea periódica de auto-cancelación de sesiones inactivas tras 10 min
+    app.job_queue.run_repeating(job_check_idle_sessions, interval=60, first=30)
     
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler(["cancelar", "cancel"], cancelar_command))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler(["certificados", "certificado", "cert"], certificados_command))
     app.add_handler(CommandHandler(["valorizaciones", "valorizacion", "val"], valorizaciones_command))
