@@ -10,7 +10,7 @@ import gspread
 from google.genai import types
 
 from config.settings import SHEET_ID, logger
-from core.sheets_client import obtener_credenciales
+from core.sheets_client import obtener_credenciales, sanitizar_formula_sheets
 from core.ai_client import generar_con_reintento, MODEL_NAME
 
 PET = timezone(timedelta(hours=-5))
@@ -235,7 +235,7 @@ def _guardar_en_sheet_sync(fecha, usuario, categoria, tags, formato, enlace_driv
         ws.append_row(HEADERS_BITACORA)
 
     asegurar_estructura_sheet_bitacora(ws)
-    fila = [fecha, usuario, categoria, tags, formato, enlace_drive, comentario]
+    fila = [sanitizar_formula_sheets(x) for x in [fecha, usuario, categoria, tags, formato, enlace_drive, comentario]]
     next_row = len(ws.get_all_values()) + 1
     ws.insert_row(fila, index=next_row, value_input_option='USER_ENTERED')
     return True

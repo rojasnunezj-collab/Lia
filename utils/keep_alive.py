@@ -1,11 +1,149 @@
 import os
 import json
 import time
+import hmac
+import hashlib
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
-from config.settings import logger
+from urllib.parse import urlparse, parse_qs, parse_qsl
+from config.settings import logger, TELEGRAM_TOKEN, es_usuario_autorizado, ALLOWED_USER_IDS
 from utils.helpers import liberar_memoria_proceso
+
+MAX_CONTENT_LENGTH = 35 * 1024 * 1024  # 35 MB máximo para solicitudes HTTP
+
+import collections
+
+class BruteForceProtector:
+    """
+    Protección activa contra ataques de fuerza bruta, escaneo automatizado y saturación (DDoS/Flooding).
+    - Bloquea direcciones IP tras acumular 5 intentos fallidos de autenticación en 5 minutos.
+    - Aplica un ban temporal de 15 minutos (900 segundos).
+    - Limita la tasa general a un máximo de 60 peticiones por minuto por IP (Rate Limiter).
+    """
+    def __init__(self, max_fallos=5, ventana_bloqueo=900, max_rpm=60):
+        self.lock = threading.Lock()
+        self.max_fallos = max_fallos
+        self.ventana_bloqueo = ventana_bloqueo
+        self.max_rpm = max_rpm
+        self.fallos_ip = collections.defaultdict(list)
+        self.peticiones_ip = collections.defaultdict(list)
+        self.bloqueados = {}
+
+    def esta_bloqueado(self, ip: str) -> tuple[bool, int]:
+        ahora = time.time()
+        with self.lock:
+            # 1. Verificar si la IP ya se encuentra en lista negra temporal
+            if ip in self.bloqueados:
+                tiempo_restante = int(self.bloqueados[ip] - ahora)
+                if tiempo_restante > 0:
+                    return True, tiempo_restante
+                else:
+                    del self.bloqueados[ip]
+                    self.fallos_ip.pop(ip, None)
+
+            # 2. Rate Limiting general por IP
+            pts = [t for t in self.peticiones_ip.get(ip, []) if ahora - t < 60]
+            if len(pts) >= self.max_rpm:
+                self.bloqueados[ip] = ahora + 120  # Cooldown de 2 minutos
+                logger.warning(f"🚨 Rate Limit excedido para IP {ip}: Bloqueada temporalmente 120s.")
+                return True, 120
+            pts.append(ahora)
+            self.peticiones_ip[ip] = pts
+            return False, 0
+
+    def registrar_fallo(self, ip: str):
+        if not ip:
+            return
+        ahora = time.time()
+        with self.lock:
+            tiempos = [t for t in self.fallos_ip[ip] if ahora - t < 300]
+            tiempos.append(ahora)
+            self.fallos_ip[ip] = tiempos
+            if len(tiempos) >= self.max_fallos:
+                self.bloqueados[ip] = ahora + self.ventana_bloqueo
+                logger.warning(f"🚨 ALERTA BRUTE FORCE: IP {ip} BLOQUEADA por {self.ventana_bloqueo}s ({len(tiempos)} intentos fallidos).")
+
+    def registrar_exito(self, ip: str):
+        if not ip:
+            return
+        with self.lock:
+            self.fallos_ip.pop(ip, None)
+
+protector_fuerza_bruta = BruteForceProtector()
+
+def obtener_ip_cliente(handler) -> str:
+    """Extrae la IP real del cliente considerando proxies inversos (Render / Cloudflare)."""
+    xff = handler.headers.get('X-Forwarded-For')
+    if xff:
+        return xff.split(',')[0].strip()
+    return handler.client_address[0]
+
+
+def validar_telegram_init_data(init_data: str, bot_token: str) -> dict | None:
+    """
+    Valida criptográficamente el hash de autenticación emitido por Telegram WebApp
+    usando HMAC-SHA256 y la clave secreta derivada del TELEGRAM_TOKEN.
+    """
+    if not init_data or not bot_token:
+        return None
+    try:
+        parsed_data = dict(parse_qsl(init_data, keep_blank_values=True))
+        hash_recibido = parsed_data.pop('hash', None)
+        if not hash_recibido:
+            return None
+        
+        # Ordenar parámetros alfabéticamente
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
+        secret_key = hmac.new(b"WebAppData", bot_token.encode('utf-8'), hashlib.sha256).digest()
+        calculado = hmac.new(secret_key, data_check_string.encode('utf-8'), hashlib.sha256).hexdigest()
+        
+        if hmac.compare_digest(calculado, hash_recibido):
+            raw_user = parsed_data.get('user')
+            if raw_user:
+                return json.loads(raw_user)
+            return {'id': parsed_data.get('user_id')}
+    except Exception as e:
+        logger.warning(f"Error validando Telegram initData: {e}")
+    return None
+
+def autenticar_peticion_webapp(headers, parsed_query, accion_critica: bool = False, client_ip: str = ""):
+    """
+    Verifica si una solicitud HTTP proviene de una Telegram Mini App legítima y autorizada.
+    Retorna (autorizado: bool, user_id: int | None, error_msg: str | None)
+    """
+    init_data = (
+        headers.get('X-Telegram-Init-Data') or
+        headers.get('Authorization', '').replace('Bearer ', '') or
+        parsed_query.get('init_data', [None])[0] or
+        parsed_query.get('tgWebAppData', [None])[0]
+    )
+
+    if init_data and TELEGRAM_TOKEN:
+        user_info = validar_telegram_init_data(init_data, TELEGRAM_TOKEN)
+        if user_info and 'id' in user_info:
+            uid = user_info['id']
+            if es_usuario_autorizado(uid, accion_critica=accion_critica):
+                return True, uid, None
+            return False, uid, "Usuario autenticado pero no autorizado para esta acción."
+
+    # Clave de API de respaldo si se define en el entorno para llamadas automatizadas/debug
+    api_key_env = os.getenv("API_SECRET_KEY")
+    req_api_key = headers.get('X-API-Key')
+    if api_key_env and req_api_key and hmac.compare_digest(api_key_env, req_api_key):
+        return True, 0, None
+
+    # Fallback si no hay init_data
+    if accion_critica:
+        return False, None, "Acceso no autorizado: Se requiere autenticación criptográfica desde Telegram Mini App."
+
+    # Para acciones no críticas, verificar si el uid proporcionado está en ALLOWED_USER_IDS si está configurado
+    uid_param = parsed_query.get('uid', [None])[0]
+    if ALLOWED_USER_IDS:
+        if uid_param and es_usuario_autorizado(uid_param, accion_critica=False):
+            return True, int(uid_param), None
+        return False, None, "Acceso no autorizado: Usuario no listado en ALLOWED_USERS."
+
+    return True, None, None
 
 _clientes_cache = None
 _clientes_cache_time = 0
@@ -38,6 +176,19 @@ def liberar_candado_certificado(clave: str):
 
 class KeepAliveHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        client_ip = obtener_ip_cliente(self)
+        bloqueado, tiempo_espera = protector_fuerza_bruta.esta_bloqueado(client_ip)
+        if bloqueado:
+            self.send_response(429)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Retry-After', str(tiempo_espera))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'error': f'🚨 Solicitudes bloqueadas por seguridad. Demasiadas peticiones o intentos fallidos desde esta IP. Intenta en {tiempo_espera}s.'
+            }).encode('utf-8'))
+            return
+
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -319,18 +470,17 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
 
         elif path == '/api/credenciales':
             try:
-                from config.settings import es_usuario_autorizado, ALLOWED_USER_IDS
                 qs = parse_qs(parsed.query)
-                uid = qs.get('uid', [None])[0]
-
-                if ALLOWED_USER_IDS:
-                    if not uid or not es_usuario_autorizado(uid):
-                        self.send_response(403)
-                        self.send_header('Content-Type', 'application/json; charset=utf-8')
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({'error': 'Acceso no autorizado a la bóveda de credenciales.'}).encode('utf-8'))
-                        return
+                ok, uid, err_msg = autenticar_peticion_webapp(self.headers, qs, accion_critica=True, client_ip=client_ip)
+                if not ok: protector_fuerza_bruta.registrar_fallo(client_ip)
+                else: protector_fuerza_bruta.registrar_exito(client_ip)
+                if not ok:
+                    self.send_response(403)
+                    self.send_header('Content-Type', 'application/json; charset=utf-8')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'error': err_msg or 'Acceso no autorizado a la bóveda de credenciales.'}).encode('utf-8'))
+                    return
 
                 from core.credenciales_service import obtener_credenciales_sync
                 data = obtener_credenciales_sync()
@@ -457,10 +607,23 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Telegram-Init-Data, Authorization, X-API-Key')
         self.end_headers()
 
     def do_POST(self):
+        client_ip = obtener_ip_cliente(self)
+        bloqueado, tiempo_espera = protector_fuerza_bruta.esta_bloqueado(client_ip)
+        if bloqueado:
+            self.send_response(429)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Retry-After', str(tiempo_espera))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                'error': f'🚨 Solicitudes bloqueadas por seguridad. Demasiadas peticiones o intentos fallidos desde esta IP. Intenta en {tiempo_espera}s.'
+            }).encode('utf-8'))
+            return
+
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -588,20 +751,25 @@ class KeepAliveHandler(BaseHTTPRequestHandler):
 
         elif path == '/api/credenciales':
             try:
-                from config.settings import es_usuario_autorizado, ALLOWED_USER_IDS
                 content_len = int(self.headers.get('Content-Length', 0))
+                if content_len > MAX_CONTENT_LENGTH:
+                    self.send_response(413)
+                    self.end_headers()
+                    return
                 post_body = self.rfile.read(content_len)
                 payload = json.loads(post_body.decode('utf-8'))
 
-                if ALLOWED_USER_IDS:
-                    uid = payload.get('uid') or parse_qs(parsed.query).get('uid', [None])[0]
-                    if not uid or not es_usuario_autorizado(uid):
-                        self.send_response(403)
-                        self.send_header('Content-Type', 'application/json; charset=utf-8')
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({'success': False, 'error': 'No autorizado para modificar credenciales.'}).encode('utf-8'))
-                        return
+                qs = parse_qs(parsed.query)
+                ok, uid, err_msg = autenticar_peticion_webapp(self.headers, qs, accion_critica=True, client_ip=client_ip)
+                if not ok: protector_fuerza_bruta.registrar_fallo(client_ip)
+                else: protector_fuerza_bruta.registrar_exito(client_ip)
+                if not ok:
+                    self.send_response(403)
+                    self.send_header('Content-Type', 'application/json; charset=utf-8')
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'success': False, 'error': err_msg or 'No autorizado para modificar credenciales.'}).encode('utf-8'))
+                    return
 
                 from core.credenciales_service import guardar_credencial_sync
                 crd_id = guardar_credencial_sync(payload)

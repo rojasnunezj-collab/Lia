@@ -6,7 +6,10 @@ import re
 import json
 import asyncio
 import unicodedata
-import xml.etree.ElementTree as ET
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 import gspread
 try:

@@ -8,7 +8,54 @@ from datetime import datetime, timezone, timedelta
 import gspread
 
 from config.settings import SHEET_ID, logger
-from core.sheets_client import obtener_credenciales
+from core.sheets_client import obtener_credenciales, sanitizar_formula_sheets
+import base64
+import hashlib
+from cryptography.fernet import Fernet
+from config.settings import TELEGRAM_TOKEN
+
+def _obtener_fernet():
+    vault_key = os.getenv("VAULT_SECRET_KEY")
+    if not vault_key:
+        token = TELEGRAM_TOKEN or os.getenv("TELEGRAM_TOKEN")
+        if token:
+            h = hashlib.sha256(f"vault_secret_{token}".encode('utf-8')).digest()
+            vault_key = base64.urlsafe_b64encode(h).decode('utf-8')
+        else:
+            return None
+    try:
+        return Fernet(vault_key.encode('utf-8') if isinstance(vault_key, str) else vault_key)
+    except Exception as e:
+        logger.error(f"Error inicializando Fernet para credenciales: {e}")
+        return None
+
+def encriptar_dato(texto: str) -> str:
+    if not texto:
+        return ""
+    if str(texto).startswith("enc:"):
+        return str(texto)
+    f = _obtener_fernet()
+    if not f:
+        return str(texto)
+    try:
+        token = f.encrypt(str(texto).encode('utf-8')).decode('utf-8')
+        return f"enc:{token}"
+    except Exception as e:
+        logger.error(f"Error encriptando dato sensible: {e}")
+        return str(texto)
+
+def desencriptar_dato(texto: str) -> str:
+    if not texto or not str(texto).startswith("enc:"):
+        return str(texto) if texto is not None else ""
+    f = _obtener_fernet()
+    if not f:
+        return str(texto)
+    try:
+        raw_token = str(texto)[4:]
+        return f.decrypt(raw_token.encode('utf-8')).decode('utf-8')
+    except Exception as e:
+        logger.error(f"Error desencriptando dato sensible: {e}")
+        return str(texto)
 
 PET = timezone(timedelta(hours=-5))
 
@@ -89,7 +136,12 @@ def obtener_credenciales_sync(query=None, categoria=None):
             if q_norm not in texto_busqueda:
                 continue
 
-        resultados.append(r)
+        r_copy = dict(r)
+        if "CONTRASEÑA" in r_copy:
+            r_copy["CONTRASEÑA"] = desencriptar_dato(r_copy["CONTRASEÑA"])
+        if "PIN_EXTRA" in r_copy:
+            r_copy["PIN_EXTRA"] = desencriptar_dato(r_copy["PIN_EXTRA"])
+        resultados.append(r_copy)
     return resultados
 
 async def async_obtener_credenciales(query=None, categoria=None):
@@ -110,32 +162,46 @@ def guardar_credencial_sync(datos: dict):
     if crd_id:
         for idx, r in enumerate(records, start=2):
             if str(r.get("ID", "")).strip().upper() == str(crd_id).strip().upper():
+                pwd_val = datos.get("contraseña")
+                if pwd_val is None:
+                    pwd_val = r.get("CONTRASEÑA", "")
+                else:
+                    pwd_val = encriptar_dato(pwd_val)
+
+                pin_val = datos.get("pin_extra")
+                if pin_val is None:
+                    pin_val = r.get("PIN_EXTRA", "")
+                else:
+                    pin_val = encriptar_dato(pin_val)
+
                 row = [
                     crd_id,
-                    datos.get("servicio", r.get("SERVICIO", "")),
+                    sanitizar_formula_sheets(datos.get("servicio", r.get("SERVICIO", ""))),
                     datos.get("categoria", r.get("CATEGORIA", "General")),
                     datos.get("url_login", r.get("URL_LOGIN", "")),
-                    datos.get("usuario_ruc", r.get("USUARIO_RUC", "")),
-                    datos.get("contraseña", r.get("CONTRASEÑA", "")),
-                    datos.get("pin_extra", r.get("PIN_EXTRA", "")),
-                    datos.get("titular", r.get("TITULAR", "")),
-                    datos.get("observaciones", r.get("OBSERVACIONES", "")),
+                    sanitizar_formula_sheets(datos.get("usuario_ruc", r.get("USUARIO_RUC", ""))),
+                    pwd_val,
+                    pin_val,
+                    sanitizar_formula_sheets(datos.get("titular", r.get("TITULAR", ""))),
+                    sanitizar_formula_sheets(datos.get("observaciones", r.get("OBSERVACIONES", ""))),
                     now_str
                 ]
                 ws.update(values=[row], range_name=f"A{idx}:J{idx}")
                 return crd_id
 
     nuevo_id = obtener_siguiente_id_credencial(records)
+    pwd_val = encriptar_dato(datos.get("contraseña", ""))
+    pin_val = encriptar_dato(datos.get("pin_extra", ""))
     row = [
         nuevo_id,
-        datos.get("servicio", "Sin nombre"),
+        sanitizar_formula_sheets(datos.get("servicio", "Sin nombre")),
         datos.get("categoria", "General"),
         datos.get("url_login", ""),
-        datos.get("usuario_ruc", ""),
-        datos.get("contraseña", ""),
-        datos.get("pin_extra", ""),
-        datos.get("titular", ""),
-        datos.get("observaciones", ""),
+        sanitizar_formula_sheets(datos.get("usuario_ruc", "")),
+        pwd_val,
+        pin_val,
+        sanitizar_formula_sheets(datos.get("titular", "")),
+        sanitizar_formula_sheets(datos.get("observaciones", "")),
         now_str
     ]
     ws.append_row(row)

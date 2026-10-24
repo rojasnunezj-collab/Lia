@@ -535,6 +535,25 @@
       }
     }
 
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function sanitizeUrl(url) {
+      if (!url) return '';
+      const clean = String(url).trim();
+      if (clean.toLowerCase().startsWith('javascript:') || clean.toLowerCase().startsWith('data:')) {
+        return '#';
+      }
+      return clean;
+    }
+
     function toggleMask(btn, id) {
       const span = document.getElementById(id);
       const isMasked = span.getAttribute('data-masked') === 'true';
@@ -553,7 +572,14 @@
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const uid = urlParams.get('uid') || (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) || '';
-        const res = await fetch(`/api/credenciales${uid ? `?uid=${uid}` : ''}`).then(r => r.json()).catch(() => []);
+        const initData = window.Telegram?.WebApp?.initData || '';
+        const headers = {'Content-Type': 'application/json'};
+        if (initData) {
+          headers['X-Telegram-Init-Data'] = initData;
+        }
+        const res = await fetch(`/api/credenciales${uid ? `?uid=${uid}` : ''}`, { headers })
+          .then(r => r.json())
+          .catch(() => []);
         _credenciales = Array.isArray(res) ? res : [];
         document.getElementById('badgeCuentas').innerText = `${_credenciales.length} Cuentas`;
         renderCredenciales();
@@ -591,16 +617,23 @@
 
       container.innerHTML = items.map((c, i) => {
         const pwdId = `pwd_${i}`;
+        const servEscaped = escapeHtml(c.SERVICIO);
+        const catEscaped = escapeHtml(c.CATEGORIA || 'General');
+        const usrEscaped = escapeHtml(c.USUARIO_RUC);
+        const urlSanitized = sanitizeUrl(c.URL_LOGIN);
+        const pwdEscaped = escapeHtml(c.CONTRASEÑA);
+        const usrRaw = String(c.USUARIO_RUC || '').replace(/'/g, "\\'");
+        const pwdRaw = String(c.CONTRASEÑA || '').replace(/'/g, "\\'");
         return `
           <div class="card">
             <div class="card-top">
-              <div class="card-title">🏛️ ${c.SERVICIO}</div>
-              <span class="badge-tag">${c.CATEGORIA || 'General'}</span>
+              <div class="card-title">🏛️ ${servEscaped}</div>
+              <span class="badge-tag">${catEscaped}</span>
             </div>
 
-            ${c.URL_LOGIN ? `
+            ${urlSanitized && urlSanitized !== '#' ? `
               <div style="margin-bottom:6px;">
-                <a href="${c.URL_LOGIN}" target="_blank" class="portal-link">
+                <a href="${urlSanitized}" target="_blank" rel="noopener noreferrer" class="portal-link">
                   ↗️ Abrir portal web
                 </a>
               </div>
@@ -609,8 +642,8 @@
             <!-- Usuario -->
             <div class="field-label">Usuario / RUC</div>
             <div class="field-box">
-              <span class="field-info">${c.USUARIO_RUC}</span>
-              <button class="copy-btn" onclick="copyToClipboard('${c.USUARIO_RUC}', 'Usuario')">
+              <span class="field-info">${usrEscaped}</span>
+              <button class="copy-btn" onclick="copyToClipboard('${usrRaw}', 'Usuario')">
                 📋 Copiar
               </button>
             </div>
@@ -618,10 +651,10 @@
             <!-- Contraseña -->
             <div class="field-label" style="margin-top:6px;">Contraseña</div>
             <div class="field-box">
-              <span class="field-info" id="${pwdId}" data-masked="true" data-real="${c.CONTRASEÑA}">••••••••••••</span>
+              <span class="field-info" id="${pwdId}" data-masked="true" data-real="${pwdEscaped}">••••••••••••</span>
               <div style="display:flex; align-items:center;">
                 <button class="eye-btn" onclick="toggleMask(this, '${pwdId}')">👁️</button>
-                <button class="copy-btn" onclick="copyToClipboard('${c.CONTRASEÑA}', 'Contraseña')">
+                <button class="copy-btn" onclick="copyToClipboard('${pwdRaw}', 'Contraseña')">
                   📋 Copiar
                 </button>
               </div>
@@ -681,9 +714,14 @@
       };
 
       try {
+        const initData = window.Telegram?.WebApp?.initData || '';
+        const headers = {'Content-Type': 'application/json'};
+        if (initData) {
+          headers['X-Telegram-Init-Data'] = initData;
+        }
         const res = await fetch(`/api/credenciales${uid ? `?uid=${uid}` : ''}`, {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: headers,
           body: JSON.stringify(payload)
         }).then(r => r.json());
 

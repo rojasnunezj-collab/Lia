@@ -199,6 +199,18 @@ def normalizar_valor_upper(val):
         return val_strip.upper()
     return val
 
+def sanitizar_formula_sheets(val):
+    """
+    Evita la inyección de fórmulas en Google Sheets (Formula / CSV Injection).
+    Si un texto comienza con =, +, -, @, \t o \r, se antepone un apóstrofe (')
+    para forzar a Google Sheets a interpretarlo como texto plano y no ejecutarlo.
+    """
+    if isinstance(val, str) and val:
+        v_str = val.strip()
+        if v_str.startswith(('=', '+', '-', '@', '\t', '\r')):
+            return f"'{val}"
+    return val
+
 # ====================================================================
 # --- GOOGLE SHEETS UPSERT ---
 # ====================================================================
@@ -206,8 +218,8 @@ def sync_upsert_row(sheet, num_guia, row_data, col_guia_index=2, col_comentario_
     try:
         timestamp = datetime.now(PET).strftime("%d/%m/%Y %H:%M:%S")
         
-        # Normalizar todo el row_data a mayúsculas
-        row_data = [normalizar_valor_upper(x) for x in row_data]
+        # Normalizar todo el row_data a mayúsculas y sanitizar contra inyección de fórmulas
+        row_data = [sanitizar_formula_sheets(normalizar_valor_upper(x)) for x in row_data]
         
         if not num_guia:
             next_row = len(sheet.get_all_values()) + 1

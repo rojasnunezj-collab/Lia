@@ -15,10 +15,13 @@ ENV MALLOC_ARENA_MAX=2
 # ====================================================================
 # --- DEPENDENCIAS DEL SISTEMA ---
 # ====================================================================
-# Pillow requiere libjpeg y zlib en Linux
+# Pillow requiere libjpeg y zlib en Linux.
+# ca-certificates se actualiza para revocar CAs comprometidas (Advisory Render / eMudhra).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev \
     zlib1g-dev \
+    ca-certificates \
+    && update-ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -31,14 +34,21 @@ WORKDIR /app
 # --- DEPENDENCIAS PYTHON ---
 # ====================================================================
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip certifi && \
+    pip install --no-cache-dir -r requirements.txt
 
 # ====================================================================
-# --- CÓDIGO FUENTE ---
+# --- CÓDIGO FUENTE Y USUARIO NO PRIVILEGIADO ---
 # ====================================================================
 # Las credenciales (.env, credenciales_lia.json, token.json)
 # se montan como volúmenes en el docker run, NO se copian aquí.
 COPY . .
+
+# Hardening: Ejecutar el contenedor bajo un usuario no-root por principio de menor privilegio
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
 
 # ====================================================================
 # --- PUERTO Y PUNTO DE ENTRADA ---

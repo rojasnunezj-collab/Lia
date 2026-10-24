@@ -7,6 +7,7 @@ import time
 from typing import List, Dict, Any, Optional, Tuple
 from config.settings import logger
 from core.certificados_service import obtener_servicios_google
+from core.sheets_client import sanitizar_formula_sheets
 
 ID_SHEET_CONTROL = "14As5bCpZi56V5Nq1DRs0xl6R1LuOXLvRRoV26nI50NU"
 
@@ -190,7 +191,7 @@ def guardar_camion(datos: Dict[str, Any], sheets_service=None) -> Dict[str, Any]
     if camion_existente:
         fila = camion_existente['fila']
         cid = camion_existente['id']
-        row_vals = [cid, placa_limpia, marca, modelo, tipo, capacidad, empresa, soat, rev, estado, obs]
+        row_vals = [sanitizar_formula_sheets(x) for x in [cid, placa_limpia, marca, modelo, tipo, capacidad, empresa, soat, rev, estado, obs]]
         sheets_service.spreadsheets().values().update(
             spreadsheetId=ID_SHEET_CONTROL,
             range=f"'CAMIONES'!A{fila}:K{fila}",
@@ -206,7 +207,7 @@ def guardar_camion(datos: Dict[str, Any], sheets_service=None) -> Dict[str, Any]
             if m:
                 max_num = max(max_num, int(m.group(0)))
         cid = f"CAM-{max_num + 1}"
-        row_vals = [cid, placa_limpia, marca, modelo, tipo, capacidad, empresa, soat, rev, estado, obs]
+        row_vals = [sanitizar_formula_sheets(x) for x in [cid, placa_limpia, marca, modelo, tipo, capacidad, empresa, soat, rev, estado, obs]]
         res = sheets_service.spreadsheets().values().append(
             spreadsheetId=ID_SHEET_CONTROL,
             range="'CAMIONES'!A:K",
@@ -361,7 +362,7 @@ def guardar_conductor(datos: Dict[str, Any], sheets_service=None) -> Dict[str, A
     if conductor_existente:
         fila = conductor_existente['fila']
         cid = conductor_existente['id']
-        row_vals = [cid, nombre, dni, licencia, categoria, licencia_vence, telefono, empresa, estado, obs]
+        row_vals = [sanitizar_formula_sheets(x) for x in [cid, nombre, dni, licencia, categoria, licencia_vence, telefono, empresa, estado, obs]]
         sheets_service.spreadsheets().values().update(
             spreadsheetId=ID_SHEET_CONTROL,
             range=f"'CONDUCTORES'!A{fila}:J{fila}",
@@ -376,7 +377,7 @@ def guardar_conductor(datos: Dict[str, Any], sheets_service=None) -> Dict[str, A
             if m:
                 max_num = max(max_num, int(m.group(0)))
         cid = f"CHO-{max_num + 1}"
-        row_vals = [cid, nombre, dni, licencia, categoria, licencia_vence, telefono, empresa, estado, obs]
+        row_vals = [sanitizar_formula_sheets(x) for x in [cid, nombre, dni, licencia, categoria, licencia_vence, telefono, empresa, estado, obs]]
         sheets_service.spreadsheets().values().append(
             spreadsheetId=ID_SHEET_CONTROL,
             range="'CONDUCTORES'!A:J",

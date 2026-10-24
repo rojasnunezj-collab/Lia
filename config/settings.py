@@ -45,9 +45,13 @@ for uid in ALLOWED_USERS_RAW.split(","):
     if uid and (uid.isdigit() or (uid.startswith('-') and uid[1:].isdigit())):
         ALLOWED_USER_IDS.add(int(uid))
 
-def es_usuario_autorizado(user_id) -> bool:
+def es_usuario_autorizado(user_id, accion_critica: bool = False) -> bool:
     """Valida si un ID de usuario de Telegram tiene permisos para usar el bot."""
     if not ALLOWED_USER_IDS:
+        # Por principio de menor privilegio: si es una acción crítica (ej. bóveda de credenciales),
+        # nunca permitir acceso por defecto si no hay lista explícita configurada.
+        if accion_critica:
+            return False
         return True
     try:
         return int(user_id) in ALLOWED_USER_IDS

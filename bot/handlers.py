@@ -349,6 +349,8 @@ async def olivos_notification_job(context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_callback_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth_or_reject(update):
+        return
     query = update.callback_query
     if not query.data.startswith('rem|'):
         return
@@ -414,6 +416,8 @@ async def handle_callback_reminder(update: Update, context: ContextTypes.DEFAULT
         )
 
 async def handle_callback_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth_or_reject(update):
+        return
     query = update.callback_query
     if not query.data.startswith('pnd_'):
         return
@@ -1181,6 +1185,8 @@ async def flota_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback_flota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handler dedicado para todas las interacciones de flota y conductores."""
+    if not await check_auth_or_reject(update):
+        return
     query = update.callback_query
     if not (query.data.startswith('flota_') or query.data == 'menu_flota'):
         return
@@ -4394,6 +4400,8 @@ def update_observacion_sheet(num_guia, observacion, pet_flag="N"):
         logger.error(f"Error actualizando observación: {e}")
 
 async def handle_callback_observacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth_or_reject(update):
+        return
     query = update.callback_query
     if not query.data.startswith('obs|'): return
     
@@ -4477,6 +4485,8 @@ def update_destino_manual_sheet(num_guia, destino):
         logger.error(f"Error actualizando destino manual: {e}")
 
 async def handle_callback_destino_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth_or_reject(update):
+        return
     query = update.callback_query
     if not query.data.startswith('dest_man|'): return
     
@@ -4500,6 +4510,8 @@ async def handle_callback_destino_manual(update: Update, context: ContextTypes.D
         pass
 
 async def handle_callback_pregunta_registro(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth_or_reject(update):
+        return
     query = update.callback_query
     if not query.data.startswith('preg_reg|'): return
     await query.answer()
@@ -4542,6 +4554,8 @@ async def handle_callback_pregunta_registro(update: Update, context: ContextType
             await query.edit_message_reply_markup(reply_markup=None)
 
 async def handle_callback_pregunta_ligar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth_or_reject(update):
+        return
     query = update.callback_query
     if not query.data.startswith('preg_ligar|'): return
     await query.answer()
@@ -4599,6 +4613,8 @@ async def handle_callback_pregunta_ligar(update: Update, context: ContextTypes.D
         )
 
 async def handle_callback_direct_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth_or_reject(update):
+        return
     query = update.callback_query
     if not query.data.startswith('direct_action|'): return
     await query.answer()
@@ -4754,6 +4770,8 @@ async def handle_callback_direct_action(update: Update, context: ContextTypes.DE
 # --- HANDLER CALLBACK VINCULACION ---
 # ====================================================================
 async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_auth_or_reject(update):
+        return
     query = update.callback_query
     user_id = update.effective_user.id
     if not query.data.startswith('vinc|'):
@@ -4827,6 +4845,8 @@ async def handle_callback_vinculacion(update: Update, context: ContextTypes.DEFA
 # ====================================================================
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Maneja el envío de datos desde la Telegram Mini App para generar o modificar cotizaciones."""
+    if not await check_auth_or_reject(update):
+        return
     try:
         if not update.message or not update.message.web_app_data:
             return
