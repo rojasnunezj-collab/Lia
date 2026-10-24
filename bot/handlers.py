@@ -783,13 +783,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if old_prompt and len(old_prompt) == 2:
             await safe_delete_message(context.bot, old_prompt[1], old_prompt[0])
 
-    # Remover cualquier teclado inferior persistente residual (para que no aparezca en PC ni celular)
-    try:
-        rm = await update.message.reply_text("✨", reply_markup=ReplyKeyboardRemove())
-        await rm.delete()
-    except Exception:
-        pass
-
+    # Retirar cualquier teclado inferior residual de forma limpia sin efectos visuales
+    await update.message.reply_text("Panel operativo actualizado.", reply_markup=ReplyKeyboardRemove())
     await update.message.reply_text("👋 ¡Hola! Soy Lía.\nSelecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
 
 async def cancelar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -806,17 +801,8 @@ async def cancelar_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if old_prompt and len(old_prompt) == 2:
             await safe_delete_message(context.bot, old_prompt[1], old_prompt[0])
 
-    try:
-        rm = await update.message.reply_text("🧹", reply_markup=ReplyKeyboardRemove())
-        await rm.delete()
-    except Exception:
-        pass
-
-    await update.message.reply_text(
-        "✨ **Operación cancelada.**\nEl chat está limpio y listo para una nueva consulta.",
-        parse_mode='Markdown',
-        reply_markup=get_main_menu_keyboard(user_id)
-    )
+    await update.message.reply_text("Operación cancelada. Sesión restablecida.", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("Selecciona el módulo al que deseas acceder:", reply_markup=get_main_menu_keyboard(user_id))
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🏓 Pong!")

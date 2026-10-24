@@ -59,8 +59,7 @@ async def route_persistent_button(
         user_states[user_id] = None
         user_data_cache[user_id] = {}
         await update.message.reply_text(
-            "👋 Entendido. Me quedo atenta cuando me necesites.\n"
-            "Pulsa cualquier botón del menú inferior para continuar. ¡Que tengas un excelente día! 🌟",
+            "Sesión finalizada. Selecciona cualquier módulo para continuar.",
             reply_markup=get_persistent_main_keyboard(user_id)
         )
         return True
